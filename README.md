@@ -1,2 +1,2 @@
-# daxlinks.online
+# daxlinksonline
 Online Trading Bot Build on PENDAX
