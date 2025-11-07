@@ -1,0 +1,41 @@
+{
+  "name": "daxlinks-backend",
+  "version": "0.1.0",
+  "description": "Backend API scaffold for the DaxLinks control plane",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon --watch src --ext js,mjs --exec node src/server.js",
+    "start": "node src/server.js",
+    "lint": "eslint .",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:seed": "node prisma/seed.js",
+    "create:super-admin": "node scripts/createSuperAdmin.js"
+  },
+  "dependencies": {
+    "@compendiumfi/pendax": "^2.1.22",
+    "@prisma/client": "^5.18.0",
+    "bcryptjs": "^2.4.3",
+    "better-auth": "^1.3.34",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "bullmq": "^5.21.3",
+    "ioredis": "^5.4.1",
+    "express": "^4.19.2",
+    "helmet": "^7.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "nodemailer": "^7.0.10",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-node": "^11.1.0",
+    "nodemon": "^3.1.4",
+    "prisma": "^5.18.0"
+  }
+}

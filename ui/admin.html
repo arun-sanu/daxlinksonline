@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DaxLinks Admin Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js",
+          "vue-router": "https://unpkg.com/vue-router@4/dist/vue-router.esm-browser.js",
+          "@vue/devtools-api": "https://unpkg.com/@vue/devtools-api@6.6.3/lib/esm/index.js"
+        }
+      }
+    </script>
+    <script>
+      // Admin console config: distinct mode + same API target
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const qpWorkspaceId = params.get('workspaceId');
+        const storedWorkspaceId = localStorage.getItem('daxlinksWorkspaceId');
+        const effectiveWorkspaceId = qpWorkspaceId || storedWorkspaceId || (window.__DAXLINKS_CONFIG__ || {}).workspaceId || null;
+        if (qpWorkspaceId) {
+          localStorage.setItem('daxlinksWorkspaceId', qpWorkspaceId);
+        }
+        window.__DAXLINKS_CONFIG__ = Object.assign({}, window.__DAXLINKS_CONFIG__, {
+          apiBaseUrl: 'http://localhost:4000/api/v1',
+          workspaceId: effectiveWorkspaceId,
+          requestTimeoutMs: (window.__DAXLINKS_CONFIG__ && window.__DAXLINKS_CONFIG__.requestTimeoutMs) || 10000,
+          uiMode: 'admin'
+        });
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      body { margin: 0; background: #0D0E13; color: #E6E6E6; font-family: "Plus Jakarta Sans", "Inter", sans-serif; min-height: 100vh; }
+      .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+    </style>
+  </head>
+  <body class="bg-gray-950 font-sans text-gray-100">
+    <div id="boot-error" style="display:none;position:fixed;inset:0;background:rgba(13,14,19,0.92);color:#ffb4b4;z-index:1000;padding:24px;white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;overflow:auto;"></div>
+    <div id="app"></div>
+    <script>
+      (function () {
+        function normalizeReason(reason) {
+          try {
+            if (!reason) return 'Unknown error';
+            if (typeof reason === 'string') return reason;
+            if (reason.message) return reason.message + (reason.stack ? '\n' + reason.stack : '');
+            return JSON.stringify(reason);
+          } catch { return String(reason); }
+        }
+        function showError(reason, extra) {
+          var el = document.getElementById('boot-error');
+          if (!el) return;
+          el.style.display = 'block';
+          var meta = '';
+          if (extra && (extra.filename || extra.lineno)) {
+            meta = `\n\nSource: ${extra.filename || ''}:${extra.lineno || ''}:${extra.colno || ''}`;
+          }
+          el.textContent = 'Admin UI failed to load:\n\n' + normalizeReason(reason) + meta + '\n\nTip: open DevTools → Console for details.';
+        }
+        window.addEventListener('error', function (e) { showError(e.error || e.message || e, e); });
+        window.addEventListener('unhandledrejection', function (e) { showError(e.reason || e, e); });
+      })();
+    </script>
+    <script type="module" src="./src/main.js?v=20251105j"></script>
+  </body>
+  </html>

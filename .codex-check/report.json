@@ -1,0 +1,49 @@
+{
+  "url": "http://localhost:5173/#/dns",
+  "title": "DaxLinks Operations Console",
+  "durationMs": 7992,
+  "errors": [],
+  "console": [
+    {
+      "type": "warn",
+      "text": "cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation",
+      "args": [
+        "cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation"
+      ]
+    },
+    {
+      "type": "error",
+      "text": "JSHandle@error",
+      "args": [
+        {
+          "code": 30,
+          "loc": {
+            "start": {
+              "column": 9,
+              "line": 67,
+              "offset": 3629
+            },
+            "end": {
+              "column": 75,
+              "line": 67,
+              "offset": 3695
+            },
+            "source": "<p v-else class=\"text-sm muted-text\">No custom subdomains yet.</p>"
+          }
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "args": []
+    }
+  ],
+  "requestsFailed": [],
+  "httpErrors": [
+    {
+      "url": "http://localhost:5173/favicon.ico",
+      "status": 404
+    }
+  ]
+}

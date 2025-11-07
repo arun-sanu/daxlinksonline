@@ -1,0 +1,11 @@
+# Environment and local secrets
+.env
+**/.env
+backend/.env
+
+# Node artifacts
+node_modules
+
+# Logs
+*.log
+.logs

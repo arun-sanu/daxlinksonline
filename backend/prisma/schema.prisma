@@ -1,0 +1,324 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id               String        @id @default(uuid())
+  name             String
+  slug             String        @unique
+  planTier         String
+  teamSize         String
+  primaryUseCase   String
+  region           String
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  ownerId          String?
+
+  integrations     Integration[]
+  webhooks         Webhook[]
+  credentialEvents CredentialEvent[]
+  adminSessions    AdminSession[]
+  owner            User?         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+}
+
+model Integration {
+  id             String    @id @default(uuid())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId    String
+  label          String?
+  description    String?
+  exchange       String
+  environment    String
+  apiKeyMasked   String
+  passphraseMasked String?
+  credentialRef  String
+  rateLimit      Int
+  bandwidth      String
+  status         String      @default("pending")
+  lastTestedAt   DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  credentialEvents CredentialEvent[]
+  credential       IntegrationCredential?
+}
+
+model Webhook {
+  id               String    @id @default(uuid())
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId      String
+  name             String
+  url              String
+  method           String    @default("POST")
+  signingSecretRef String
+  events           String[]  @default([])
+  active           Boolean   @default(true)
+  lastDeliveryAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model WebhookDelivery {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  webhookId    String
+  status       String    @default("queued") // queued | sent | failed
+  attempts     Int       @default(0)
+  lastError    String?
+  payload      Json?
+  responseCode Int?
+  responseBody String?
+  responseHeaders Json?
+  responseTimeMs Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String
+  entityType String?
+  entityId   String?
+  summary    String?
+  detail     Json?
+  createdAt  DateTime @default(now())
+  @@index([createdAt])
+}
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(false)
+  description String?
+  audience    Json?
+  rolloutPercent Int   @default(0)
+  rules       Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Secret {
+  id          String   @id @default(uuid())
+  workspaceId String?
+  key         String
+  valueMasked String
+  valueBlob   Bytes?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@unique([workspaceId, key])
+}
+
+model Incident {
+  id        String   @id @default(uuid())
+  title     String
+  summary   String?
+  severity  String   @default("low") // low|medium|high|critical
+  status    String   @default("open") // open|ack|resolved
+  startedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String
+}
+
+model IncidentNote {
+  id         String   @id @default(uuid())
+  incidentId String
+  userId     String
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId])
+}
+
+model CredentialEvent {
+  id            String      @id @default(uuid())
+  workspace     Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId   String
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  integrationId String
+  eventType     String
+  detail        String
+  createdAt     DateTime    @default(now())
+}
+
+model AdminSession {
+  id          String    @id @default(uuid())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  location    String
+  device      String
+  ip          String
+  createdAt   DateTime  @default(now())
+}
+
+model IntegrationCredential {
+  id            String      @id @default(uuid())
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  integrationId String      @unique
+  apiKey        Bytes
+  apiSecret     Bytes
+  passphrase    Bytes?
+  iv            Bytes
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model User {
+  id               String      @id @default(uuid())
+  email            String      @unique
+  passwordHash     String
+  name             String
+  image            String?
+  emailVerified    Boolean     @default(false)
+  twoFactorEnabled Boolean     @default(false)
+  role             String      @default("operator")
+  isSuperAdmin     Boolean     @default(false)
+  // Webhook trial + ingress fields
+  webhookSubdomain String?     @unique
+  webhookSecret    String?
+  trialEndsAt      DateTime?
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  workspaces       Workspace[] @relation("WorkspaceOwner")
+  accounts         Account[]
+  sessions         Session[]
+  twoFactor        TwoFactor?
+  resetTokens      PasswordResetToken[]
+  createdDatabases DatabaseInstance[]
+  dnsRecords       DnsRecord[]
+
+  @@index([trialEndsAt])
+}
+
+model DatabaseInstance {
+  id              String    @id @default(uuid())
+  name            String
+  provider        String    // e.g., neon | supabase | render | self_hosted
+  engine          String    @default("postgres")
+  version         String    @default("16")
+  region          String    @default("us-east")
+  sizeTier        String    // free | small | medium | large
+  storageGb       Int       @default(10)
+  computeClass    String    @default("standard")
+  status          String    @default("provisioning") // provisioning | ready | error | deleting
+  host            String?
+  port            Int?      @default(5432)
+  database        String?
+  username        String?
+  passwordMasked  String?   // do not return secrets; show masked in APIs
+  sslRequired     Boolean   @default(true)
+  providerId      String?   // id from provider
+  workspaceId     String?
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  createdBy       User      @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id                    String   @id @default(uuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TwoFactor {
+  id          String @id @default(uuid())
+  userId      String @unique
+  secret      String
+  backupCodes String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Idempotency + audit for forwarded TradingView signals
+model ForwardedSignal {
+  id               String   @id @default(uuid())
+  userId           String
+  integrationId    String?
+  idempotencyKey   String   @unique
+  symbol           String?
+  side             String?
+  type             String?
+  amount           Float?
+  price            Float?
+  payload          Json
+  status           String   @default("queued") // queued | succeeded | failed
+  attempts         Int      @default(0)
+  error            String?
+  executedAt       DateTime?
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Power-user DNS records for custom subdomains
+model DnsRecord {
+  id           String @id @default(uuid())
+  subdomain    String
+  cloudflareId String
+  ip           String?
+  userId       String
+  user         User   @relation(fields: [userId], references: [id])
+
+  @@index([subdomain])
+  @@index([userId])
+}
