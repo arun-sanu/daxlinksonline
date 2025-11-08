@@ -1,6 +1,7 @@
-# daxlinksonline
-**Turns any URL into trackable short-link with QR code in 8seconds.**
+# DaxLinksOnline
+**Turns any URL into a trackable short-link with QR code in 8 seconds.**
 
+```bash
 pip install daxlinksonline
-
-Online Trading Bot Build on PENDAX
+<img src="https://github.com/arun-sanu/daxlinksonline/actions/workflows/ci.yml/badge.svg" alt="Tests">
+Online Trading Bot built on PENDAX.
