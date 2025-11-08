@@ -1,6 +1,16 @@
-# DaxLinks Backend Scaffold
+# DaxLinks Backend (Pendax trading ingress)
 
-This directory contains a minimal Express + Prisma API intended to power the DaxLinks control plane UI.
+This directory contains the backend API for DaxLinksOnline — a Pendax-based TradingView webhook ingress and forwarding control plane.
+
+Overview:
+
+- Receives host-based webhooks from TradingView (or other sources) and maps them to workspace users.
+- Normalizes alerts and forwards them via Pendax exchange connectors or user-supplied trading bots in real-time.
+- Manages workspaces, integrations (exchange credentials), webhook configurations, and keeps an auditable record of forwarded signals.
+
+If you already own a Cloudflare domain (for example `daxlinksonline.link`) you can use the included Cloudflare Worker (`worker/webhook.js`) to route `{sub}.daxlinksonline.link/webhook` requests to this API while keeping the original Host header for subdomain extraction.
+
+If you have an external mail server (for example Namecheap), configure SMTP credentials in the backend `.env` to enable verification and notification emails.
 
 ## Features
 
@@ -27,7 +37,12 @@ This directory contains a minimal Express + Prisma API intended to power the Dax
    cp .env.example .env
    ```
 
-   Ensure `DATABASE_URL` points to a PostgreSQL instance.
+      Ensure `DATABASE_URL` points to a PostgreSQL instance. Also set the following environment variables (see `.env.example`):
+
+   - `WEBHOOK_BASE_DOMAIN` — the base domain used for host-based webhook ingress (e.g. `daxlinksonline.link`).
+   - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` — required if you want the app to create/verify Cloudflare A records for user subdomains.
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `EMAIL_FROM` — configure these to use your Namecheap mail server for transactional emails.
+   - `REDIS_URL` — optional; when present the app uses BullMQ for queueing (recommended for production).
 
 3. **Bootstrap the database**
 
@@ -144,6 +159,50 @@ Add these to `.env`:
 - `CLOUDFLARE_ZONE_ID=...`
 - `REDIS_URL=redis://localhost:6379` (optional; enables BullMQ)
 - `SMTP_HOST=...`, `SMTP_PORT=...`, `SMTP_USERNAME=...`, `SMTP_PASSWORD=...`, `EMAIL_FROM=alerts@daxlinks.online`
+
+## Deployment (Cloudflare & Mail)
+
+If you're hosting on Cloudflare with domain `daxlinksonline.link` and using Namecheap for mail, follow these recommended steps:
+
+1) DNS and worker routing
+
+- Add DNS A record for your backend host (if hosting on a VM) and set it to DNS-only (unproxied) when the app needs direct public IP access for some records. Example:
+
+   - Type: A
+   - Name: @
+   - Content: <your server public IP>
+   - Proxy status: DNS only
+
+- Deploy the Cloudflare Worker (`worker/webhook.js`) and add a route such as `*.daxlinksonline.link/webhook`. This lets the Worker proxy incoming TradingView webhook POSTs to your API while preserving the original Host header.
+
+2) Cloudflare API (optional)
+
+- To auto-create or manage user subdomain A records from the app, set `CLOUDFLARE_API_TOKEN` (DNS edit scope) and `CLOUDFLARE_ZONE_ID` in your `.env`.
+
+3) TradingView webhook configuration
+
+- Use webhook URLs of the form `https://<sub>.daxlinksonline.link/webhook` in TradingView alerts.
+- Optionally include a `secret` key in the alert body to be matched against a user's `webhookSecret` stored in the app.
+
+4) Mail (Namecheap)
+
+- Configure MX records for your domain in Cloudflare to route mail to Namecheap's mail servers (if using Namecheap mail hosting).
+- Put the Namecheap SMTP credentials into your backend `.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `EMAIL_FROM`.
+
+5) Deploy worker with Wrangler (example)
+
+```bash
+npm install -g wrangler
+cd worker
+# ensure wrangler.toml contains account & route info
+wrangler publish
+```
+
+6) Security
+
+- The app uses `TRADINGVIEW_IPS` and a cron refresh task to keep a whitelist of TradingView IPs; keep `TRADINGVIEW_IPS_URL` configured.
+- Prefer using `REDIS_URL` in production for reliable queueing with BullMQ.
+
 
 ## Cron
 

@@ -1,15 +1,32 @@
 name: CI
 on: [push, pull_request]
 jobs:
-test:
-runs-on: ubuntu-latest
-steps:
+name: CI
 
-uses: actions/checkout@v4
-name: Set up Python
-uses: actions/setup-python@v5
-with:
-python-version: '3.13'
-run: pip install pytest bandit
-run: pytest || echo "add tests later"
-run: bandit -r .
+on:
+	push:
+		branches: [ main ]
+	pull_request:
+		branches: [ main ]
+
+jobs:
+	test:
+		runs-on: ubuntu-latest
+		steps:
+			- name: Checkout
+				uses: actions/checkout@v4
+
+			- name: Set up Python
+				uses: actions/setup-python@v5
+				with:
+					python-version: '3.13'
+
+			- name: Install test dependencies
+				run: pip install pytest bandit
+
+			- name: Run tests
+				run: |
+					pytest || echo "add tests later"
+
+			- name: Run security scan (bandit)
+				run: bandit -r .

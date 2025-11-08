@@ -1,0 +1,59 @@
+name: Publish Cloudflare Worker
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  publish-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wrangler
+        run: npm install -g wrangler@2
+
+      - name: Publish Worker
+        working-directory: ./worker
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          # Uses the CF_API_TOKEN from repository secrets. The account/zone are already
+          # set in worker/wrangler.toml, but we pass CF_ACCOUNT_ID/CF_ZONE_ID too for clarity.
+          wrangler publish
+
+      - name: Post-publish smoke test (optional)
+        if: always()
+        working-directory: ./worker
+        env:
+          TEST_WEBHOOK_URL: ${{ secrets.TEST_WEBHOOK_URL }}
+        run: |
+          # This step is optional. If you set the repo secret TEST_WEBHOOK_URL to a full
+          # test webhook URL (for example: https://test-sub.daxlinksonline.link/webhook),
+          # the workflow will POST a small JSON payload to exercise the ingress path.
+          if [ -z "$TEST_WEBHOOK_URL" ]; then
+            echo "No TEST_WEBHOOK_URL secret set — skipping smoke test.";
+            exit 0;
+          fi
+
+          echo "Running smoke test against $TEST_WEBHOOK_URL"
+          set -o pipefail
+          curl -sS -X POST "$TEST_WEBHOOK_URL" -H 'Content-Type: application/json' -d '{"test":"ping","ts":'"$(date +%s)"'}' -w "\nHTTP_CODE:%{http_code}\n" | tee smoke_response.log
+          # treat any 2xx/3xx as success; otherwise fail the step
+          code=$(tail -n1 smoke_response.log | sed -n 's/.*HTTP_CODE:\([0-9]*\)/\1/p') || code=0
+          echo "Smoke test returned HTTP $code"
+          if [ "$code" -ge 200 -a "$code" -lt 400 ]; then
+            echo "Smoke test passed";
+            exit 0;
+          else
+            echo "Smoke test failed (HTTP $code)";
+            exit 1;
+          fi

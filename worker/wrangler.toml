@@ -1,3 +1,16 @@
-[vars]
-ORIGIN_URL = "http://localhost:4000"
+name = "daxlinks-webhook"
+main = "worker/webhook.js"
+compatibility_date = "2025-11-08"
 
+# Cloudflare account and zone for daxlinksonline.link
+account_id = "beda455cdcb069b4d415c7eb817ecb46"
+zone_id = "d573fbfbaa86d3ffbbfe9d7895ceb5e8"
+
+[vars]
+ORIGIN_URL = "https://api.daxlinksonline.link"
+
+# Optional: manage routes here or add them via the Cloudflare dashboard
+# routes = ["*.daxlinksonline.link/webhook"]
+# routes = ["*.daxlinksonline.link/webhook"]
+
+[vars]
