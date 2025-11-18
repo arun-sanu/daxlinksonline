@@ -1,10 +1,9 @@
 name = "daxlinks-webhook"
-main = "worker/webhook.js"
+main = "webhook.js"
 compatibility_date = "2025-11-08"
 
-# Cloudflare account and zone for daxlinksonline.link
+# Cloudflare account for daxlinksonline.link
 account_id = "beda455cdcb069b4d415c7eb817ecb46"
-zone_id = "d573fbfbaa86d3ffbbfe9d7895ceb5e8"
 
 [vars]
 ORIGIN_URL = "https://api.daxlinksonline.link"
