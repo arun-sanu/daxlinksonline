@@ -28,12 +28,47 @@
       <p class="text-xs text-gray-500 mt-4">Only superadmins can create users, assign roles, and set/reset passwords.</p>
     </div>
     <script>
+      (function seedConfig() {
+        const params = new URLSearchParams(location.search);
+        const qpApiBase = params.get('apiBaseUrl') || params.get('apiBase');
+        if (qpApiBase) {
+          try {
+            new URL(qpApiBase);
+            localStorage.setItem('daxlinksApiBase', qpApiBase);
+            window.__DAXLINKS_CONFIG__ = Object.assign({}, window.__DAXLINKS_CONFIG__, { apiBaseUrl: qpApiBase });
+          } catch {}
+        }
+      })();
+
+      const resolveApiBase = () => {
+        try {
+          if (window.__DAXLINKS_CONFIG__?.apiBaseUrl) {
+            return window.__DAXLINKS_CONFIG__.apiBaseUrl;
+          }
+        } catch {}
+        try {
+          const stored = localStorage.getItem('daxlinksApiBase');
+          if (stored) return stored;
+        } catch {}
+        const host = window.location?.hostname || '';
+        const origin = window.location?.origin || '';
+        const isLocal = !host || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+        if (isLocal || window.location?.protocol === 'file:') {
+          return 'http://localhost:4000/api/v1';
+        }
+        if (origin) {
+          return `${origin.replace(/\/$/, '')}/api/v1`;
+        }
+        return 'http://localhost:4000/api/v1';
+      };
+
+      const API_BASE = resolveApiBase();
+
       const form = document.getElementById('portalForm');
       const elError = document.getElementById('error');
       function showError(msg) { elError.textContent = msg; elError.classList.remove('hidden'); }
       function clearError() { elError.textContent = ''; elError.classList.add('hidden'); }
 
-      const API_BASE = (window.__DAXLINKS_CONFIG__ && window.__DAXLINKS_CONFIG__.apiBaseUrl) || 'http://localhost:4000/api/v1';
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearError();
@@ -53,10 +88,13 @@
           localStorage.setItem('daxlinksToken', data.token);
           window.location.href = './admin.html';
         } catch (err) {
-          showError(err.message || 'Unable to sign in');
+          if (err?.message === 'Failed to fetch') {
+            showError(`Could not reach API at ${API_BASE}/portal/login. Is the backend reachable from this browser?`);
+          } else {
+            showError(err?.message || 'Unable to sign in');
+          }
         }
       });
     </script>
   </body>
   </html>
-

@@ -58,6 +58,13 @@ export default {
     }
   },
   methods: {
+    resolvedIconUrl(exchange) {
+      if (!exchange) return '';
+      if (exchange.iconUrl && typeof exchange.iconUrl === 'string') return exchange.iconUrl;
+      // Fallback to local asset by id if present
+      if (exchange.id) return `/assets/${exchange.id}.svg`;
+      return '';
+    },
     ensureSelection() {
       if (this.availableExchanges.length === 0) {
         this.selectedExchangeId = '';
@@ -154,8 +161,8 @@ export default {
                 <div class="flex items-center justify-between">
                   <span class="text-xl flex items-center justify-center h-6 w-6">
                     <img
-                      v-if="exchange.iconUrl && !imgErr[exchange.id]"
-                      :src="exchange.iconUrl"
+                      v-if="!imgErr[exchange.id]"
+                      :src="resolvedIconUrl(exchange)"
                       alt=""
                       class="h-6 w-6 object-contain"
                       referrerpolicy="no-referrer"

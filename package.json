@@ -1,0 +1,20 @@
+{
+  "name": "daxlinks-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.11.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter daxlinks-frontend dev",
+    "dev:backend": "pnpm --filter daxlinks-backend dev",
+    "dev:all": "pnpm -r dev"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0"
+  }
+}

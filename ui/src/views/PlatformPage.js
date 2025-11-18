@@ -31,7 +31,6 @@ function buildModuleInventory(store) {
       metric: 'Managed clusters',
       icon: '🗄️',
       requiresAuth: true,
-      requiresSuperAdmin: true,
       comingSoon: false
     },
     {

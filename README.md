@@ -1,10 +1,8 @@
 # DaxLinksOnline
 **Turns any URL into a trackable short-link with QR code in 8 seconds.**
 
-```bash
-pip install daxlinksonline
-<img src="https://github.com/arun-sanu/daxlinksonline/actions/workflows/ci.yml/badge.svg" alt="Tests">
- 
+![CI](https://github.com/arun-sanu/daxlinksonline/actions/workflows/ci.yml/badge.svg)
+
 DaxLinksOnline is a Pendax-based webhook forwarding and trading control plane. It receives TradingView alerts (via host-based webhooks), validates and normalizes them, and forwards them to exchange connectors or trading bots in real-time. The backend is an Express + Prisma API that manages workspaces, integrations (exchange credentials), webhooks, and forwarding/queueing logic.
 
 This repository contains:
@@ -31,6 +29,6 @@ npm run prisma:seed
 npm run dev
 ```
 
-For more details, see `backend/README.md` which contains environment and operational notes.
+For Cloudflare Worker deployment and DNS configuration, see `deploy.md` and the sample config in `worker/wrangler.example.toml`.
 
-![Tests](https://github.com/arun-sanu/daxlinksonline/actions/workflows/ci.yml/badge.svg)
+For more details, see `backend/README.md` which contains environment and operational notes.

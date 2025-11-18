@@ -8,41 +8,47 @@ datasource db {
 }
 
 model Workspace {
-  id               String        @id @default(uuid())
-  name             String
-  slug             String        @unique
-  planTier         String
-  teamSize         String
-  primaryUseCase   String
-  region           String
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  ownerId          String?
+  id             String   @id @default(uuid())
+  name           String
+  slug           String   @unique
+  planTier       String
+  teamSize       String
+  primaryUseCase String
+  region         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  ownerId        String?
 
   integrations     Integration[]
   webhooks         Webhook[]
   credentialEvents CredentialEvent[]
   adminSessions    AdminSession[]
-  owner            User?         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  owner            User?             @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  // Trade Bots relations
+  exchangeAccounts ExchangeAccount[]
+  bots             Bot[]
+  botInstances     BotInstance[]
+  plans            Plan[]
+  rentalsAsRenter  Rental[]          @relation("RenterWorkspaceRentals")
 }
 
 model Integration {
-  id             String    @id @default(uuid())
-  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  workspaceId    String
-  label          String?
-  description    String?
-  exchange       String
-  environment    String
-  apiKeyMasked   String
+  id               String    @id @default(uuid())
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId      String
+  label            String?
+  description      String?
+  exchange         String
+  environment      String
+  apiKeyMasked     String
   passphraseMasked String?
-  credentialRef  String
-  rateLimit      Int
-  bandwidth      String
-  status         String      @default("pending")
-  lastTestedAt   DateTime?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  credentialRef    String
+  rateLimit        Int
+  bandwidth        String
+  status           String    @default("pending")
+  lastTestedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   credentialEvents CredentialEvent[]
   credential       IntegrationCredential?
@@ -64,19 +70,19 @@ model Webhook {
 }
 
 model WebhookDelivery {
-  id           String    @id @default(uuid())
-  workspaceId  String
-  webhookId    String
-  status       String    @default("queued") // queued | sent | failed
-  attempts     Int       @default(0)
-  lastError    String?
-  payload      Json?
-  responseCode Int?
-  responseBody String?
+  id              String   @id @default(uuid())
+  workspaceId     String
+  webhookId       String
+  status          String   @default("queued") // queued | sent | failed
+  attempts        Int      @default(0)
+  lastError       String?
+  payload         Json?
+  responseCode    Int?
+  responseBody    String?
   responseHeaders Json?
-  responseTimeMs Int?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  responseTimeMs  Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model AuditLog {
@@ -88,18 +94,19 @@ model AuditLog {
   summary    String?
   detail     Json?
   createdAt  DateTime @default(now())
+
   @@index([createdAt])
 }
 
 model FeatureFlag {
-  key         String   @id
-  enabled     Boolean  @default(false)
-  description String?
-  audience    Json?
-  rolloutPercent Int   @default(0)
-  rules       Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  key            String   @id
+  enabled        Boolean  @default(false)
+  description    String?
+  audience       Json?
+  rolloutPercent Int      @default(0)
+  rules          Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model Secret {
@@ -112,8 +119,8 @@ model Secret {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([workspaceId])
   @@unique([workspaceId, key])
+  @@index([workspaceId])
 }
 
 model Incident {
@@ -171,74 +178,75 @@ model IntegrationCredential {
 }
 
 model User {
-  id               String      @id @default(uuid())
-  email            String      @unique
+  id               String               @id @default(uuid())
+  email            String               @unique
   passwordHash     String
   name             String
   image            String?
-  emailVerified    Boolean     @default(false)
-  twoFactorEnabled Boolean     @default(false)
-  role             String      @default("operator")
-  isSuperAdmin     Boolean     @default(false)
+  emailVerified    Boolean              @default(false)
+  twoFactorEnabled Boolean              @default(false)
+  role             String               @default("operator")
+  isSuperAdmin     Boolean              @default(false)
   // Webhook trial + ingress fields
-  webhookSubdomain String?     @unique
+  webhookSubdomain String?              @unique
   webhookSecret    String?
   trialEndsAt      DateTime?
-  isActive         Boolean     @default(true)
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-  workspaces       Workspace[] @relation("WorkspaceOwner")
+  isActive         Boolean              @default(true)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  workspaces       Workspace[]          @relation("WorkspaceOwner")
   accounts         Account[]
   sessions         Session[]
   twoFactor        TwoFactor?
   resetTokens      PasswordResetToken[]
   createdDatabases DatabaseInstance[]
   dnsRecords       DnsRecord[]
+  devices          Device[]
 
   @@index([trialEndsAt])
 }
 
 model DatabaseInstance {
-  id              String    @id @default(uuid())
+  id              String   @id @default(uuid())
   name            String
-  provider        String    // e.g., neon | supabase | render | self_hosted
-  engine          String    @default("postgres")
-  version         String    @default("16")
-  region          String    @default("us-east")
-  sizeTier        String    // free | small | medium | large
-  storageGb       Int       @default(10)
-  computeClass    String    @default("standard")
-  status          String    @default("provisioning") // provisioning | ready | error | deleting
+  provider        String // e.g., neon | supabase | render | self_hosted
+  engine          String   @default("postgres")
+  version         String   @default("16")
+  region          String   @default("us-east")
+  sizeTier        String // free | small | medium | large
+  storageGb       Int      @default(10)
+  computeClass    String   @default("standard")
+  status          String   @default("provisioning") // provisioning | ready | error | deleting
   host            String?
-  port            Int?      @default(5432)
+  port            Int?     @default(5432)
   database        String?
   username        String?
-  passwordMasked  String?   // do not return secrets; show masked in APIs
-  sslRequired     Boolean   @default(true)
-  providerId      String?   // id from provider
+  passwordMasked  String? // do not return secrets; show masked in APIs
+  sslRequired     Boolean  @default(true)
+  providerId      String? // id from provider
   workspaceId     String?
   createdByUserId String
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  createdBy       User      @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
 }
 
 model PasswordResetToken {
-  id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(uuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
-  token     String   @unique
+  token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
 }
 
 model Account {
-  id                    String   @id @default(uuid())
+  id                    String    @id @default(uuid())
   accountId             String
   providerId            String
   userId                String
@@ -249,12 +257,123 @@ model Account {
   refreshTokenExpiresAt DateTime?
   scope                 String?
   password              String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([providerId, accountId])
   @@index([userId])
+}
+
+// Notifications
+enum NotifyChannel {
+  TELEGRAM
+  ANDROID
+  EMAIL
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum DigestMode {
+  INSTANT
+  HOURLY
+  DAILY
+}
+
+model Device {
+  id          String             @id @default(uuid())
+  userId      String
+  workspaceId String?
+  platform    String // "ANDROID"
+  fcmToken    String
+  appVersion  String?
+  sdkInt      Int?
+  model       String?
+  status      DeviceStatus       @default(ACTIVE)
+  lastSeenAt  DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  user        User               @relation(fields: [userId], references: [id])
+  tokens      PushTokenHistory[]
+
+  @@unique([userId, fcmToken], name: "userId_fcmToken")
+  @@index([userId])
+}
+
+model PushTokenHistory {
+  id            String    @id @default(uuid())
+  deviceId      String
+  fcmToken      String
+  createdAt     DateTime  @default(now())
+  invalidatedAt DateTime?
+  device        Device    @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId])
+}
+
+model NotificationPreference {
+  id            String         @id @default(uuid())
+  userId        String         @unique
+  tvSignals     Boolean        @default(true)
+  botTrades     Boolean        @default(true)
+  exchangeFills Boolean        @default(true)
+  errors        Boolean        @default(true)
+  subscriptions Boolean        @default(true)
+  promotions    Boolean        @default(false)
+  digestMode    DigestMode     @default(INSTANT)
+  preferred     NotifyChannel?
+  quietStart    String? // "22:00"
+  quietEnd      String? // "07:00"
+}
+
+model NotificationTemplate {
+  id           String        @id @default(uuid())
+  key          String // e.g., "trade.executed"
+  channel      NotifyChannel
+  bodyMarkdown String?
+  bodyText     String?
+  vars         Json?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+
+  @@index([key, channel])
+}
+
+model NotificationEvent {
+  id             String                 @id @default(uuid())
+  userId         String
+  topic          String
+  payload        Json
+  channelPlanned NotifyChannel?
+  createdAt      DateTime               @default(now())
+  deliveries     NotificationDelivery[]
+
+  @@index([userId])
+}
+
+model NotificationDelivery {
+  id                String            @id @default(uuid())
+  eventId           String
+  channel           NotifyChannel
+  status            DeliveryStatus
+  providerMessageId String?
+  errorText         String?
+  attempts          Int               @default(0)
+  lastAttemptAt     DateTime?
+  createdAt         DateTime          @default(now())
+  event             NotificationEvent @relation(fields: [eventId], references: [id])
+
+  @@index([eventId, channel])
 }
 
 model Session {
@@ -291,34 +410,223 @@ model TwoFactor {
 
 // Idempotency + audit for forwarded TradingView signals
 model ForwardedSignal {
-  id               String   @id @default(uuid())
-  userId           String
-  integrationId    String?
-  idempotencyKey   String   @unique
-  symbol           String?
-  side             String?
-  type             String?
-  amount           Float?
-  price            Float?
-  payload          Json
-  status           String   @default("queued") // queued | succeeded | failed
-  attempts         Int      @default(0)
-  error            String?
-  executedAt       DateTime?
-  createdAt        DateTime @default(now())
+  id             String    @id @default(uuid())
+  userId         String
+  integrationId  String?
+  idempotencyKey String    @unique
+  symbol         String?
+  side           String?
+  type           String?
+  amount         Float?
+  price          Float?
+  payload        Json
+  status         String    @default("queued") // queued | succeeded | failed
+  attempts       Int       @default(0)
+  error          String?
+  executedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([userId, createdAt])
 }
 
 // Power-user DNS records for custom subdomains
 model DnsRecord {
-  id           String @id @default(uuid())
+  id           String  @id @default(uuid())
   subdomain    String
   cloudflareId String
   ip           String?
   userId       String
-  user         User   @relation(fields: [userId], references: [id])
+  user         User    @relation(fields: [userId], references: [id])
 
   @@index([subdomain])
   @@index([userId])
+}
+
+// Trade Bots Phase 1 models
+model ExchangeAccount {
+  id            String        @id @default(cuid())
+  workspaceId   String
+  name          String
+  venue         String
+  apiKeyEnc     String
+  apiSecretEnc  String
+  passphraseEnc String?
+  isSandbox     Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id])
+  bots          BotInstance[]
+  rentals       Rental[]
+
+  @@index([workspaceId, venue])
+}
+
+model Plan {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  name         String
+  cpuMilli     Int
+  memMiB       Int
+  priceMonthly Int
+  active       Boolean   @default(true)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  rentals      Rental[]
+}
+
+model Rental {
+  id                String          @id @default(cuid())
+  botId             String
+  renterWorkspaceId String
+  planId            String
+  exchangeAccountId String
+  botInstanceId     String?         @unique
+  status            String          @default("active") // active|canceled|expired
+  revenueShareBps   Int             @default(7000)
+  createdAt         DateTime        @default(now())
+  expiresAt         DateTime
+  bot               Bot             @relation(fields: [botId], references: [id])
+  renterWorkspace   Workspace       @relation("RenterWorkspaceRentals", fields: [renterWorkspaceId], references: [id])
+  plan              Plan            @relation(fields: [planId], references: [id])
+  exchangeAccount   ExchangeAccount @relation(fields: [exchangeAccountId], references: [id])
+  instance          BotInstance?    @relation("RentalInstance", fields: [botInstanceId], references: [id])
+}
+
+model Bot {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  name            String
+  kind            String // "webhook" | "code" | "rule"
+  description     String?
+  latestVersionId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id])
+  versions        BotVersion[]
+  instances       BotInstance[]
+  rentals         Rental[]
+}
+
+model BotVersion {
+  id           String        @id @default(cuid())
+  botId        String
+  imageRef     String?
+  signedDigest String?
+  sbomRef      String?
+  sdkVersion   String?
+  status       String        @default("draft") // draft|built|scanned|approved|published|rejected
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  bot          Bot           @relation(fields: [botId], references: [id])
+  // Back relation for instances
+  instances    BotInstance[]
+}
+
+model BotInstance {
+  id                String           @id @default(cuid())
+  botId             String
+  botVersionId      String
+  workspaceId       String
+  exchangeAccountId String
+  symbol            String
+  direction         String // "long"|"short"|"both"
+  leverage          Int              @default(1)
+  maxDailyLossPct   Float            @default(5.0)
+  takeProfitPct     Float            @default(1.0)
+  slAtrMult         Float            @default(1.5)
+  useLimitEntries   Boolean          @default(true)
+  minNotional       Float            @default(1.0)
+  status            String           @default("stopped") // running|stopped|paused|error
+  webhookToken      String           @default(uuid())
+  lastError         String?
+  startedAt         DateTime?
+  stoppedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  bot               Bot              @relation(fields: [botId], references: [id])
+  botVersion        BotVersion       @relation(fields: [botVersionId], references: [id])
+  workspace         Workspace        @relation(fields: [workspaceId], references: [id])
+  exchange          ExchangeAccount  @relation(fields: [exchangeAccountId], references: [id])
+  runs              BotRun[]
+  positions         Position[]
+  orders            Order[]
+  guardrailEvents   GuardrailEvent[]
+  // Back relation for signals
+  signals           Signal[]
+  rental            Rental?          @relation("RentalInstance")
+}
+
+model GuardrailEvent {
+  id            String      @id @default(cuid())
+  botInstanceId String
+  type          String
+  detail        String?
+  createdAt     DateTime    @default(now())
+  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+
+  @@index([botInstanceId, createdAt])
+  @@index([type, createdAt])
+}
+
+model BotRun {
+  id            String      @id @default(cuid())
+  botInstanceId String
+  startedAt     DateTime    @default(now())
+  finishedAt    DateTime?
+  status        String      @default("running") // running|success|failed|canceled
+  error         String?
+  metricsJson   Json?
+  logsJson      Json?
+  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+
+  @@index([botInstanceId, status])
+}
+
+model Signal {
+  id            String      @id @default(cuid())
+  botInstanceId String
+  source        String // webhook|cron|manual
+  externalId    String?
+  receivedAt    DateTime    @default(now())
+  payload       Json
+  processed     Boolean     @default(false)
+  processedAt   DateTime?
+  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+
+  @@unique([botInstanceId, externalId])
+  @@index([botInstanceId, processed])
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  botInstanceId String
+  venue         String
+  symbol        String
+  side          String // BUY|SELL
+  type          String // LIMIT|MARKET|STOP
+  price         Decimal?    @db.Decimal(38, 12)
+  qty           Decimal     @db.Decimal(38, 12)
+  status        String
+  venueOrderId  String?
+  error         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+
+  @@index([botInstanceId, symbol, status])
+}
+
+model Position {
+  id            String      @id @default(cuid())
+  botInstanceId String
+  symbol        String
+  side          String // LONG|SHORT
+  entryPrice    Decimal     @db.Decimal(38, 12)
+  qty           Decimal     @db.Decimal(38, 12)
+  pnl           Decimal     @default(0) @db.Decimal(38, 12)
+  openedAt      DateTime    @default(now())
+  closedAt      DateTime?
+  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+
+  @@index([botInstanceId, symbol, closedAt])
 }

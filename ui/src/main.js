@@ -5,6 +5,8 @@ import { router } from './router.js?v=20251106b';
 
 const app = createApp(App);
 app.use(router);
+// Provide router for components that inject('router')
+app.provide('router', router);
 app.mount('#app');
 
 if (typeof window !== 'undefined') {

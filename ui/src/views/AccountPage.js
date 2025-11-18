@@ -11,6 +11,7 @@ export default {
     const role = computed(() => String(user.value.role || '').toLowerCase());
     const isSuperAdmin = computed(() => Boolean(user.value.isSuperAdmin));
     const isDeveloper = computed(() => ['admin','developer','engineer'].includes(role.value));
+    const isAdmin = computed(() => isSuperAdmin.value || role.value === 'admin');
     const isPrivileged = computed(() => isSuperAdmin.value || isDeveloper.value);
     const subscription = computed(() => {
       const u = user.value || {};
@@ -31,12 +32,12 @@ export default {
     });
     const openAdminPortal = () => {
       try {
-        const inUiFolder = typeof window !== 'undefined' && window.location.pathname.includes('/ui/');
-        const target = inUiFolder ? 'portal.html' : '/ui/portal.html';
-        window.location.href = target;
+        if (typeof window !== 'undefined') {
+          window.location.hash = '#/admin-login';
+        }
       } catch {}
     };
-    return { store, actions, loading, isAuthenticated, authMessage, user, subscription, openAdminPortal, role, isSuperAdmin, isDeveloper, isPrivileged };
+    return { store, actions, loading, isAuthenticated, authMessage, user, subscription, openAdminPortal, role, isSuperAdmin, isDeveloper, isAdmin, isPrivileged };
   },
   template: `
     <main class="min-h-screen">
@@ -77,7 +78,7 @@ export default {
           </div>
           <footer class="px-8 pb-12 text-xs uppercase tracking-[0.24em] text-gray-600 sm:px-16 flex items-center justify-between relative z-10">
             <span>Secured by daxlinks.online · 2FA enforced · SOC2 aligned</span>
-            <button type="button" @click="openAdminPortal" title="Admin Portal" class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-1 text-[10px] tracking-[0.2em] text-white hover:bg-white/10 transition cursor-pointer">
+            <router-link :to="{ name: 'admin-login' }" title="Admin Portal" class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-1 text-[10px] tracking-[0.2em] text-white hover:bg-white/10 transition cursor-pointer">
               <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-sky-600/80">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5 text-white">
                   <path d="M7 11V8a5 5 0 0 1 10 0v3" />
@@ -85,7 +86,7 @@ export default {
                 </svg>
               </span>
               <span>ADMIN</span>
-            </button>
+            </router-link>
           </footer>
         </section>
 
@@ -132,7 +133,7 @@ export default {
               <!-- Right: Subscriptions on animated white glass pane -->
               <div class="flex items-center justify-center">
                 <aside class="glass-subscription p-6 rounded-2xl w-full max-w-md h-[32rem] mt-12 md:mt-20 space-y-6">
-                  <div v-if="isPrivileged" class="rounded-2xl border border-white/10 bg-white/5 p-6">
+                  <div v-if="isAdmin" class="rounded-2xl border border-white/10 bg-white/5 p-6">
                     <h3 class="mb-3 text-sm font-semibold text-white/90">Admin Console</h3>
                     <p class="text-sm text-gray-300 mb-4">Access the admin console to manage users, webhooks, queues, flags, and incidents.</p>
                     <router-link :to="{ name: 'admin-home' }" class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-2 text-xs tracking-[0.2em] text-white hover:bg-white/10 transition">

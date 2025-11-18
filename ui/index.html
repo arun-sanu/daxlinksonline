@@ -43,23 +43,47 @@
     <script>
       (function () {
         const params = new URLSearchParams(location.search);
+        const runtimeConfig = window.__DAXLINKS_CONFIG__ || {};
         const qpWorkspaceId = params.get('workspaceId');
         const storedWorkspaceId = localStorage.getItem('daxlinksWorkspaceId');
-        const effectiveWorkspaceId = qpWorkspaceId || storedWorkspaceId || (window.__DAXLINKS_CONFIG__ || {}).workspaceId || null;
+        const effectiveWorkspaceId = qpWorkspaceId || storedWorkspaceId || runtimeConfig.workspaceId || null;
 
-        // Persist query-provided workspace id
         if (qpWorkspaceId) {
           localStorage.setItem('daxlinksWorkspaceId', qpWorkspaceId);
         }
 
-        // Configure backend API
-        window.__DAXLINKS_CONFIG__ = Object.assign({}, window.__DAXLINKS_CONFIG__, {
-          apiBaseUrl: 'http://localhost:4000/api/v1',
+        const qpApiBase = params.get('apiBaseUrl') || params.get('apiBase');
+        if (qpApiBase) {
+          try {
+            new URL(qpApiBase);
+            localStorage.setItem('daxlinksApiBase', qpApiBase);
+          } catch {}
+        }
+
+        const resolveApiBase = () => {
+          if (runtimeConfig.apiBaseUrl) return runtimeConfig.apiBaseUrl;
+          try {
+            const stored = localStorage.getItem('daxlinksApiBase');
+            if (stored) return stored;
+          } catch {}
+          const host = (window.location && window.location.hostname) || '';
+          const origin = (window.location && window.location.origin) || '';
+          const isLocal = !host || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+          if (isLocal || window.location?.protocol === 'file:') {
+            return 'http://localhost:4000/api/v1';
+          }
+          if (origin) {
+            return `${origin.replace(/\/$/, '')}/api/v1`;
+          }
+          return 'http://localhost:4000/api/v1';
+        };
+
+        window.__DAXLINKS_CONFIG__ = Object.assign({}, runtimeConfig, {
+          apiBaseUrl: resolveApiBase(),
           workspaceId: effectiveWorkspaceId,
-          requestTimeoutMs: (window.__DAXLINKS_CONFIG__ && window.__DAXLINKS_CONFIG__.requestTimeoutMs) || 10000,
+          requestTimeoutMs: runtimeConfig.requestTimeoutMs || 10000,
           uiMode: 'client',
-          // Controls visibility of signup route in router
-          enableRegistration: (window.__DAXLINKS_CONFIG__ && window.__DAXLINKS_CONFIG__.enableRegistration) === true
+          enableRegistration: runtimeConfig.enableRegistration === true
         });
       })();
     </script>
@@ -77,6 +101,7 @@
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="./styles/notifications.css?v=20251106x" />
     <style>
       :root {
         --base-bg: #0D0E13;

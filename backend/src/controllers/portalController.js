@@ -21,7 +21,8 @@ export async function handlePortalLogin(req, res, next) {
       err.status = 401;
       throw err;
     }
-    if (!allowedPortalRoles.has(String(user.role).toLowerCase())) {
+    const normalizedRole = String(user.role || '').toLowerCase();
+    if (!(user.isSuperAdmin || allowedPortalRoles.has(normalizedRole))) {
       const err = new Error('Forbidden: role not permitted for portal');
       err.status = 403;
       throw err;
@@ -135,4 +136,3 @@ export async function handlePortalSetPassword(req, res, next) {
     next(error);
   }
 }
-

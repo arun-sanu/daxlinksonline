@@ -107,9 +107,9 @@ export default {
   },
   template: `
     <main class="layout-container py-8 space-y-6">
-      <section v-if="!isSuperAdmin" class="card-shell text-center py-16">
-        <p class="text-lg font-semibold text-main">Access restricted</p>
-        <p class="mt-2 text-sm text-gray-400">Only super admins can access Databases.</p>
+      <section v-if="!isAuthenticated" class="card-shell text-center py-16">
+        <p class="text-lg font-semibold text-main">Sign in required</p>
+        <p class="mt-2 text-sm text-gray-400">Please sign in to access Databases.</p>
       </section>
       <template v-else>
       <header class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -153,7 +153,7 @@ export default {
         <div v-else-if="store.items.length === 0" class="card-shell text-center py-16">
           <p class="text-lg font-semibold text-main">No databases yet</p>
           <p class="mt-2 text-sm text-gray-400">Subscribe to start storing trades!</p>
-          <button type="button" class="mt-6 btn btn-primary btn-white-animated text-xs tracking-[0.28em]" :disabled="!isAuthenticated" @click="openCreate">+ New Database</button>
+          <button type="button" class="mt-6 btn btn-primary btn-white-animated text-xs tracking-[0.28em]" :disabled="!isSuperAdmin" @click="openCreate">+ New Database</button>
         </div>
         <div v-else class="space-y-4">
           <div class="flex items-center justify-end">
@@ -230,7 +230,7 @@ export default {
                     <p class="text-xs uppercase tracking-[0.22em] text-gray-500">Other</p>
                     <div class="mt-2 flex flex-wrap gap-2">
                       <button type="button" class="btn btn-secondary text-[11px]" @click="onView(selectedDb)">View Tables</button>
-                      <button type="button" class="btn btn-secondary text-[11px]" @click="removeSelected">Remove Database</button>
+                      <button type="button" class="btn btn-secondary text-[11px]" :disabled="!isSuperAdmin" @click="removeSelected">Remove Database</button>
                     </div>
                   </div>
                 </div>

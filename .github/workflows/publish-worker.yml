@@ -16,18 +16,26 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Wrangler
-        run: npm install -g wrangler@2
+      - name: Install Wrangler (v3+)
+        run: npm install -g wrangler@latest
 
       - name: Publish Worker
         working-directory: ./worker
         env:
+          # Prefer CLOUDFLARE_API_TOKEN; fall back to CF_API_TOKEN for compatibility
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          # Account/zone are defined in wrangler.toml; exporting for clarity
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
         run: |
-          # Uses the CF_API_TOKEN from repository secrets. The account/zone are already
-          # set in worker/wrangler.toml, but we pass CF_ACCOUNT_ID/CF_ZONE_ID too for clarity.
+          # Authenticate using CLOUDFLARE_API_TOKEN (Wrangler v3+). If only CF_API_TOKEN
+          # is present, promote it to CLOUDFLARE_API_TOKEN to avoid deprecation warnings.
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ] && [ -n "${CF_API_TOKEN}" ]; then
+            export CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}"
+          fi
+          # Account/zone are already set in worker/wrangler.toml; env vars here are optional.
           wrangler publish
 
       - name: Post-publish smoke test (optional)

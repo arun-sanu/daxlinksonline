@@ -1,9 +1,10 @@
-import { ref } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js';
+import { ref, inject } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js';
 import * as apiClient from '../services/apiClient.js';
 
 export default {
   name: 'AdminLoginPage',
   setup() {
+    const store = inject('dashboardStore', null);
     const username = ref('');
     const password = ref('');
     const error = ref('');
@@ -123,8 +124,23 @@ export default {
     } catch {}
 
     const getApiBase = () => {
-      try { return (window.__DAXLINKS_CONFIG__ && window.__DAXLINKS_CONFIG__.apiBaseUrl) || 'http://localhost:4000/api/v1'; }
-      catch { return 'http://localhost:4000/api/v1'; }
+      try {
+        if (window.__DAXLINKS_CONFIG__?.apiBaseUrl) {
+          return window.__DAXLINKS_CONFIG__.apiBaseUrl;
+        }
+        const stored = window.localStorage?.getItem('daxlinksApiBase');
+        if (stored) return stored;
+        const host = window.location?.hostname || '';
+        const origin = window.location?.origin || '';
+        const isLocal = !host || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+        if (isLocal || window.location?.protocol === 'file:') {
+          return 'http://localhost:4000/api/v1';
+        }
+        if (origin) {
+          return `${origin.replace(/\/$/, '')}/api/v1`;
+        }
+      } catch {}
+      return 'http://localhost:4000/api/v1';
     };
 
     const submit = async () => {
@@ -147,10 +163,24 @@ export default {
         } catch {}
         try { window.__appAuthToken__ = data.token; } catch {}
         try { window.__lastUser__ = data.user; } catch {}
-        // Navigate to admin home
-        window.location.hash = '#/admin';
+        try {
+          if (store) {
+            store.auth.token = data.token;
+            store.auth.user = data.user;
+            store.auth.status = 'authenticated';
+            store.auth.error = null;
+          }
+        } catch {}
+        // Navigate: only admins land on Admin Console; others go to Platform
+        const u = data.user || {};
+        const isAdmin = !!u.isSuperAdmin || String(u.role||'').toLowerCase() === 'admin';
+        window.location.hash = isAdmin ? '#/admin' : '#/platform';
       } catch (e) {
-        error.value = e?.message || 'Unable to sign in';
+        if (e?.message === 'Failed to fetch') {
+          error.value = `Cannot reach ${getApiBase()}/portal/login. Make sure the backend API is running and accessible from this origin.`;
+        } else {
+          error.value = e?.message || 'Unable to sign in';
+        }
       } finally {
         busy.value = false;
       }

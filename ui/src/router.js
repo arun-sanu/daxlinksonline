@@ -37,6 +37,8 @@ import AuditLog from './admin/AuditLog.js?v=20251105h';
 import SecretsAdmin from './admin/SecretsAdmin.js';
 import ApiExplorer from './admin/ApiExplorer.js';
 import IncidentsAdmin from './admin/IncidentsAdmin.js';
+import AlertsPage from './pages/AlertsPage.js';
+import NotificationsPage from './pages/NotificationsPage.js';
 
 const routes = [
   { path: '/', redirect: { name: 'overview' } },
@@ -63,6 +65,8 @@ const routes = [
   { path: '/trade-bots', name: 'trade-bots', component: TradeBotsPage },
   { path: '/banking', name: 'banking', component: BankingPage },
   { path: '/dns', name: 'dns', component: DnsPage },
+  { path: '/alerts', name: 'alerts', component: AlertsPage },
+  { path: '/notifications', name: 'notifications', component: NotificationsPage },
   { path: '/deployment', name: 'deployment', component: DeploymentPage },
   { path: '/database', name: 'database', component: DatabasePage },
   { path: '/databases', name: 'databases', component: DatabasesView },

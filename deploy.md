@@ -131,7 +131,7 @@ Checklist (step-by-step)
  - [ ] Add root `@` A record and `www` CNAME as needed (choose proxied or DNS-only based on whether you want Cloudflare CDN)
  - [ ] Add MX, SPF, DKIM, DMARC as instructed by Namecheap
  - [ ] Deploy the Worker and add route `*.daxlinksonline.link/webhook`
- - [ ] Add GitHub repo secrets: `CF_API_TOKEN`, `CF_ACCOUNT_ID`=`beda455cdcb069b4d415c7eb817ecb46`, `CF_ZONE_ID`=`d573fbfbaa86d3ffbbfe9d7895ceb5e8`
+- [ ] Add GitHub repo secrets: Prefer `CLOUDFLARE_API_TOKEN` (Wrangler v3+), `CF_ACCOUNT_ID`=`beda455cdcb069b4d415c7eb817ecb46`, `CF_ZONE_ID`=`d573fbfbaa86d3ffbbfe9d7895ceb5e8`. If you only have `CF_API_TOKEN`, the workflow will use it as a fallback.
  - [ ] Test with an authenticated test alert and with a TradingView webhook using `https://<sub>.daxlinksonline.link/webhook`
 
 Notes on TLS / origin certificates
@@ -140,7 +140,7 @@ Notes on TLS / origin certificates
    - Keep `api` as DNS-only and ensure the origin has a valid certificate (Let's Encrypt or CA-signed). Use Full (strict) SSL mode in Cloudflare for best security.
    - Alternatively use Cloudflare Origin CA certificate on your origin and set SSL to Full (strict). Do not use Flexible mode.
 
-If you want, I can produce a small copy-paste checklist formatted for the Cloudflare UI, or I can create the DNS records for you via the Cloudflare API if you provide `CF_API_TOKEN` with DNS edit scope.
+If you want, I can produce a small copy-paste checklist formatted for the Cloudflare UI, or I can create the DNS records for you via the Cloudflare API if you provide `CLOUDFLARE_API_TOKEN` (or legacy `CF_API_TOKEN`) with DNS edit scope.
 
 4) Add a Worker route (if not managed by `wrangler.toml`)
 
@@ -161,7 +161,7 @@ If you want, I can produce a small copy-paste checklist formatted for the Cloudf
 CI / GitHub Actions secrets
 
 - Add these repository secrets in GitHub (Settings → Secrets → Actions):
-  - `CF_API_TOKEN` — Cloudflare API token (Workers Scripts:Edit, Zone:DNS Edit)
+  - `CLOUDFLARE_API_TOKEN` — Cloudflare API token (Workers Scripts:Edit, Zone:DNS Edit). If you still use `CF_API_TOKEN`, the workflow falls back to it.
   - `CF_ACCOUNT_ID` — `beda455cdcb069b4d415c7eb817ecb46`
   - `CF_ZONE_ID` — `d573fbfbaa86d3ffbbfe9d7895ceb5e8`
 

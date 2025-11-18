@@ -117,6 +117,7 @@ export default {
   setup() {
     const configuration = getConfig();
     const store = dashboardStore;
+    const isLoggedIn = computed(() => Boolean(store?.auth?.user));
     const navigation = computed(() => {
       return [
         { label: 'Overview', name: 'overview' },
@@ -401,6 +402,14 @@ export default {
         resetAuthForms();
         await refreshDashboard();
         console.log('[Auth] Login successful');
+        try {
+          const u = result.user || {};
+          const isAdmin = !!u.isSuperAdmin || String(u.role||'').toLowerCase() === 'admin';
+          if (isAdmin) {
+            if (typeof window !== 'undefined') window.location.hash = '#/admin';
+            return;
+          }
+        } catch {}
       } catch (error) {
         console.error('[Auth] Login failed', error);
         store.auth.status = 'error';
@@ -513,7 +522,8 @@ export default {
       closeMobileMenu,
       loading,
       uiMode,
-      upgradeModalRef
+      upgradeModalRef,
+      isLoggedIn
     };
   },
   template: `
@@ -525,7 +535,7 @@ export default {
         @toggle-mobile="toggleMobileMenu"
         @close-mobile="closeMobileMenu"
       />
-      <AlertRail />
+      <AlertRail v-if="isLoggedIn" />
       <router-view />
       <UpgradeModal ref="upgradeModalRef" />
       <AppFooter />

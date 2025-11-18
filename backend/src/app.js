@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import { correlationId } from './middleware/correlation.js';
 
 import { router as apiRouter } from './routes/index.js';
 import { attachUser } from './middleware/auth.js';
@@ -50,10 +51,23 @@ export async function createServer() {
     credentials: true
   }));
 
+  app.use(correlationId());
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false }));
 
-  app.use(morgan('dev'));
+  morgan.token('cid', (req) => req.correlationId || '-');
+  app.use(
+    morgan((tokens, req, res) =>
+      JSON.stringify({
+        method: tokens.method(req, res),
+        url: tokens.url(req, res),
+        status: Number(tokens.status(req, res) || 0),
+        length: tokens.res(req, res, 'content-length'),
+        responseTime: Number(tokens['response-time'](req, res) || 0),
+        correlationId: tokens.cid(req, res)
+      })
+    )
+  );
   app.use('/api/auth', betterAuthHandler);
   app.use(attachUser);
   app.use('/api', apiRouter);

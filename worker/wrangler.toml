@@ -12,5 +12,3 @@ ORIGIN_URL = "https://api.daxlinksonline.link"
 # Optional: manage routes here or add them via the Cloudflare dashboard
 # routes = ["*.daxlinksonline.link/webhook"]
 # routes = ["*.daxlinksonline.link/webhook"]
-
-[vars]
