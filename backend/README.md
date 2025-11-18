@@ -195,7 +195,7 @@ If you're hosting on Cloudflare with domain `daxlinksonline.link` and using Name
 npm install -g wrangler
 cd worker
 # ensure wrangler.toml contains account & route info
-wrangler publish
+wrangler deploy
 ```
 
 6) Security

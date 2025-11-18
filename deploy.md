@@ -41,7 +41,7 @@ wrangler login
 
 ```bash
 cd worker
-wrangler publish
+wrangler deploy
 ```
 
 Note: If you prefer to manage routes in the Cloudflare dashboard, do not include `routes` in `wrangler.toml` and instead add the route in the dashboard (see step 4).

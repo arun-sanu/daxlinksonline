@@ -19,7 +19,7 @@ jobs:
       - name: Install Wrangler (v3+)
         run: npm install -g wrangler@latest
 
-      - name: Publish Worker
+      - name: Deploy Worker
         working-directory: ./worker
         env:
           # Prefer CLOUDFLARE_API_TOKEN; fall back to CF_API_TOKEN for compatibility
@@ -36,7 +36,7 @@ jobs:
             export CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}"
           fi
           # Account/zone are already set in worker/wrangler.toml; env vars here are optional.
-          wrangler publish
+          wrangler deploy
 
       - name: Post-publish smoke test (optional)
         if: always()
