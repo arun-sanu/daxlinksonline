@@ -148,7 +148,10 @@ async function placeOrderBestEffort(exchange, n) {
     side: n.side,
     type: n.type || (n.price ? 'limit' : 'market'),
     amount: n.amount || 0,
-    price: n.price
+    price: n.price,
+    clientOrderId: n.clientOrderId,
+    exchange: n.exchange,
+    raw: n.raw
   };
   if (!params.symbol || !params.side) {
     throw new Error('Missing symbol/side in alert payload');

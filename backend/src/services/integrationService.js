@@ -78,6 +78,21 @@ export async function testIntegration(workspaceId, integrationId) {
       await exchange.testConnectivity();
     }
 
+    if (typeof exchange.exportCredentialState === 'function') {
+      const exported = await exchange.exportCredentialState();
+      if (exported?.passphrase) {
+        const encPass = encrypt(exported.passphrase);
+        await prisma.integrationCredential.update({
+          where: { integrationId },
+          data: { passphrase: encPass.data }
+        });
+        await prisma.integration.update({
+          where: { id: integrationId },
+          data: { passphraseMasked: maskCredential(exported.passphrase) }
+        });
+      }
+    }
+
     await prisma.integration.update({
       where: { id: integrationId },
       data: {

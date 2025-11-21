@@ -17,6 +17,25 @@ export default {
     const integrations = computed(() =>
       store.integrationProfiles.filter((p) => p.exchange === exchangeId.value)
     );
+    const passphraseField = computed(() => {
+      const meta = exchange.value?.credentials?.passphrase;
+      if (meta) {
+        return {
+          label: meta.label || 'Passphrase',
+          placeholder: meta.placeholder || 'Secret',
+          helper: meta.helper || ''
+        };
+      }
+      if (exchange.value?.requiresPassphrase) {
+        return {
+          label: 'Passphrase',
+          placeholder: 'Exchange passphrase',
+          helper: ''
+        };
+      }
+      return null;
+    });
+    const setupGuide = computed(() => exchange.value?.setupGuide || null);
 
     const localForm = reactive({
       environment: 'paper',
@@ -101,6 +120,12 @@ export default {
       }
     }
 
+    const setupLoginUrl = computed(() => {
+      if (!setupGuide.value?.loginUrlTemplate) return '';
+      const apiKey = (localForm.apiKey && localForm.apiKey.trim()) || 'YOUR_API_KEY';
+      return setupGuide.value.loginUrlTemplate.replace('{{apiKey}}', encodeURIComponent(apiKey));
+    });
+
     function goLogs() {
       const id = (exchangeId && exchangeId.value) || exchangeId;
       if (typeof window !== 'undefined' && window.__appRouter__) {
@@ -123,7 +148,10 @@ export default {
         exchangeId,
         exchange,
         integrations,
+        passphraseField,
         localForm,
+        setupGuide,
+        setupLoginUrl,
         resetForm,
         connect,
         rename,
@@ -224,20 +252,21 @@ export default {
               aria-label="API secret"
             />
           </label>
-          <label v-if="exchange?.requiresPassphrase" class="flex flex-col gap-2 text-xs muted-text">
-            Passphrase
+          <label v-if="passphraseField" class="flex flex-col gap-2 text-xs muted-text">
+            {{ passphraseField.label }}
             <input
               v-model="localForm.passphrase"
               type="password"
-              placeholder="Exchange passphrase"
+              :placeholder="passphraseField.placeholder || 'Secret'"
               class="field"
               inputmode="text"
               autocomplete="new-password"
               autocapitalize="none"
               autocorrect="off"
               spellcheck="false"
-              aria-label="Exchange passphrase"
+              :aria-label="passphraseField.label || 'Secret'"
             />
+            <p v-if="passphraseField.helper" class="text-[11px] text-gray-400 leading-snug">{{ passphraseField.helper }}</p>
           </label>
           <div class="grid gap-4 md:grid-cols-2">
             <label class="flex flex-col gap-2 text-xs muted-text">
@@ -289,6 +318,40 @@ export default {
             </ul>
           </div>
         </aside>
+      </section>
+
+      <section v-if="setupGuide" class="rounded-2xl border border-white/10 bg-white/5 px-6 py-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p class="text-xs uppercase tracking-[0.28em] muted-text">Setup guide</p>
+            <h3 class="text-lg font-semibold text-main">{{ setupGuide.title || 'How it works' }}</h3>
+            <p class="mt-1 text-sm muted-text">{{ setupGuide.summary }}</p>
+          </div>
+          <a
+            v-if="setupGuide.loginUrlTemplate"
+            :href="setupLoginUrl"
+            target="_blank"
+            rel="noreferrer"
+            class="btn btn-secondary text-[11px] tracking-[0.2em]"
+          >
+            Launch Kite login
+          </a>
+        </div>
+        <ol v-if="Array.isArray(setupGuide.steps) && setupGuide.steps.length" class="list-decimal space-y-2 pl-5 text-sm text-main">
+          <li v-for="(step, idx) in setupGuide.steps" :key="idx">{{ step }}</li>
+        </ol>
+        <div v-if="Array.isArray(setupGuide.docs) && setupGuide.docs.length" class="flex flex-wrap gap-3 text-xs">
+          <a
+            v-for="link in setupGuide.docs"
+            :key="link.href"
+            :href="link.href"
+            target="_blank"
+            rel="noreferrer"
+            class="rounded-full border border-white/10 px-3 py-1 text-[11px] uppercase tracking-[0.26em] hover:border-primary-500/40 hover:text-primary-100"
+          >
+            {{ link.label }}
+          </a>
+        </div>
       </section>
     </main>
   `

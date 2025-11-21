@@ -1,4 +1,5 @@
 import { createExchange as pendaxCreateExchange } from '@compendiumfi/pendax/exchanges/exchange.js';
+import { createZerodhaExchange, isZerodhaExchange } from './zerodhaExchange.js';
 
 const EXCHANGE_MAP = new Map([
   ['okx', 'okx'],
@@ -14,7 +15,11 @@ const EXCHANGE_MAP = new Map([
   ['phemex', 'phemex'],
   ['ftx', 'ftx'],
   ['ftxus', 'ftxus'],
-  ['ftx-us', 'ftxus']
+  ['ftx-us', 'ftxus'],
+  ['zerodha', 'zerodha'],
+  ['kite', 'zerodha'],
+  ['kiteconnect', 'zerodha'],
+  ['kite-connect', 'zerodha']
 ]);
 
 const TESTNET_ENVIRONMENTS = new Set(['paper', 'testnet', 'demo', 'sandbox']);
@@ -31,16 +36,16 @@ function resolveExchangeId(exchange) {
   return EXCHANGE_MAP.get(normalized);
 }
 
-function buildPendaxOptions(options) {
-  const exchangeId = resolveExchangeId(options.exchange);
+function buildPendaxOptions(options, exchangeId) {
+  const resolved = exchangeId || resolveExchangeId(options.exchange);
 
   if (!options.apiKey || !options.apiSecret) {
     throw new Error('Missing API credentials');
   }
 
-  const displayName = options.exchangeLabel || exchangeId.toUpperCase();
+  const displayName = options.exchangeLabel || resolved.toUpperCase();
   const pendaxOptions = {
-    exchange: exchangeId,
+    exchange: resolved,
     exchangeLabel: displayName,
     apiKey: typeof options.apiKey === 'string' ? options.apiKey.trim() : options.apiKey,
     apiSecret: typeof options.apiSecret === 'string' ? options.apiSecret.trim() : options.apiSecret,
@@ -63,7 +68,11 @@ function buildPendaxOptions(options) {
 
 export function createExchange(options = {}) {
   try {
-    const pendaxOptions = buildPendaxOptions(options);
+    const exchangeId = resolveExchangeId(options.exchange);
+    if (isZerodhaExchange(exchangeId)) {
+      return createZerodhaExchange({ ...options, exchange: 'zerodha' });
+    }
+    const pendaxOptions = buildPendaxOptions(options, exchangeId);
     return pendaxCreateExchange(pendaxOptions);
   } catch (error) {
     const detail = typeof error === 'string' ? error : error?.message;
