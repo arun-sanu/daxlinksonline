@@ -51,6 +51,15 @@ export default function AccountPage() {
           Review operator identity, subscription posture, and control-plane privileges. This view mirrors the legacy console so
           migrations stay familiar while we finish the remaining modules inside the React portal.
         </p>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <a
+            href="/account/register"
+            className="btn btn-white-animated btn-small px-5"
+          >
+            New user registration
+          </a>
+          <span className="text-gray-500">Ready to onboard? Registration runs through a 5-step flow.</span>
+        </div>
       </header>
 
       <div className="grid gap-10 xl:grid-cols-[1.35fr_0.9fr]">
@@ -208,4 +217,3 @@ export default function AccountPage() {
     </div>
   );
 }
-

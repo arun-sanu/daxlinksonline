@@ -92,32 +92,6 @@ export default function HomePage() {
               </div>
             </dl>
           </div>
-          <div className="relative fade-up" style={{ animationDelay: '160ms' }}>
-            <div className="hero-panel p-7">
-              <div className="flex items-center justify-between text-xs muted-text">
-                <span>Live Socket Monitor</span>
-                <span className="flex items-center gap-2" style={{ color: 'var(--primary)' }}>
-                  <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: '#34D399' }}></span>
-                  Connected
-                </span>
-              </div>
-              <div className="mt-5 space-y-4">
-                {webcastChannels.map((channel) => (
-                  <div key={channel.id} className="card-shell flex items-center justify-between p-4">
-                    <div>
-                      <div className="section-label" style={{ letterSpacing: '0.24em' }}>{channel.exchange}</div>
-                      <div className="mt-1 text-sm font-semibold text-main">{channel.channel}</div>
-                    </div>
-                    <div className="text-xs muted-text">{channel.updates} updates/min</div>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-5 text-xs muted-text">
-                Socket resilience, auto login, and heartbeat watchdogs are wired in—extend the handlers to stream your own telemetry.
-              </p>
-            </div>
-            <div className="float-orb" aria-hidden="true"></div>
-          </div>
         </div>
       </section>
 

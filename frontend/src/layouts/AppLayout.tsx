@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import AlertRail from '../components/AlertRail';
 
 const navItems = [
   { to: '/', label: 'Overview', exact: true },
   { to: '/account', label: 'Account' },
-  { to: '/platform', label: 'Platform' },
-  { to: '/trade-bots', label: 'Trade Bots' }
+  { to: '/platform', label: 'Platform' }
 ];
 
 export default function AppLayout() {
+  const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const toggleMobile = () => setMobileNavOpen((prev) => !prev);
   const closeMobile = () => setMobileNavOpen(false);
+  const hideFooter = location.pathname.startsWith('/platform') || location.pathname.startsWith('/account');
 
   return (
     <div className="app-shell relative text-main">
@@ -24,12 +26,6 @@ export default function AppLayout() {
         <div className="layout-container flex items-center justify-between gap-4 py-4">
           <div className="flex items-center gap-3 select-none" aria-label="Brand">
             <span className="brand-cyber">D&gt;&lt;</span>
-            <span
-              className="text-[10px] uppercase tracking-[0.28em] px-2 py-1 rounded-full border border-white/10"
-              style={{ color: 'var(--primary-soft)', background: 'rgba(255,255,255,0.06)' }}
-            >
-              Operations Console
-            </span>
           </div>
           <nav className="hidden flex-1 flex-wrap items-center justify-center gap-2 overflow-x-auto text-[11px] font-semibold uppercase tracking-[0.22em] md:flex md:gap-3">
             {navItems.map((item) => (
@@ -97,21 +93,24 @@ export default function AppLayout() {
       <main className="flex-1">
         <Outlet />
       </main>
-      <footer className="footer-shell" role="contentinfo">
-        <div className="layout-container flex flex-col gap-8 text-sm muted-text md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-main text-lg font-semibold">DaxLinks Online</p>
-            <p className="mt-2 text-xs uppercase tracking-[0.28em] text-gray-500">Advanced automation, calm confidence.</p>
+      <AlertRail />
+      {!hideFooter && (
+        <footer className="footer-shell" role="contentinfo">
+          <div className="layout-container flex flex-col gap-8 text-sm muted-text md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-main text-lg font-semibold">DaxLinks Online</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.28em] text-gray-500">Advanced automation, calm confidence.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-xs uppercase tracking-[0.24em] footer-links">
+              <a href="https://daxlinks.online/docs" target="_blank" rel="noreferrer">Docs</a>
+              <a href="https://daxlinks.online/legal" target="_blank" rel="noreferrer">Legal</a>
+              <a href="https://daxlinks.online/security" target="_blank" rel="noreferrer">Security</a>
+              <a href="https://daxlinks.online/support" target="_blank" rel="noreferrer">Support</a>
+            </div>
+            <p className="text-xs text-gray-500">© {new Date().getFullYear()} DaxLinks. All rights reserved.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-4 text-xs uppercase tracking-[0.24em] footer-links">
-            <a href="https://daxlinks.online/docs" target="_blank" rel="noreferrer">Docs</a>
-            <a href="https://daxlinks.online/legal" target="_blank" rel="noreferrer">Legal</a>
-            <a href="https://daxlinks.online/security" target="_blank" rel="noreferrer">Security</a>
-            <a href="https://daxlinks.online/support" target="_blank" rel="noreferrer">Support</a>
-          </div>
-          <p className="text-xs text-gray-500">© {new Date().getFullYear()} DaxLinks. All rights reserved.</p>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

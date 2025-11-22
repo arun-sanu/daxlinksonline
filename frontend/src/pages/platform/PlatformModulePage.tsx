@@ -12,9 +12,11 @@ import DeploymentModule from './modules/DeploymentModule';
 import BankingModule from './modules/BankingModule';
 import VPNModule from './modules/VPNModule';
 import SupportModule from './modules/SupportModule';
+import AlertsModule from './modules/AlertsModule';
 
 const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   integrations: IntegrationsModule,
+  alerts: AlertsModule,
   databases: DatabasesModule,
   webhooks: WebhooksModule,
   workflow: WorkflowModule,
@@ -26,6 +28,22 @@ const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   deployment: DeploymentModule,
   vpn: VPNModule,
   support: SupportModule
+};
+
+const MODULE_META: Record<string, { label: string; icon: string }> = {
+  integrations: { label: 'Integrations', icon: '/icons/hub.svg' },
+  alerts: { label: 'Alert Rail', icon: '/icons/notifications-active.svg' },
+  databases: { label: 'Databases', icon: '/icons/storage.svg' },
+  webhooks: { label: 'Webhooks', icon: '/icons/link.svg' },
+  workflow: { label: 'Workflow', icon: '/icons/route.svg' },
+  monitoring: { label: 'Monitoring', icon: '/icons/monitoring.svg' },
+  resources: { label: 'Resources', icon: '/icons/menu-book.svg' },
+  'trade-bots': { label: 'Trade Bots', icon: '/icons/smart-toy.svg' },
+  banking: { label: 'Banking', icon: '/icons/account-balance.svg' },
+  dns: { label: 'DNS', icon: '/icons/dns.svg' },
+  deployment: { label: 'Deployment', icon: '/icons/rocket-launch.svg' },
+  vpn: { label: 'VPN', icon: '/icons/vpn-lock.svg' },
+  support: { label: 'Support', icon: '/icons/support-agent.svg' }
 };
 
 export default function PlatformModulePage() {
@@ -50,13 +68,17 @@ export default function PlatformModulePage() {
 
   const hoursMinutes = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const seconds = now.getSeconds().toString().padStart(2, '0');
+  const meta = MODULE_META[moduleId];
 
   return (
     <div className="layout-container pt-16 pb-24 space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="section-label">Platform · {moduleId}</p>
-          <h1 className="headline text-3xl">Module detail</h1>
+          <p className="section-label">Platform · {meta?.label || moduleId}</p>
+          <div className="flex items-center gap-3">
+            {meta?.icon && <img src={meta.icon} alt="" className="h-7 w-7" style={{ filter: 'invert(0.9)' }} />}
+            <h1 className="headline text-3xl">{meta?.label || 'Module detail'}</h1>
+          </div>
         </div>
         <div className="text-xs text-gray-400 font-mono">
           {hoursMinutes}

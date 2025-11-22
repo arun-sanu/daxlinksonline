@@ -14,6 +14,8 @@ import Market from './pages/market/Market';
 import MyRentals from './pages/market/MyRentals';
 import ExchangeAccounts from './pages/ExchangeAccounts';
 import PineConvert from './pages/pine/Convert';
+import ExchangeIntegrationPage from './pages/platform/ExchangeIntegrationPage';
+import AccountRegistrationPage from './pages/AccountRegistrationPage';
 
 const withinCard = (node: ReactNode) => (
   <div className="layout-container section-pad">
@@ -37,8 +39,10 @@ export function AppRouter() {
         { path: 'market/rentals', element: withinCard(<MyRentals />) },
         { path: 'exchange-accounts', element: withinCard(<ExchangeAccounts />) },
         { path: 'pine-convert', element: withinCard(<PineConvert />) },
+        { path: 'account/register', element: <AccountRegistrationPage /> },
         { path: 'account', element: <AccountPage /> },
         { path: 'platform', element: <PlatformOverviewPage /> },
+        { path: 'platform/integrations/:exchangeId', element: <ExchangeIntegrationPage /> },
         { path: 'platform/:moduleId', element: <PlatformModulePage /> },
         { path: '*', element: <Navigate to="/" replace /> }
       ]

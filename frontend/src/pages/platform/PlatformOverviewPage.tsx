@@ -2,18 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 const MODULES = [
-  { id: 'integrations', label: 'Integrations', icon: '📡', metric: '11 connected exchanges', requiresAuth: true },
-  { id: 'databases', label: 'Databases', icon: '🗄️', metric: '3 clusters', requiresAuth: true },
-  { id: 'webhooks', label: 'Webhooks', icon: '🔗', metric: '18 active routes', requiresAuth: true },
-  { id: 'workflow', label: 'Workflow', icon: '🧠', metric: '5 nodes', requiresAuth: true, comingSoon: true },
-  { id: 'monitoring', label: 'Monitoring', icon: '📈', metric: 'Telemetry feed', requiresAuth: true, comingSoon: true },
-  { id: 'resources', label: 'Resources', icon: '📚', metric: 'Docs + runbooks' },
-  { id: 'trade-bots', label: 'Trade Bots', icon: '🤖', metric: 'Strategies ready', requiresAuth: true },
-  { id: 'banking', label: 'Banking', icon: '🏦', metric: 'Settlement windows', requiresAuth: true, comingSoon: true },
-  { id: 'dns', label: 'DNS', icon: '🛰️', metric: 'Edge profiles', requiresAuth: true },
-  { id: 'deployment', label: 'Deployment', icon: '🚀', metric: '3 pipelines', requiresAuth: true },
-  { id: 'vpn', label: 'VPN', icon: '🔐', metric: 'Edge tunnels', requiresAuth: true, comingSoon: true },
-  { id: 'support', label: 'Support', icon: '🎧', metric: 'Ops concierge', comingSoon: true }
+  { id: 'integrations', label: 'Integrations', icon: '/icons/hub.svg', metric: '11 connected exchanges', requiresAuth: true },
+  { id: 'alerts', label: 'Alert Rail', icon: '/icons/notifications-active.svg', metric: 'Channels + topics', requiresAuth: true },
+  { id: 'databases', label: 'Databases', icon: '/icons/storage.svg', metric: '3 clusters', requiresAuth: true },
+  { id: 'webhooks', label: 'Webhooks', icon: '/icons/link.svg', metric: '18 active routes', requiresAuth: true },
+  { id: 'workflow', label: 'Workflow', icon: '/icons/route.svg', metric: '5 nodes', requiresAuth: true, comingSoon: true },
+  { id: 'monitoring', label: 'Monitoring', icon: '/icons/monitoring.svg', metric: 'Telemetry feed', requiresAuth: true, comingSoon: true },
+  { id: 'resources', label: 'Resources', icon: '/icons/menu-book.svg', metric: 'Docs + runbooks' },
+  { id: 'trade-bots', label: 'Trade Bots', icon: '/icons/smart-toy.svg', metric: 'Strategies ready', requiresAuth: true },
+  { id: 'banking', label: 'Banking', icon: '/icons/account-balance.svg', metric: 'Settlement windows', requiresAuth: true, comingSoon: true },
+  { id: 'dns', label: 'DNS', icon: '/icons/dns.svg', metric: 'Edge profiles', requiresAuth: true },
+  { id: 'deployment', label: 'Deployment', icon: '/icons/rocket-launch.svg', metric: '3 pipelines', requiresAuth: true },
+  { id: 'vpn', label: 'VPN', icon: '/icons/vpn-lock.svg', metric: 'Edge tunnels', requiresAuth: true, comingSoon: true },
+  { id: 'support', label: 'Support', icon: '/icons/support-agent.svg', metric: 'Ops concierge', comingSoon: true }
 ];
 
 export default function PlatformOverviewPage() {
@@ -92,8 +93,8 @@ export default function PlatformOverviewPage() {
                     )}
                   </div>
                   <div className="flex flex-col items-center gap-3 text-center">
-                    <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-3xl text-white/80 group-hover:bg-white/15 group-hover:text-white">
-                      {module.icon}
+                    <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-white/80 group-hover:bg-white/15 group-hover:text-white">
+                      <img src={module.icon} alt="" className="h-7 w-7" style={{ filter: 'invert(0.9)' }} />
                     </span>
                     <span className="text-sm font-semibold text-white/90">{module.label}</span>
                     <div className="text-xs text-gray-400">{module.metric}</div>

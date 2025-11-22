@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKEND_DIR="$REPO_ROOT/backend"
+FRONTEND_DIR="$REPO_ROOT/frontend"
 UI_DIR="$REPO_ROOT/ui"
 LOG_DIR="$REPO_ROOT/.logs"
 mkdir -p "$LOG_DIR"
@@ -56,6 +57,10 @@ need_cmd() {
 
 need_cmd node
 need_cmd npm
+HAS_PNPM=0
+if command -v pnpm >/dev/null 2>&1; then
+  HAS_PNPM=1
+fi
 
 # Try to load backend/.env for DATABASE_URL and auth settings
 load_env() {
@@ -190,28 +195,57 @@ fi
 popd >/dev/null
 
 if [[ "$RUN_UI" -eq 1 ]]; then
-  info "Serving UI from $UI_DIR on port $UI_PORT..."
-  if command -v python3 >/dev/null 2>&1; then
-    pushd "$UI_DIR" >/dev/null
-    python3 -m http.server "$UI_PORT" > "$LOG_DIR/ui.log" 2>&1 &
+  if [[ -d "$FRONTEND_DIR" ]]; then
+    info "Installing frontend dependencies..."
+    if [[ "$HAS_PNPM" -eq 1 ]]; then
+      pushd "$FRONTEND_DIR" >/dev/null
+      pnpm install --frozen-lockfile || pnpm install
+      popd >/dev/null
+    else
+      pushd "$FRONTEND_DIR" >/dev/null
+      npm install
+      popd >/dev/null
+    fi
+
+    info "Starting frontend (Vite dev server) on port $UI_PORT..."
+    # Forward API requests to the backend; Vite reads this env in vite.config.ts
+    FRONTEND_LOG="$LOG_DIR/frontend.log"
+    if [[ "$HAS_PNPM" -eq 1 ]]; then
+      (cd "$FRONTEND_DIR" && VITE_DEV_SERVER_API_TARGET="http://localhost:$API_PORT" pnpm dev -- --host --port "$UI_PORT") >"$FRONTEND_LOG" 2>&1 &
+    else
+      (cd "$FRONTEND_DIR" && VITE_DEV_SERVER_API_TARGET="http://localhost:$API_PORT" npm run dev -- --host --port "$UI_PORT") >"$FRONTEND_LOG" 2>&1 &
+    fi
     UI_PID=$!
-    popd >/dev/null
-  elif command -v python >/dev/null 2>&1; then
-    pushd "$UI_DIR" >/dev/null
-    python -m http.server "$UI_PORT" > "$LOG_DIR/ui.log" 2>&1 &
-    UI_PID=$!
-    popd >/dev/null
+  elif [[ -d "$UI_DIR" ]]; then
+    info "Serving legacy static UI from $UI_DIR on port $UI_PORT..."
+    if command -v python3 >/dev/null 2>&1; then
+      pushd "$UI_DIR" >/dev/null
+      python3 -m http.server "$UI_PORT" > "$LOG_DIR/ui.log" 2>&1 &
+      UI_PID=$!
+      popd >/dev/null
+    elif command -v python >/dev/null 2>&1; then
+      pushd "$UI_DIR" >/dev/null
+      python -m http.server "$UI_PORT" > "$LOG_DIR/ui.log" 2>&1 &
+      UI_PID=$!
+      popd >/dev/null
+    else
+      err "Python is not installed; cannot serve UI automatically."
+      err "Manually open $UI_DIR/index.html in a browser or run:"
+      err "  (cd $UI_DIR && python3 -m http.server $UI_PORT)"
+    fi
   else
-    err "Python is not installed; cannot serve UI automatically."
-    err "Manually open $UI_DIR/index.html in a browser or run:"
-    err "  (cd $UI_DIR && python3 -m http.server $UI_PORT)"
+    err "No UI found at $FRONTEND_DIR or $UI_DIR (use --no-ui to skip)."
   fi
 fi
 
 echo
 ok "Backend:  http://localhost:$API_PORT (logs: $LOG_DIR/backend.log)"
 if [[ "$RUN_UI" -eq 1 ]]; then
-  ok "UI:       http://localhost:$UI_PORT"
+  if [[ -d "$FRONTEND_DIR" ]]; then
+    ok "UI:       http://localhost:$UI_PORT (logs: $LOG_DIR/frontend.log)"
+  elif [[ -d "$UI_DIR" ]]; then
+    ok "UI:       http://localhost:$UI_PORT"
+  fi
 fi
 
 echo

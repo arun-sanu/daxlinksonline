@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+
 const bots = [
   { name: 'Atlas Macro', status: 'Live', version: 'v12', guardrail: 'PnL floor 3%' },
   { name: 'Momentum Hive', status: 'Live', version: 'v7', guardrail: 'Max 5 fills/min' },
@@ -43,6 +45,35 @@ export default function TradeBotsModule() {
           <p className="text-xs text-gray-400">Burst tested from alerts + API</p>
         </article>
       </div>
+
+      <section className="card-shell space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="section-label">Runbook shortcuts</p>
+            <p className="text-sm text-gray-300">Jump into the dedicated Trade Bots UIs without leaving Platform.</p>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <ShortcutCard title="Bots table" description="Create, publish, and manage versions." to="/trade-bots" />
+          <ShortcutCard title="Marketplace" description="Rent published bots & plans." to="/market" />
+          <ShortcutCard title="Exchange accounts" description="Attach broker API keys with guardrails." to="/exchange-accounts" />
+          <ShortcutCard title="Pine → Python" description="Convert Pine strategies into bot ZIPs." to="/pine-convert" />
+          <ShortcutCard title="Rentals" description="Manage marketplace instances and billing." to="/market/rentals" />
+        </div>
+      </section>
     </div>
+  );
+}
+
+function ShortcutCard({ title, description, to }: { title: string; description: string; to: string }) {
+  return (
+    <Link
+      to={to}
+      className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/50 hover:bg-primary-500/10"
+    >
+      <div className="text-sm font-semibold text-main">{title}</div>
+      <p className="mt-1 text-xs text-gray-400">{description}</p>
+      <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-primary-200">Open →</p>
+    </Link>
   );
 }
