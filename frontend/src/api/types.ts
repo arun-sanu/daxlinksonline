@@ -10,6 +10,22 @@ export interface ExchangeAccount {
   updatedAt: string;
 }
 
+export type WebhookMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+
+export interface Webhook {
+  id: string;
+  workspaceId: string;
+  name: string;
+  url: string;
+  method: WebhookMethod | string;
+  events: string[];
+  active: boolean;
+  signingSecretRef?: string | null;
+  lastDeliveryAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Bot {
   id: string;
   workspaceId: string;

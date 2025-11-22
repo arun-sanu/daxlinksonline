@@ -224,7 +224,7 @@ export default function DNSModule() {
     : null;
 
   return (
-    <div className="dns-shell space-y-10 max-w-5xl">
+    <div className="dns-shell w-full space-y-10">
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <span className="dns-chip">Infrastructure</span>
@@ -237,8 +237,8 @@ export default function DNSModule() {
         </p>
       </section>
 
-      <section className="flex flex-col gap-4">
-        <article className="dns-card dns-card--grid space-y-4">
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)] items-start">
+        <article className="dns-card dns-card--grid space-y-4 h-full">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-main">Active zones</h2>
             <span className="dns-token">Aligned</span>
@@ -267,7 +267,7 @@ export default function DNSModule() {
           </table>
         </article>
 
-        <aside className="dns-card dns-card--accent space-y-4">
+        <aside className="dns-card dns-card--accent space-y-4 h-full">
           <div className="space-y-0.5">
             <p className="text-sm font-semibold text-main">Cloudflare edge</p>
             <p className="text-xs" style={{ color: '#F3801A' }}>Always-on DDoS &amp; WAF protection</p>
@@ -289,7 +289,7 @@ export default function DNSModule() {
         </aside>
       </section>
 
-      <section className="dns-card space-y-3">
+      <section className="dns-card space-y-3 w-full">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-main">Change workflow</h2>
           <span className="dns-token dns-token--ghost">Minimal</span>
@@ -304,7 +304,7 @@ export default function DNSModule() {
         </ol>
       </section>
 
-      <section className="relative dns-card space-y-4">
+      <section className="relative dns-card space-y-4 w-full">
         {showConfetti && (
           <div className="pointer-events-none absolute inset-0 z-10">
             <canvas ref={confettiCanvas} className="h-full w-full"></canvas>
