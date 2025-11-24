@@ -73,8 +73,8 @@ export default function HomePage() {
               <a href="https://daxlinks.online/docs" target="_blank" rel="noreferrer" className="btn btn-primary btn-white-animated">
                 Get Started
               </a>
-              <Link to="/trade-bots" className="btn btn-secondary">
-                Launch Trade Bots
+              <Link to="/account/register" className="btn btn-secondary">
+                New User Registration
               </Link>
             </div>
             <dl className="hero-stats">
@@ -158,9 +158,6 @@ export default function HomePage() {
               <p className="section-label">Portal quick actions</p>
               <h3 className="mt-2 text-2xl font-semibold text-main">Jump into the control center</h3>
             </div>
-            <Link to="/trade-bots" className="btn btn-secondary btn-small">
-              Trade Bots
-            </Link>
           </div>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <Link to="/account" className="card-shell">

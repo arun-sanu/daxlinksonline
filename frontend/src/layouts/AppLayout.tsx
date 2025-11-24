@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import AlertRail from '../components/AlertRail';
 
 const navItems = [
-  { to: '/overview', label: 'Overview', exact: true },
+  { to: '/dashboard', label: 'Dashboard', exact: true },
   { to: '/account', label: 'Account' },
   { to: '/platform', label: 'Platform' }
 ];
@@ -13,6 +13,10 @@ export default function AppLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const toggleMobile = () => setMobileNavOpen((prev) => !prev);
   const closeMobile = () => setMobileNavOpen(false);
+  const isRegistration = location.pathname.startsWith('/account/register');
+  const visibleNavItems = isRegistration
+    ? navItems.filter((item) => item.label !== 'Dashboard' && item.label !== 'Platform')
+    : navItems;
   const hideFooter = location.pathname.startsWith('/platform') || location.pathname.startsWith('/account');
 
   return (
@@ -28,7 +32,7 @@ export default function AppLayout() {
             <span className="brand-cyber">D&gt;&lt;</span>
           </div>
           <nav className="hidden flex-1 flex-wrap items-center justify-center gap-2 overflow-x-auto text-[11px] font-semibold uppercase tracking-[0.22em] md:flex md:gap-3">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -70,14 +74,12 @@ export default function AppLayout() {
           >
             <div className="layout-container py-4">
               <nav className="flex flex-col gap-3 text-sm font-semibold text-gray-300">
-                {navItems.map((item) => (
+                {visibleNavItems.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `mobile-nav-link bg-gradient-to-r from-gray-900 via-gray-950 to-black/80 ${
-                        isActive ? 'mobile-nav-link--active' : ''
-                      }`
+                      `mobile-nav-link bg-gradient-to-r from-gray-900 via-gray-950 to-black/80 ${isActive ? 'mobile-nav-link--active' : ''}`
                     }
                     end={item.exact}
                     onClick={closeMobile}
