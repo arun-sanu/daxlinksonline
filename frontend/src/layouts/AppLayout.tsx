@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import AlertRail from '../components/AlertRail';
 
 const navItems = [
-  { to: '/', label: 'Overview', exact: true },
+  { to: '/overview', label: 'Overview', exact: true },
   { to: '/account', label: 'Account' },
   { to: '/platform', label: 'Platform' }
 ];

@@ -10,6 +10,8 @@ import BotDetail from './pages/trade-bots/BotDetail';
 import BotVersions from './pages/trade-bots/BotVersions';
 import BotInstances from './pages/trade-bots/BotInstances';
 import InstanceDetail from './pages/trade-bots/InstanceDetail';
+import LandingPage from './pages/LandingPage';
+import LoginPage from './pages/LoginPage';
 import Market from './pages/market/Market';
 import MyRentals from './pages/market/MyRentals';
 import ExchangeAccounts from './pages/ExchangeAccounts';
@@ -25,11 +27,13 @@ const withinCard = (node: ReactNode) => (
 
 export function AppRouter() {
   const element = useRoutes([
+    { path: '/', element: <LandingPage /> },
+    { path: '/login', element: <LoginPage /> },
     {
       path: '/',
       element: <AppLayout />,
       children: [
-        { index: true, element: <HomePage /> },
+        { path: 'overview', element: <HomePage /> },
         { path: 'trade-bots', element: <TradeBotsPage /> },
         { path: 'trade-bots/:botId', element: withinCard(<BotDetail />) },
         { path: 'trade-bots/:botId/versions', element: withinCard(<BotVersions />) },
@@ -44,7 +48,7 @@ export function AppRouter() {
         { path: 'platform', element: <PlatformOverviewPage /> },
         { path: 'platform/integrations/:exchangeId', element: <ExchangeIntegrationPage /> },
         { path: 'platform/:moduleId', element: <PlatformModulePage /> },
-        { path: '*', element: <Navigate to="/" replace /> }
+        { path: '*', element: <Navigate to="/overview" replace /> }
       ]
     }
   ]);

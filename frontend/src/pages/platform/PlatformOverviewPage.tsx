@@ -80,12 +80,12 @@ export default function PlatformOverviewPage() {
 
         <section className="rounded-3xl border border-transparent p-2">
           <div className="scroll-shell max-h-[70vh] overflow-y-auto pr-1">
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
               {filtered.map((module) => (
                 <Link
                   key={module.id}
                   to={`/platform/${module.id}`}
-                  className="group relative flex aspect-square flex-col items-center justify-center gap-3 rounded-3xl border px-4 py-5 transition border-white/10 bg-transparent hover:border-primary-400/40 hover:bg-primary-500/10"
+                  className="group relative flex aspect-square flex-col items-center justify-center gap-2.5 rounded-2xl border px-3.5 py-4 transition border-white/10 bg-transparent hover:border-primary-400/40 hover:bg-primary-500/10"
                 >
                   <div className="absolute right-4 top-3 flex flex-col items-center gap-1 text-sm">
                     {(module.comingSoon || module.id === 'databases') && (
@@ -93,8 +93,8 @@ export default function PlatformOverviewPage() {
                     )}
                   </div>
                   <div className="flex flex-col items-center gap-3 text-center">
-                    <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-white/80 group-hover:bg-white/15 group-hover:text-white">
-                      <img src={module.icon} alt="" className="h-7 w-7" style={{ filter: 'invert(0.9)' }} />
+                    <span className="flex h-16 w-16 items-center justify-center text-white/80">
+                      <img src={module.icon} alt="" className="h-8 w-8" style={{ filter: 'invert(0.9)' }} />
                     </span>
                     <span className="text-sm font-semibold text-white/90">{module.label}</span>
                     <div className="text-xs text-gray-400">{module.metric}</div>
