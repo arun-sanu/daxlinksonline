@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NotificationsModal, type NotificationItem } from './NotificationsModal';
 
@@ -29,7 +29,7 @@ export default function AlertRail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function fetchInbox() {
+  const fetchInbox = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/notify/inbox?limit=50', { credentials: 'include' });
       if (!res.ok) return;
@@ -53,13 +53,13 @@ export default function AlertRail() {
     } catch {
       // ignore, fallback stays
     }
-  }
+  }, [seenKey]);
 
   useEffect(() => {
     fetchInbox();
     const timer = setInterval(fetchInbox, 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [fetchInbox]);
 
   function openNotifications() {
     fetchInbox();
@@ -71,6 +71,23 @@ export default function AlertRail() {
   function goAlertsPage() {
     navigate('/platform/alerts');
   }
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore logout failures; still clear local state
+    }
+    try {
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('daxlinksToken');
+      localStorage.removeItem('authUser');
+      localStorage.removeItem(seenKey);
+    } catch {
+      // ignore storage errors
+    }
+    navigate('/', { replace: true });
+  }, [navigate, seenKey]);
 
   return (
     <>
@@ -108,6 +125,34 @@ export default function AlertRail() {
             }}
           >
             <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="alert-tab__button"
+          aria-label="Logout"
+          onClick={handleLogout}
+          title="Logout"
+          style={{ marginLeft: '6px' }}
+        >
+          <svg
+            aria-hidden="true"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              color: '#ffffff',
+              filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.35)) drop-shadow(0 0 6px rgba(255,255,255,0.25))'
+            }}
+          >
+            <path d="M16 17l5-5-5-5" />
+            <path d="M21 12H9" />
+            <path d="M12 19H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
           </svg>
         </button>
       </aside>

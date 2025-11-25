@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,8 +10,16 @@
 
 body {
   margin: 0;
-  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'IBM Plex Sans', 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   min-height: 100vh;
+}
+
+.react-grid-placeholder {
+  background: rgba(239, 68, 68, 0.28) !important;
+  border-radius: 18px;
+  transform: scale(1);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  border: 1px dashed rgba(255, 255, 255, 0.35);
 }
 
 .shockwave {

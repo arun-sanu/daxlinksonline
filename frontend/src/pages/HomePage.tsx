@@ -6,12 +6,6 @@ const metrics = {
   throughput: '250k/min'
 };
 
-const webcastChannels = [
-  { id: 'okx', exchange: 'OKX', channel: 'orderbook.delta', updates: 128 },
-  { id: 'bybit', exchange: 'Bybit', channel: 'order.fills', updates: 96 },
-  { id: 'zerodha', exchange: 'Zerodha', channel: 'kite.positions', updates: 44 }
-];
-
 const resources = [
   {
     icon: '📚',

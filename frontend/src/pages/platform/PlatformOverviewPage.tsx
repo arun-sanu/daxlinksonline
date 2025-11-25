@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 const MODULES = [
@@ -18,17 +18,7 @@ const MODULES = [
 ];
 
 export default function PlatformOverviewPage() {
-  const [now, setNow] = useState(() => new Date());
   const [searchQuery, setSearchQuery] = useState('');
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const hoursMinutes = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const seconds = now.getSeconds().toString().padStart(2, '0');
-  const formattedDate = now.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -48,14 +38,6 @@ export default function PlatformOverviewPage() {
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)] items-start">
         <section className="space-y-6">
-          <div className="space-y-2">
-            <p className="text-5xl font-light text-main font-mono tracking-wider md:text-6xl lg:text-7xl">
-              {hoursMinutes}
-              <span className="align-baseline text-lg font-light text-primary-200">:{seconds}</span>
-            </p>
-            <p className="text-sm text-gray-400">{formattedDate}</p>
-          </div>
-
           <div className="card-shell space-y-3">
             <p className="section-label">daxlinks.online</p>
             <p className="text-sm text-gray-300">
