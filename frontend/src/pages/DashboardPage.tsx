@@ -112,7 +112,7 @@ export default function DashboardPage() {
             isDragging ? 'opacity-80' : ''
           }`}
         >
-          <div className="absolute left-[10%] top-0 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-transparent">
+          <div className="absolute left-[10%] top-0 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-transparent">
             <svg
               aria-hidden="true"
               viewBox="0 0 24 24"
@@ -126,6 +126,20 @@ export default function DashboardPage() {
             >
               <circle cx="12" cy="12" r="9" />
               <polyline points="12 7 12 12 15 14" />
+            </svg>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: '#9ca3af' }}
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10.49 3H11a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .28.11.55.31.75.2.2.47.31.75.31H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
             </svg>
           </div>
           <div className="relative mt-3 space-y-3 pt-2">
@@ -152,7 +166,7 @@ export default function DashboardPage() {
             isDragging ? 'opacity-80' : ''
           }`}
         >
-          <div className="absolute left-[10%] top-0 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-transparent">
+          <div className="absolute left-[10%] top-0 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-transparent">
             <svg
               aria-hidden="true"
               viewBox="0 0 24 24"
@@ -168,6 +182,20 @@ export default function DashboardPage() {
               <line x1="16" y1="3" x2="16" y2="7" />
               <line x1="8" y1="3" x2="8" y2="7" />
               <line x1="4" y1="11" x2="20" y2="11" />
+            </svg>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: '#9ca3af' }}
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10.49 3H11a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .28.11.55.31.75.2.2.47.31.75.31H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
             </svg>
           </div>
           <div className="relative mt-3 space-y-3 pt-2">

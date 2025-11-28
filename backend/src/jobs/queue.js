@@ -5,6 +5,8 @@ let queue = null;
 let queueEvents = null;
 let worker = null;
 let memoryHandlers = [];
+export let executeOrdersQueue = null;
+export let executeOrdersWorker = null;
 
 function getRedis() {
   const url = process.env.REDIS_URL;
@@ -38,4 +40,18 @@ export async function enqueue(name, data, opts) {
   const processor = memoryHandlers[0];
   if (processor) setTimeout(() => processor({ data }), 0);
   return { id: `mem_${Date.now()}` };
+}
+
+export function initExecuteOrdersQueue({ processor } = {}) {
+  const redis = getRedis();
+  if (redis) {
+    executeOrdersQueue = new Queue('execute_orders', { connection: redis });
+    if (processor) {
+      executeOrdersWorker = new Worker('execute_orders', processor, { connection: redis, concurrency: 3 });
+    }
+    return { mode: 'redis', queue: executeOrdersQueue, worker: executeOrdersWorker };
+  }
+  // in-memory fallback: reuse memoryHandlers
+  if (processor) memoryHandlers.push(processor);
+  return { mode: 'memory' };
 }

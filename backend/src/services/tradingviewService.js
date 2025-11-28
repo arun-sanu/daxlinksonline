@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../utils/prisma.js';
 
 function nowPlusDays(days) {
@@ -8,16 +9,12 @@ function nowPlusDays(days) {
 
 export function generateWebhookSubdomain(userId) {
   const short = userId.replace(/-/g, '').slice(0, 8);
-  const rand = [...crypto.getRandomValues(new Uint8Array(3))]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  const rand = crypto.randomBytes(3).toString('hex');
   return `${short}-${rand}`;
 }
 
 export function generateSecret() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return crypto.randomBytes(16).toString('hex');
 }
 
 export async function ensureTrialWebhook(userId) {

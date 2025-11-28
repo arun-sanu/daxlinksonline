@@ -52,6 +52,45 @@ body {
   animation: lockPulse 1.6s ease-in-out infinite;
 }
 
+@keyframes pulse-blue {
+  0% { opacity: 1; }
+  50% { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+
+@keyframes pulse-green {
+  0% { transform: scale(1); opacity: 1; }
+  60% { transform: scale(1.05); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.edge-active {
+  animation: pulse-blue 2s ease-in-out infinite;
+}
+
+.edge-recent {
+  opacity: 0.9;
+}
+
+.edge-inactive {
+  opacity: 0.35;
+}
+
+.node-pulse {
+  animation: pulse-green 1s ease-out;
+}
+
+.edge-error-icon,
+.node-error-icon {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 10px;
+}
+
+.node-healthy {
+  box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.12);
+}
 @keyframes shockwave {
   0% {
     transform: scale(0.5);

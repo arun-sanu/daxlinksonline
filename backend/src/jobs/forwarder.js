@@ -3,6 +3,8 @@ import { decrypt } from '../lib/kms.js';
 import { createExchange } from '../sdk/index.js';
 import { normalizePayload, computeIdempotencyKey, sanitizePayload } from '../services/forwardingMapper.js';
 import crypto from 'crypto';
+import { getWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
+import { initExecuteOrdersQueue, executeOrdersQueue } from './queue.js';
 
 function sanitize(obj) {
   try {
@@ -23,6 +25,7 @@ export async function processForwardJob(job) {
   if (!userId) return;
   const normalized = normalizePayload(payload);
   const idemKey = computeIdempotencyKey({ userId, normalized });
+  const notional = normalized.amount && normalized.price ? normalized.amount * normalized.price : normalized.amount || 0;
 
   const workspaces = await prisma.workspace.findMany({
     where: { ownerId: userId },
@@ -31,79 +34,56 @@ export async function processForwardJob(job) {
   const workspaceIds = workspaces.map((w) => w.id);
   if (workspaceIds.length === 0) return;
 
-  const integrations = await prisma.integration.findMany({
-    where: { workspaceId: { in: workspaceIds }, status: 'active' },
-    include: { credential: true }
-  });
+  const executionTargets = [];
+  for (const workspaceId of workspaceIds) {
+    const config = await getWorkspaceWorkflowConfig(workspaceId);
+    const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
+    const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
+    const simulation = await simulateRules({ workspaceId, rules: config.rules || [], source, signal });
+    executionTargets.push(...simulation.matchedRules);
+  }
 
-  for (const integ of integrations) {
-    // Skip if already succeeded with this idempotency key for this integration
-    const existing = await prisma.forwardedSignal.findUnique({ where: { idempotencyKey: idemKey } }).catch(() => null);
-    if (existing && existing.status === 'succeeded' && existing.integrationId === integ.id) {
-      continue;
+  if (!executionTargets.length) {
+    console.log('[forwarder] No matching routing rules — signal ignored');
+    await upsertForwardedSignal({
+      userId,
+      integrationId: null,
+      idempotencyKey: idemKey,
+      normalized,
+      status: 'skipped_no_rule',
+      attempts: 1,
+      error: 'No matching routing rules'
+    });
+    return;
+  }
+
+  for (const target of executionTargets) {
+    const augmented = {
+      ...normalized,
+      raw: {
+        ...(normalized.raw || {}),
+        mappedOrder: target.mappedOrder,
+        ruleId: target.ruleId
+      }
+    };
+    const record = await upsertForwardedSignal({
+      userId,
+      integrationId: target.destinationIntegrationId || null,
+      idempotencyKey: idemKey,
+      normalized: augmented,
+      status: 'ready_for_execution',
+      attempts: 0,
+      error: null
+    });
+    if (!executeOrdersQueue) {
+      initExecuteOrdersQueue();
     }
-    let status = 'sent';
-    let error = null;
-    const started = Date.now();
-    try {
-      if (!integ.credential) throw new Error('Missing credentials');
-      const exchange = createExchange({
-        exchange: integ.exchange,
-        environment: integ.environment,
-        apiKey: decrypt(integ.credential.apiKey),
-        apiSecret: decrypt(integ.credential.apiSecret),
-        passphrase: integ.credential.passphrase ? decrypt(integ.credential.passphrase) : undefined
-      });
-      // Attempt order placement with best-effort method detection
-      await placeOrderBestEffort(exchange, normalized);
-
-      await prisma.auditLog.create({
-        data: {
-          userId,
-          action: 'forward.sent',
-          entityType: 'Integration',
-          entityId: integ.id,
-          summary: `${integ.exchange} ${integ.environment}`,
-          detail: { payload: sanitizePayload(payload), order: { symbol: normalized.symbol, side: normalized.side, type: normalized.type, amount: normalized.amount, price: normalized.price } }
-        }
-      });
-      await upsertForwardedSignal({
-        userId,
-        integrationId: integ.id,
-        idempotencyKey: idemKey,
-        normalized,
-        status: 'succeeded',
-        attempts: 1,
-        error: null
-      });
-    } catch (e) {
-      status = 'failed';
-      error = e?.message || String(e);
-      await prisma.auditLog.create({
-        data: {
-          userId,
-          action: 'forward.failed',
-          entityType: 'Integration',
-          entityId: integ.id,
-          summary: `${integ.exchange} ${integ.environment}`,
-          detail: { payload: sanitizePayload(payload), error }
-        }
-      });
-      await upsertForwardedSignal({
-        userId,
-        integrationId: integ.id,
-        idempotencyKey: idemKey,
-        normalized,
-        status: 'failed',
-        attempts: 1,
-        error
-      });
-    } finally {
-      // Metrics captured via AuditLog and ForwardedSignal; no WebhookDelivery side-effects here
-      const elapsed = Date.now() - started;
-      void elapsed; // placeholder to keep elapsed computed if needed later
+    if (executeOrdersQueue) {
+      await executeOrdersQueue.add('execute-prepared-signal', { signalId: record.id });
     }
   }
+
+  console.log(`[forwarder] Signal routed to ${executionTargets.length} integration(s) using workflow rules`);
 }
 
 async function upsertForwardedSignal({ userId, integrationId, idempotencyKey, normalized, status, attempts, error }) {

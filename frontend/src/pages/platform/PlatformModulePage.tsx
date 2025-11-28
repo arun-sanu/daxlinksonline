@@ -13,6 +13,7 @@ import BankingModule from './modules/BankingModule';
 import VPNModule from './modules/VPNModule';
 import SupportModule from './modules/SupportModule';
 import AlertsModule from './modules/AlertsModule';
+import ChatModule from './modules/ChatModule';
 
 const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   integrations: IntegrationsModule,
@@ -27,7 +28,8 @@ const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   dns: DNSModule,
   deployment: DeploymentModule,
   vpn: VPNModule,
-  support: SupportModule
+  support: SupportModule,
+  chat: ChatModule
 };
 
 const MODULE_META: Record<string, { label: string; icon: string }> = {
@@ -43,7 +45,8 @@ const MODULE_META: Record<string, { label: string; icon: string }> = {
   dns: { label: 'DNS', icon: '/icons/dns.svg' },
   deployment: { label: 'Deployment', icon: '/icons/rocket-launch.svg' },
   vpn: { label: 'VPN', icon: '/icons/vpn-lock.svg' },
-  support: { label: 'Support', icon: '/icons/support-agent.svg' }
+  support: { label: 'Support', icon: '/icons/support-agent.svg' },
+  chat: { label: 'Chat & Channels', icon: '/icons/notifications.svg' }
 };
 
 export default function PlatformModulePage() {

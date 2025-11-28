@@ -18,6 +18,7 @@ model Workspace {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   ownerId        String?
+  workflowConfig Json?
 
   integrations     Integration[]
   webhooks         Webhook[]
