@@ -89,10 +89,6 @@ export default function PlatformModulePage() {
         </div>
       </header>
 
-      <Link to="/platform" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-primary-200">
-        ← Back to overview
-      </Link>
-
       <section className="space-y-6">
         <Detail />
       </section>

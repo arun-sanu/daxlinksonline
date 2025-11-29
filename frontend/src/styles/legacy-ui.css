@@ -652,9 +652,11 @@ select.field:-webkit-autofill {
 }
 
 .mobile-nav-link--active {
-  border-color: rgba(107, 107, 247, 0.4);
-  color: var(--primary);
-  box-shadow: 0 0 20px rgba(18, 152, 230, 0.25);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f7ff;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16), 0 0 14px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
 }
 
 .desktop-nav-pill {
@@ -669,10 +671,11 @@ select.field:-webkit-autofill {
 }
 
 .desktop-nav-pill--active {
-  border-color: rgba(107, 107, 247, 0.5);
-  background: rgba(107, 107, 247, 0.15);
-  color: var(--primary);
-  box-shadow: 0 0 28px rgba(107, 107, 247, 0.45);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f7ff;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2), 0 0 14px rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
 }
 
 .desktop-nav-pill:not(.desktop-nav-pill--active):hover {

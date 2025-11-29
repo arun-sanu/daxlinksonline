@@ -129,6 +129,8 @@ export default {
             <button
               type="button"
               class="btn btn-primary"
+              disabled
+              title="Persisting node changes will be wired once backend endpoint is ready."
               style="padding: 0.7rem 1.4rem;"
             >
               Persist Changes
@@ -136,6 +138,8 @@ export default {
             <button
               type="button"
               class="btn btn-secondary"
+              disabled
+              title="Reset will be enabled once node persistence is available."
               style="padding: 0.7rem 1.4rem; border-color: rgba(255,0,0,0.25); color: rgba(255,255,255,0.7);"
             >
               Reset Node

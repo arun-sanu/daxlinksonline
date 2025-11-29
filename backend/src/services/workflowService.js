@@ -131,12 +131,13 @@ export async function listWorkflowEvents({ workspaceId, edgeKey, since, limit = 
 export async function getWorkspaceWorkflowConfig(workspaceId) {
   const ws = await prisma.workspace.findUnique({ where: { id: workspaceId } });
   if (!ws || !ws.workflowConfig) {
-    return { version: 1, rules: [] };
+    return { version: 1, rules: [], customNodes: [] };
   }
   const cfg = ws.workflowConfig || {};
   return {
     version: typeof cfg.version === 'number' ? cfg.version : 1,
-    rules: Array.isArray(cfg.rules) ? cfg.rules : []
+    rules: Array.isArray(cfg.rules) ? cfg.rules : [],
+    customNodes: Array.isArray(cfg.customNodes) ? cfg.customNodes : []
   };
 }
 
@@ -202,7 +203,7 @@ export async function simulateRules({ workspaceId, rules, source, signal }) {
       mappedOrder: {
         orderType: mapping.orderType || 'market',
         size,
-        leverage: mapping.maxLeverage || 1
+        leverage: mapping.maxLeverage || mapping.leverage || 1
       }
     });
   }

@@ -692,6 +692,8 @@ export default function WorkflowModule() {
   const [activityTab, setActivityTab] = useState<'executions' | 'events'>('executions');
   const [viewTab, setViewTab] = useState<'graph' | 'catalog'>('graph');
   const [savingRules, setSavingRules] = useState(false);
+  const [mockedNodes, setMockedNodes] = useState<{ mocked: boolean; reason?: string | null }>({ mocked: false, reason: null });
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     const safeNodes = toArray(nodes);
@@ -722,12 +724,24 @@ export default function WorkflowModule() {
 
   const workspaceId = useMemo(() => {
     try {
-      return localStorage.getItem('workspaceId') || '00000000-0000-0000-0000-000000000000';
+      const stored = localStorage.getItem('workspaceId');
+      return stored || '';
     } catch {
-      return '00000000-0000-0000-0000-000000000000';
+      return '';
     }
   }, []);
+  const workspaceReady = useMemo(() => !!workspaceId && workspaceId !== '00000000-0000-0000-0000-000000000000', [workspaceId]);
   console.log({ workspaceId });
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
+    setToast({ message, tone });
+  };
 
   function buildNodes(webhooks: any[], bots: any[], integrations: any[]): WorkflowNode[] {
     const server: WorkflowNode = { id: SERVER_ID, label: 'DaxLinks Router / SERVER', type: 'logic', role: 'server', status: 'green', position: { x: CENTER.x, y: CENTER.y } };
@@ -805,6 +819,12 @@ export default function WorkflowModule() {
     (async () => {
       setLoading(true);
       setError(null);
+      if (!workspaceReady) {
+        setError('Workspace ID missing or placeholder. Log in again to load workflow data.');
+        setMockedNodes({ mocked: true, reason: 'No workspaceId supplied; using placeholder graph only.' });
+        setLoading(false);
+        return;
+      }
       try {
         const [nodesRespRaw, rulesRespRaw, eventsRespRaw] = await Promise.all([
           fetchWorkflowNodes(workspaceId),
@@ -814,8 +834,9 @@ export default function WorkflowModule() {
         const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
         const rulesResp = toArray(rulesRespRaw);
         const eventsResp = toArray(eventsRespRaw);
-        const { webhooks = [], bots = [], integrations = [] } = nodesResp || {};
+        const { webhooks = [], bots = [], integrations = [], mocked = false, mockReason = null } = nodesResp || {};
         if (!mounted) return;
+        setMockedNodes({ mocked: !!mocked, reason: mockReason });
         const nodesBuilt = buildNodes(toArray(webhooks), toArray(bots), toArray(integrations));
         console.log('[WM] Nodes loaded:', nodesBuilt);
         const edgesBuilt = buildEdges(nodesBuilt, rulesResp, eventsResp);
@@ -827,9 +848,12 @@ export default function WorkflowModule() {
         console.log('[WM] Rules loaded:', rulesResp);
         console.log('[WM] Events loaded:', eventsResp);
         const execs = await fetchExecutionHistory(workspaceId);
-        setExecutions(toArray(execs));
+        if (mounted) setExecutions(toArray(execs));
       } catch (err: any) {
-        if (mounted) setError(err?.message || 'Failed to load workflow data');
+        if (mounted) {
+          setError(err?.message || 'Failed to load workflow data');
+          setMockedNodes((prev) => ({ mocked: true, reason: err?.message || prev.reason || 'Failed to load workflow data' }));
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -837,7 +861,7 @@ export default function WorkflowModule() {
     return () => {
       mounted = false;
     };
-  }, [workspaceId]);
+  }, [workspaceId, workspaceReady]);
 
   useEffect(() => {
     function handleMove(e: MouseEvent) {
@@ -876,6 +900,10 @@ export default function WorkflowModule() {
             });
             setTimeout(() => setSimPreview(null), 2500);
           } else {
+            if (!workspaceReady) {
+              setError('Workspace ID missing or placeholder. Log in again to simulate routing.');
+              return;
+            }
             simulateRouting(workspaceId, sourceId, destinationId)
               .then((res) => {
                 const hasMatch = Array.isArray(res?.matchedRules) && res.matchedRules.length > 0;
@@ -936,6 +964,10 @@ export default function WorkflowModule() {
   }, [dragConnection, hoverPort, selectedSource, workspaceId]);
 
   async function handleSaveRule(draft: Partial<RoutingRule>) {
+    if (!workspaceReady) {
+      setError('Workspace ID missing or placeholder. Log in again to save routing rules.');
+      return;
+    }
     const safeRuleList = Array.isArray(rules) ? rules : [];
     const sourceWebhookId = draft.sourceWebhookId || selectedSource || '';
     const destinationIntegrationId = draft.destinationIntegrationId || '';
@@ -980,21 +1012,28 @@ export default function WorkflowModule() {
   }
 
   async function handleCreateNode(side: 'source' | 'destination', draft: { label: string; nodeType: string; description?: string }) {
+    if (!workspaceReady) {
+      setError('Workspace ID missing or placeholder. Log in again to create nodes.');
+      return;
+    }
     try {
-      const res = await createNode(workspaceId, { label: draft.label, nodeType: draft.nodeType, description: draft.description, side });
-      if (!res) {
-        setError('Node creation not available yet. Backend endpoint is stubbed.');
-        return;
-      }
-      const [{ webhooks, bots, integrations }] = await Promise.all([fetchWorkflowNodes(workspaceId)]);
+      await createNode(workspaceId, { label: draft.label, nodeType: draft.nodeType, description: draft.description, side });
+      const [nodesRespRaw] = await Promise.all([fetchWorkflowNodes(workspaceId)]);
+      const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
+      const { webhooks = [], bots = [], integrations = [], mocked = false, mockReason = null } = nodesResp || {};
+      setMockedNodes({ mocked: !!mocked, reason: mockReason });
       const nodesBuilt = buildNodes(webhooks || [], bots || [], integrations || []);
       const safeRuleList = Array.isArray(rules) ? rules : [];
       const edgesBuilt = buildEdges(nodesBuilt, safeRuleList, events);
       const nodesWithHealth = applyNodeHealth(nodesBuilt, edgesBuilt, events);
       setNodes(nodesWithHealth);
       setEdges(edgesBuilt);
+      setError(null);
+      showToast(`Node "${draft.label || 'Unnamed'}" created`, 'success');
     } catch (err: any) {
-      setError(err?.message || 'Failed to create node');
+      const message = err?.message || 'Failed to create node';
+      setError(message);
+      showToast(message, 'error');
     } finally {
       setCreateNodeModal({ open: false, side, draft: null });
     }
@@ -1008,6 +1047,10 @@ export default function WorkflowModule() {
   };
 
   async function handleDeleteRule(ruleId: string) {
+    if (!workspaceReady) {
+      setError('Workspace ID missing or placeholder. Log in again to edit routing rules.');
+      return;
+    }
     const safeRuleList = Array.isArray(rules) ? rules : [];
     const nextRules = safeRuleList.filter((r) => r.id !== ruleId);
     setSavingRules(true);
@@ -1047,20 +1090,41 @@ export default function WorkflowModule() {
         onClose={() => setCreateNodeModal({ open: false, side: 'source', draft: null })}
         onSave={handleCreateNode}
       />
+      {toast && (
+        <div
+          className={`fixed right-4 top-4 z-[200] rounded-xl border px-4 py-3 text-sm shadow-lg ${
+            toast.tone === 'success' ? 'bg-emerald-600/80 border-emerald-300/60 text-emerald-50' : 'bg-red-600/80 border-red-300/60 text-red-50'
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
       {(!nodes || isLoading) && (
         <div className="w-full py-12 text-center text-gray-300">
           <p className="text-sm">Loading workflow graph…</p>
         </div>
       )}
       <div className="relative w-full overflow-hidden">
-        <div className="mb-4"></div>
-
         {error && (
           <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             {error}
           </div>
         )}
         <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-200">
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/40 px-3 py-1 font-mono text-[10px] text-gray-300">
+              <span className="text-gray-500">Workspace</span>
+              <span className="text-white">{workspaceId || 'not-set'}</span>
+            </span>
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${mockedNodes.mocked ? 'border-amber-400/40 bg-amber-500/10 text-amber-200' : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'}`}
+              title={mockedNodes.reason || undefined}
+            >
+              <span className={`h-2 w-2 rounded-full ${mockedNodes.mocked ? 'bg-amber-300' : 'bg-emerald-300'}`}></span>
+              Mocked nodes: {mockedNodes.mocked ? 'true' : 'false'}
+            </span>
+            {mockedNodes.reason && <span className="text-xs text-amber-200">{mockedNodes.reason}</span>}
+          </div>
           <div className="inline-flex rounded-full border border-white/15 bg-black/40 p-1 text-xs text-gray-200">
             <button
               className={`px-3 py-1.5 rounded-full transition ${viewTab === 'graph' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
@@ -1110,8 +1174,20 @@ export default function WorkflowModule() {
                   >
                     Add routing rule
                   </button>
-                  <button className="rounded-lg border border-white/10 px-2 py-1 text-gray-400" disabled>
-                    Configure (coming soon)
+                  <button
+                    className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
+                    onClick={() =>
+                      setRuleModal({
+                        open: true,
+                        draft: {
+                          sourceWebhookId: n.id,
+                          destinationIntegrationId: '',
+                          enabled: true
+                        }
+                      })
+                    }
+                  >
+                    Configure
                   </button>
                 </div>
               </li>
@@ -1154,8 +1230,20 @@ export default function WorkflowModule() {
                   >
                     Add routing rule
                   </button>
-                  <button className="rounded-lg border border-white/10 px-2 py-1 text-gray-400" disabled>
-                    Configure (coming soon)
+                  <button
+                    className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
+                    onClick={() =>
+                      setRuleModal({
+                        open: true,
+                        draft: {
+                          sourceWebhookId: '',
+                          destinationIntegrationId: n.id,
+                          enabled: true
+                        }
+                      })
+                    }
+                  >
+                    Configure
                   </button>
                 </div>
               </li>

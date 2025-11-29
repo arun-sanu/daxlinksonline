@@ -3,7 +3,7 @@ import { prisma } from '../utils/prisma.js';
 // Ensures the requester has access to the target workspace
 export async function guard(req, res, next) {
   try {
-    const workspaceId = req.params?.workspaceId || req.query?.workspaceId;
+    const workspaceId = req.params?.workspaceId || req.query?.workspaceId || req.body?.workspaceId;
     if (!workspaceId || !req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }

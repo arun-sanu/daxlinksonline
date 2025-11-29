@@ -1,5 +1,15 @@
 const defaultHeaders = { 'Content-Type': 'application/json' };
 
+function generateRuleId() {
+  try {
+    // Browser crypto
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function authHeaders() {
   try {
     const token = localStorage.getItem('authToken');
@@ -11,9 +21,9 @@ function authHeaders() {
 
 function getWorkspaceId(fallback?: string) {
   try {
-    return localStorage.getItem('workspaceId') || fallback || '00000000-0000-0000-0000-000000000000';
+    return localStorage.getItem('workspaceId') || fallback || '';
   } catch {
-    return fallback || '00000000-0000-0000-0000-000000000000';
+    return fallback || '';
   }
 }
 
@@ -23,6 +33,16 @@ async function handleJson<T>(res: Response): Promise<T> {
     throw new Error(text || `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
+}
+
+async function extractErrorMessage(res: Response, fallbackMessage: string) {
+  const text = await res.text().catch(() => '');
+  try {
+    const parsed = text ? JSON.parse(text) : null;
+    const msg = parsed?.error || parsed?.message;
+    if (msg) return msg;
+  } catch {}
+  return text || `${fallbackMessage} (${res.status})`;
 }
 
 async function safeFetch<T>(input: RequestInfo, init?: RequestInit, fallback: T | null = null): Promise<T | null> {
@@ -46,9 +66,9 @@ function normalizeRuleFromServer(rule: any) {
     id: rule?.id || rule?.ruleId || rule?._id || '',
     sourceWebhookId: rule?.source?.id || rule?.sourceWebhookId || '',
     destinationIntegrationId: rule?.destination?.id || rule?.destinationIntegrationId || '',
-    orderType: rule?.orderType,
-    sizeValue: mapping.positionSizeValue ?? rule?.sizeValue,
-    leverage: mapping.leverage ?? rule?.leverage,
+    orderType: mapping.orderType || rule?.orderType,
+    sizeValue: mapping.positionSizeValue ?? rule?.sizeValue ?? rule?.positionSizeValue,
+    leverage: mapping.leverage ?? mapping.maxLeverage ?? rule?.leverage,
     symbols: conditions.symbols || rule?.symbols,
     allowedSides: conditions.allowedSides || rule?.allowedSides,
     minNotional: conditions.minNotional ?? rule?.minNotional,
@@ -62,15 +82,9 @@ function mapRuleToServer(rule: any) {
   const symbols = Array.isArray(rule.symbols) ? rule.symbols : undefined;
   const allowedSides = Array.isArray(rule.allowedSides) ? rule.allowedSides : undefined;
   return {
-    id: rule.id || rule.ruleId || rule._id || crypto.randomUUID(),
+    id: rule.id || rule.ruleId || rule._id || generateRuleId(),
     source: { type: 'webhook', id: rule.sourceWebhookId },
     destination: { type: 'integration', id: rule.destinationIntegrationId },
-    orderType: rule.orderType || 'market',
-    positionSizeValue,
-    minNotional,
-    symbols,
-    allowedSides,
-    enabled: rule.enabled !== false,
     conditions: {
       symbols,
       allowedSides,
@@ -79,20 +93,52 @@ function mapRuleToServer(rule: any) {
     mapping: {
       positionSizeValue,
       positionSizeType: typeof rule.sizeValue === 'string' && String(rule.sizeValue).includes('%') ? 'percent' : 'absolute',
+      orderType: rule.orderType || 'market',
       leverage: rule.leverage
-    }
+    },
+    enabled: rule.enabled !== false,
+    riskFlags: rule.riskFlags || []
   };
 }
 
 export async function fetchWorkflowNodes(workspaceId?: string) {
   const ws = workspaceId || getWorkspaceId();
-  const [webhooks, integrations] = await Promise.all([
-    safeFetch<any>(`/api/v1/webhooks/${encodeURIComponent(ws)}`, undefined, []),
-    safeFetch<any>(`/api/v1/integrations/${encodeURIComponent(ws)}`, undefined, [])
-  ]);
-  const webhooksList = Array.isArray(webhooks?.items) ? webhooks.items : Array.isArray(webhooks) ? webhooks : [];
-  const integrationsList = Array.isArray(integrations?.items) ? integrations.items : Array.isArray(integrations) ? integrations : [];
-  return { webhooks: webhooksList, bots: [], integrations: integrationsList, mocked: false };
+  if (!ws) {
+    throw new Error('Workspace ID is required to load workflow nodes.');
+  }
+
+  try {
+    const res = await fetch(`/api/v1/workflow/nodes?workspaceId=${encodeURIComponent(ws)}`, {
+      credentials: 'include',
+      headers: { ...defaultHeaders, ...authHeaders() }
+    });
+    if (!res.ok) {
+      throw new Error(await extractErrorMessage(res, 'Failed to fetch workflow nodes'));
+    }
+    const nodes = await res.json();
+    return {
+      webhooks: Array.isArray(nodes.webhooks) ? nodes.webhooks : [],
+      bots: Array.isArray(nodes.bots) ? nodes.bots : [],
+      integrations: Array.isArray(nodes.integrations) ? nodes.integrations : [],
+      mocked: false,
+      mockReason: null
+    };
+  } catch (err: any) {
+    // Fallback to legacy endpoints so the UI can still render something, but surface that we're mocked.
+    const [webhooks, integrations] = await Promise.all([
+      safeFetch<any>(`/api/v1/webhooks/${encodeURIComponent(ws)}`, undefined, []),
+      safeFetch<any>(`/api/v1/integrations/${encodeURIComponent(ws)}`, undefined, [])
+    ]);
+    const webhooksList = Array.isArray(webhooks?.items) ? webhooks.items : Array.isArray(webhooks) ? webhooks : [];
+    const integrationsList = Array.isArray(integrations?.items) ? integrations.items : Array.isArray(integrations) ? integrations : [];
+    return {
+      webhooks: webhooksList,
+      bots: [],
+      integrations: integrationsList,
+      mocked: true,
+      mockReason: err?.message || 'Falling back to legacy node list.'
+    };
+  }
 }
 
 export async function fetchRoutingRules(workspaceId: string) {
@@ -134,8 +180,20 @@ export async function fetchExecutionTimeline(workspaceId: string) {
 }
 
 export async function createNode(workspaceId: string, payload: { label: string; nodeType: string; description?: string; side: 'source' | 'destination' }) {
-  // Endpoint not implemented server-side yet; keep a stub to avoid UI crashes.
-  return safeFetch<any>('/api/v1/workflow/nodes', { method: 'POST', body: JSON.stringify({ workspaceId, ...payload }) }, null);
+  const ws = workspaceId || getWorkspaceId();
+  if (!ws) {
+    throw new Error('Workspace ID is required to create a node.');
+  }
+  const res = await fetch('/api/v1/workflow/nodes', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { ...defaultHeaders, ...authHeaders() },
+    body: JSON.stringify({ workspaceId: ws, ...payload })
+  });
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, 'Failed to create node'));
+  }
+  return handleJson<any>(res);
 }
 
 export async function simulateRouting(workspaceId: string, sourceId: string, destinationId: string) {
