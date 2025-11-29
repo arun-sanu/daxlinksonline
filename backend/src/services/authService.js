@@ -5,6 +5,8 @@ import { prisma } from '../utils/prisma.js';
 import { ensureTrialWebhook } from './tradingviewService.js';
 import { signAuthToken } from '../middleware/auth.js';
 import { sendMail } from '../lib/mailer.js';
+import { provisionDefaultWorkspaceForUser } from './workspaceService.js';
+import { randomBytes } from 'crypto';
 
 function normalizeEmail(email) {
   return email.trim().toLowerCase();
@@ -14,6 +16,7 @@ function serializeUser(user) {
   if (!user) return null;
   return {
     id: user.id,
+    shortCode: user.shortCode || null,
     email: user.email,
     name: user.name,
     image: user.image ?? null,
@@ -39,6 +42,22 @@ function buildWebhookSummary(user) {
   };
 }
 
+export async function ensureUserShortCode(user) {
+  if (!user || user.shortCode) return user.shortCode;
+  const generate = () => randomBytes(3).toString('hex'); // 6 hex chars
+  let code = generate();
+  let tries = 0;
+  while (await prisma.user.findFirst({ where: { shortCode: code } })) {
+    code = generate();
+    tries += 1;
+    if (tries > 5) {
+      code = randomBytes(4).toString('hex');
+    }
+  }
+  await prisma.user.update({ where: { id: user.id }, data: { shortCode: code } });
+  return code;
+}
+
 export async function registerUser({ name, email, password }) {
   const normalizedEmail = normalizeEmail(email);
   const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
@@ -54,11 +73,17 @@ export async function registerUser({ name, email, password }) {
       name,
       email: normalizedEmail,
       passwordHash,
+      shortCode: await (async () => {
+        const code = randomBytes(3).toString('hex');
+        const exists = await prisma.user.findFirst({ where: { shortCode: code } });
+        return exists ? null : code;
+      })(),
       role: 'operator',
       isSuperAdmin: false
     }
   });
 
+  const shortCode = await ensureUserShortCode(user);
   // Provision platform webhook subdomain + secret for 28-day trial
   const provisioned = await ensureTrialWebhook(user.id);
   const baseDomain = process.env.WEBHOOK_BASE_DOMAIN || 'daxlinksonline.link';
@@ -66,10 +91,12 @@ export async function registerUser({ name, email, password }) {
     ? `https://${provisioned.webhookSubdomain}.${baseDomain}/api/v1/webhook`
     : null;
 
+  const workspace = await provisionDefaultWorkspaceForUser(user);
   const token = signAuthToken(user.id);
   return {
     token,
-    user: serializeUser(user),
+    user: serializeUser({ ...user, shortCode }),
+    workspace,
     webhook: webhookUrl ? { url: webhookUrl, secret: provisioned.webhookSecret, trialEndsAt: provisioned.trialEndsAt } : null
   };
 }
@@ -90,18 +117,23 @@ export async function loginUser({ email, password }) {
     throw error;
   }
 
+  const shortCode = await ensureUserShortCode(user);
+  const workspace = await provisionDefaultWorkspaceForUser(user);
   const token = signAuthToken(user.id);
   return {
     token,
-    user: serializeUser(user)
+    user: serializeUser({ ...user, shortCode }),
+    workspace
   };
 }
 
 export async function getUserProfile(userId) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return null;
+  const workspace = await provisionDefaultWorkspaceForUser(user);
   const profile = serializeUser(user);
   const webhook = buildWebhookSummary(user);
-  return { ...profile, webhook };
+  return { ...profile, webhook, workspace };
 }
 
 export async function requestPasswordReset(email) {

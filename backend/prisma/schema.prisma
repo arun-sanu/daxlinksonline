@@ -11,6 +11,7 @@ model Workspace {
   id             String   @id @default(uuid())
   name           String
   slug           String   @unique
+  shortCode      String?  @unique
   planTier       String
   teamSize       String
   primaryUseCase String
@@ -180,6 +181,7 @@ model IntegrationCredential {
 
 model User {
   id               String               @id @default(uuid())
+  shortCode        String?              @unique
   email            String               @unique
   passwordHash     String
   name             String
