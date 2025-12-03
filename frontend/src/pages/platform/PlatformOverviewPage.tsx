@@ -19,13 +19,7 @@ const MODULES = [
 ];
 
 export default function PlatformOverviewPage() {
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const filtered = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return MODULES;
-    return MODULES.filter((module) => module.label.toLowerCase().includes(query));
-  }, [searchQuery]);
+  const filtered = useMemo(() => MODULES, []);
 
   return (
     <div className="layout-container pt-16 pb-24 space-y-8">
@@ -47,18 +41,6 @@ export default function PlatformOverviewPage() {
             </p>
           </div>
 
-          <div className="relative">
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              type="text"
-              placeholder="Search modules"
-              className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-2 text-xs text-gray-200 placeholder:text-gray-500 focus:border-primary-400 focus:outline-none"
-            />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-[0.3em] text-gray-600">
-              SCAN
-            </span>
-          </div>
         </section>
 
         <section className="rounded-3xl border border-transparent p-2 -mt-19 md:-mt-20">

@@ -107,38 +107,19 @@ export async function fetchWorkflowNodes(workspaceId?: string) {
     throw new Error('Workspace ID is required to load workflow nodes.');
   }
 
-  try {
-    const res = await fetch(`/api/v1/workflow/nodes?workspaceId=${encodeURIComponent(ws)}`, {
-      credentials: 'include',
-      headers: { ...defaultHeaders, ...authHeaders() }
-    });
-    if (!res.ok) {
-      throw new Error(await extractErrorMessage(res, 'Failed to fetch workflow nodes'));
-    }
-    const nodes = await res.json();
-    return {
-      webhooks: Array.isArray(nodes.webhooks) ? nodes.webhooks : [],
-      bots: Array.isArray(nodes.bots) ? nodes.bots : [],
-      integrations: Array.isArray(nodes.integrations) ? nodes.integrations : [],
-      mocked: false,
-      mockReason: null
-    };
-  } catch (err: any) {
-    // Fallback to legacy endpoints so the UI can still render something, but surface that we're mocked.
-    const [webhooks, integrations] = await Promise.all([
-      safeFetch<any>(`/api/v1/webhooks/${encodeURIComponent(ws)}`, undefined, []),
-      safeFetch<any>(`/api/v1/integrations/${encodeURIComponent(ws)}`, undefined, [])
-    ]);
-    const webhooksList = Array.isArray(webhooks?.items) ? webhooks.items : Array.isArray(webhooks) ? webhooks : [];
-    const integrationsList = Array.isArray(integrations?.items) ? integrations.items : Array.isArray(integrations) ? integrations : [];
-    return {
-      webhooks: webhooksList,
-      bots: [],
-      integrations: integrationsList,
-      mocked: true,
-      mockReason: err?.message || 'Falling back to legacy node list.'
-    };
+  const res = await fetch(`/api/v1/workflow/nodes?workspaceId=${encodeURIComponent(ws)}`, {
+    credentials: 'include',
+    headers: { ...defaultHeaders, ...authHeaders() }
+  });
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, 'Failed to fetch workflow nodes'));
   }
+  const nodes = await res.json();
+  return {
+    webhooks: Array.isArray(nodes.webhooks) ? nodes.webhooks : [],
+    bots: Array.isArray(nodes.bots) ? nodes.bots : [],
+    integrations: Array.isArray(nodes.integrations) ? nodes.integrations : []
+  };
 }
 
 export async function fetchRoutingRules(workspaceId: string) {

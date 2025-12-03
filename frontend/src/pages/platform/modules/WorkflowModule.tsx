@@ -692,7 +692,6 @@ export default function WorkflowModule() {
   const [activityTab, setActivityTab] = useState<'executions' | 'events'>('executions');
   const [viewTab, setViewTab] = useState<'graph' | 'catalog'>('graph');
   const [savingRules, setSavingRules] = useState(false);
-  const [mockedNodes, setMockedNodes] = useState<{ mocked: boolean; reason?: string | null }>({ mocked: false, reason: null });
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -821,7 +820,6 @@ export default function WorkflowModule() {
       setError(null);
       if (!workspaceReady) {
         setError('Workspace ID missing or placeholder. Log in again to load workflow data.');
-        setMockedNodes({ mocked: true, reason: 'No workspaceId supplied; using placeholder graph only.' });
         setLoading(false);
         return;
       }
@@ -834,9 +832,8 @@ export default function WorkflowModule() {
         const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
         const rulesResp = toArray(rulesRespRaw);
         const eventsResp = toArray(eventsRespRaw);
-        const { webhooks = [], bots = [], integrations = [], mocked = false, mockReason = null } = nodesResp || {};
+        const { webhooks = [], bots = [], integrations = [] } = nodesResp || {};
         if (!mounted) return;
-        setMockedNodes({ mocked: !!mocked, reason: mockReason });
         const nodesBuilt = buildNodes(toArray(webhooks), toArray(bots), toArray(integrations));
         console.log('[WM] Nodes loaded:', nodesBuilt);
         const edgesBuilt = buildEdges(nodesBuilt, rulesResp, eventsResp);
@@ -852,7 +849,6 @@ export default function WorkflowModule() {
       } catch (err: any) {
         if (mounted) {
           setError(err?.message || 'Failed to load workflow data');
-          setMockedNodes((prev) => ({ mocked: true, reason: err?.message || prev.reason || 'Failed to load workflow data' }));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -1020,8 +1016,7 @@ export default function WorkflowModule() {
       await createNode(workspaceId, { label: draft.label, nodeType: draft.nodeType, description: draft.description, side });
       const [nodesRespRaw] = await Promise.all([fetchWorkflowNodes(workspaceId)]);
       const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
-      const { webhooks = [], bots = [], integrations = [], mocked = false, mockReason = null } = nodesResp || {};
-      setMockedNodes({ mocked: !!mocked, reason: mockReason });
+      const { webhooks = [], bots = [], integrations = [] } = nodesResp || {};
       const nodesBuilt = buildNodes(webhooks || [], bots || [], integrations || []);
       const safeRuleList = Array.isArray(rules) ? rules : [];
       const edgesBuilt = buildEdges(nodesBuilt, safeRuleList, events);
@@ -1116,14 +1111,6 @@ export default function WorkflowModule() {
               <span className="text-gray-500">Workspace</span>
               <span className="text-white">{workspaceId || 'not-set'}</span>
             </span>
-            <span
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${mockedNodes.mocked ? 'border-amber-400/40 bg-amber-500/10 text-amber-200' : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'}`}
-              title={mockedNodes.reason || undefined}
-            >
-              <span className={`h-2 w-2 rounded-full ${mockedNodes.mocked ? 'bg-amber-300' : 'bg-emerald-300'}`}></span>
-              Mocked nodes: {mockedNodes.mocked ? 'true' : 'false'}
-            </span>
-            {mockedNodes.reason && <span className="text-xs text-amber-200">{mockedNodes.reason}</span>}
           </div>
           <div className="inline-flex rounded-full border border-white/15 bg-black/40 p-1 text-xs text-gray-200">
             <button

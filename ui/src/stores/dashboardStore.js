@@ -58,6 +58,7 @@ export const dashboardStore = reactive({
   workflowSummary: { signalsPerMinute: 0, signalThrottle: '—', orderThroughput: 0, connectedExchanges: 0 },
   dataflowNodes: [],
   selectedNodeId: '',
+  accountTab: 'profile',
   insights: {},
   insightsView: 'rest',
   resources: [],

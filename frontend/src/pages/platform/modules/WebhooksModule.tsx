@@ -21,12 +21,6 @@ const fallbackConfig = {
   secret: 'c8f14d88b0f9d7aa16f90b8f23bd2a54'
 };
 
-const mockLogs = [
-  { level: 'info', message: 'Forward job queued for NSE:INFY', ts: '08:41:12' },
-  { level: 'warning', message: 'Guardrail delayed webhook due to rate limit hit (retry scheduled)', ts: '08:39:04' },
-  { level: 'error', message: 'TradingView secret mismatch rejected alert', ts: '08:20:31' }
-];
-
 function formatTimestamp(input?: string | null) {
   if (!input) return 'Pending';
   try {
@@ -194,6 +188,8 @@ export default function WebhooksModule() {
       const updated = await toggleWebhook(hook.id, next);
       if (updated) {
         setWebhooks((prev) => prev.map((w) => (w.id === hook.id ? normalizeWebhook(updated) : w)));
+      } else {
+        setWebhooks((prev) => prev.map((w) => (w.id === hook.id ? { ...w, active: !next } : w)));
       }
     } catch (e: any) {
       setError(e?.message || 'Failed to update webhook');
@@ -315,7 +311,7 @@ export default function WebhooksModule() {
 
       {loading && <div className="card-shell text-sm text-gray-400">Loading webhooks…</div>}
       {!loading && error && <div className="card-shell text-sm text-amber-300">{error}</div>}
-      {authBlocked && <p className="text-xs text-amber-300">Sign in as an admin/developer to manage live webhooks. Showing mock data.</p>}
+      {authBlocked && <p className="text-xs text-amber-300">Sign in as an admin/developer to manage live webhooks.</p>}
 
       {webhookUrl && (
         <section className="card-shell p-6 space-y-4">
@@ -418,19 +414,9 @@ export default function WebhooksModule() {
             </div>
           </div>
         ) : (
-          <div className="space-y-2 rounded-2xl border border-white/10 bg-black/40 p-3 text-xs">
-            {mockLogs.map((log, idx) => (
-              <div key={idx} className="flex items-start justify-between gap-3 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
-                <div>
-                  <p className={`font-semibold ${log.level === 'error' ? 'text-red-300' : log.level === 'warning' ? 'text-amber-300' : 'text-primary-200'}`}>
-                    [{log.level.toUpperCase()}]
-                  </p>
-                  <p className="text-gray-300">{log.message}</p>
-                </div>
-                <span className="text-gray-500">{log.ts}</span>
-              </div>
-            ))}
-            <p className="text-[10px] text-gray-500">Latest events reflect backend/public/logs/webhook feed.</p>
+          <div className="space-y-2 rounded-2xl border border-white/10 bg-black/40 p-3 text-xs text-gray-300">
+            <p className="text-gray-400">Webhook logs will appear here once events are received.</p>
+            <p className="text-[10px] text-gray-500">Check your ingress points at this workspace and that alerts are firing.</p>
           </div>
         )}
       </article>

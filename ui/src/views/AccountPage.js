@@ -8,6 +8,12 @@ export default {
     const loading = computed(() => store.loading);
     const isAuthenticated = computed(() => Boolean(store.auth.user));
     const user = computed(() => store.auth.user || {});
+    const activeTab = computed({
+      get: () => store.accountTab || 'profile',
+      set: (val) => {
+        store.accountTab = val;
+      }
+    });
     const role = computed(() => String(user.value.role || '').toLowerCase());
     const isSuperAdmin = computed(() => Boolean(user.value.isSuperAdmin));
     const isDeveloper = computed(() => ['admin','developer','engineer'].includes(role.value));
@@ -22,9 +28,6 @@ export default {
     });
     const authMessage = computed(() => {
       if (store.auth.error) return store.auth.error;
-      if (store.auth.status === 'mock') {
-        return 'Authentication is unavailable while viewing mock data.';
-      }
        if (store.auth.status === 'reset-requested') {
          return 'If your email is on file, a reset link has been sent.';
        }
@@ -37,7 +40,7 @@ export default {
         }
       } catch {}
     };
-    return { store, actions, loading, isAuthenticated, authMessage, user, subscription, openAdminPortal, role, isSuperAdmin, isDeveloper, isAdmin, isPrivileged };
+    return { store, actions, loading, isAuthenticated, authMessage, user, subscription, openAdminPortal, role, isSuperAdmin, isDeveloper, isAdmin, isPrivileged, activeTab };
   },
   template: `
     <main class="min-h-screen">
@@ -93,6 +96,29 @@ export default {
         <section v-else class="relative flex min-h-screen flex-col overflow-hidden">
           <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(107,107,247,0.2),transparent_55%),radial-gradient(circle_at_bottom,rgba(18,152,230,0.18),transparent_55%),#0D0E13]"></div>
           <div class="relative flex-1 px-8 py-16 sm:px-16">
+            <div class="mb-8 flex flex-wrap gap-3">
+              <button
+                class="px-4 py-2 rounded-lg border text-xs uppercase tracking-[0.22em] transition"
+                :class="activeTab === 'profile' ? 'border-primary/60 bg-white/10 text-white' : 'border-white/15 bg-white/5 text-gray-400 hover:border-white/30'"
+                @click="activeTab = 'profile'"
+              >
+                Profile
+              </button>
+              <button
+                class="px-4 py-2 rounded-lg border text-xs uppercase tracking-[0.22em] transition"
+                :class="activeTab === 'settings' ? 'border-primary/60 bg-white/10 text-white' : 'border-white/15 bg-white/5 text-gray-400 hover:border-white/30'"
+                @click="activeTab = 'settings'"
+              >
+                Settings
+              </button>
+              <button
+                class="px-4 py-2 rounded-lg border text-xs uppercase tracking-[0.22em] transition"
+                :class="activeTab === 'security' ? 'border-primary/60 bg-white/10 text-white' : 'border-white/15 bg-white/5 text-gray-400 hover:border-white/30'"
+                @click="activeTab = 'security'"
+              >
+                Security
+              </button>
+            </div>
             <div class="grid gap-10 lg:grid-cols-2">
               <!-- Left: Account summary (text only) -->
               <div class="space-y-6">
@@ -106,11 +132,29 @@ export default {
                   <p class="text-sm text-gray-400">{{ user.email }}</p>
                 </div>
                 <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
-                  <h3 class="mb-4 text-sm font-semibold text-white/90">Logged in as</h3>
-                  <div class="text-sm text-gray-300 space-y-2">
+                  <div v-if="activeTab === 'profile'" class="text-sm text-gray-300 space-y-2">
                     <div><span class="text-gray-500">Name:</span> {{ user.name || '—' }}</div>
                     <div><span class="text-gray-500">User ID:</span> {{ user.id || '—' }}</div>
                     <div><span class="text-gray-500">Role:</span> {{ user.role || (isSuperAdmin ? 'superadmin' : 'operator') }}</div>
+                    <div><span class="text-gray-500">Short code:</span> {{ user.shortCode || '—' }}</div>
+                  </div>
+                  <div v-else-if="activeTab === 'settings'" class="text-sm text-gray-300 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">Workspace</span>
+                      <span>{{ (store.auth?.workspace && store.auth.workspace.name) || 'Default workspace' }}</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">Plan</span>
+                      <span>{{ subscription.plan }}</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">Endpoints</span>
+                      <span>{{ store.metrics?.endpoints ?? '—' }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="text-sm text-gray-300 space-y-2">
+                    <div><span class="text-gray-500">2FA:</span> Enforced</div>
+                    <div><span class="text-gray-500">Recent sessions:</span> {{ (store.recentSessions || []).length }}</div>
                     <div>
                       <span class="text-gray-500">Access rights:</span>
                       <span>

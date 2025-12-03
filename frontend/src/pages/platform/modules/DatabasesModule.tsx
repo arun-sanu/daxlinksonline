@@ -28,14 +28,8 @@ export default function DatabasesModule() {
         if (mounted) {
           setError(e?.message || 'Failed to load databases');
           if (/401|403/i.test(String(e?.message))) setAuthBlocked(true);
-          // fallback to skeleton data so UI stays alive
-          const mockNow = new Date().toISOString();
-          const mock: DatabaseInstance[] = [
-            { id: 'mock-1', name: 'Signals Core', status: 'active', provider: 'self_hosted', engine: 'postgres', version: '16', region: 'ap-sg', sizeTier: 'free', storageGb: 120, computeClass: 'standard', host: 'mock-1.internal', port: 5432, database: 'db_mock1', username: 'u_mock', passwordMasked: '****', sslRequired: true, createdAt: mockNow },
-            { id: 'mock-2', name: 'Guardrails', status: 'active', provider: 'self_hosted', engine: 'postgres', version: '16', region: 'us-east', sizeTier: 'free', storageGb: 90, computeClass: 'standard', host: 'mock-2.internal', port: 5432, database: 'db_mock2', username: 'u_mock', passwordMasked: '****', sslRequired: true, createdAt: mockNow }
-          ];
-          setItems(mock);
-          setSelectedId(mock[0]?.id || '');
+          setItems([]);
+          setSelectedId('');
         }
       } finally {
         if (mounted) setLoading(false);
@@ -170,7 +164,7 @@ export default function DatabasesModule() {
               </button>
             </div>
           </div>
-          {authBlocked && <p className="text-xs text-amber-300">Sign in as super admin to manage databases. Showing demo data.</p>}
+          {authBlocked && <p className="text-xs text-amber-300">Sign in as super admin to manage databases.</p>}
 
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
             <aside className="space-y-3">
