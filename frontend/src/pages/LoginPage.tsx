@@ -2,6 +2,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
 export default function LoginPage() {
+  const API_BASE =
+    (window as any).__DAXLINKS_CONFIG__?.apiBase || import.meta.env.VITE_API_BASE || 'https://api.daxlinksonline.link/api';
   const [mode, setMode] = useState<'user' | 'admin'>('user');
   const [step, setStep] = useState<'access' | 'mfa'>('access');
   const [email, setEmail] = useState('');
@@ -39,7 +41,7 @@ export default function LoginPage() {
     setSubmitting(true);
     setError('');
     try {
-      const res = await fetch('/api/v1/portal/login', {
+      const res = await fetch(`${API_BASE}/v1/portal/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
