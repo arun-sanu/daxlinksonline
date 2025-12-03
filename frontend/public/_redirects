@@ -1,2 +1,2 @@
-/api/*  https://api.daxlinksonline.link/:splat  200
+/api/*  https://api.daxlinksonline.link/api/:splat  200
 /*  /index.html  200
