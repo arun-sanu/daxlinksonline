@@ -3,25 +3,32 @@ import { useEffect, useState } from 'react';
 
 export default function LoginPage() {
   const [mode, setMode] = useState<'user' | 'admin'>('user');
+  const [step, setStep] = useState<'access' | 'mfa'>('access');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [loginPayload, setLoginPayload] = useState<{ token: string; user: any } | null>(null);
   const navigate = useNavigate();
   const isAdmin = mode === 'admin';
+  const TEMP_MFA_CODE = '123456';
 
   const switchMode = (nextMode: 'user' | 'admin') => {
     setMode(nextMode);
+    setStep('access');
     setError('');
     setSuccess(false);
     setPassword('');
     setEmail('');
     setUsername('');
+    setMfaCode('');
+    setLoginPayload(null);
   };
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleAccessSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const identifier = isAdmin ? username.trim() : email.trim();
     if (!identifier || !password) {
@@ -45,14 +52,42 @@ export default function LoginPage() {
         return;
       }
 
-      setSuccess(true);
-      navigate('/dashboard', { replace: true });
+      const body = await res.json().catch(() => null);
+      setLoginPayload(body || null);
+      setStep('mfa');
+      setSuccess(false);
+      setError('');
     } catch (err) {
       setError('Unable to reach the API. Please try again.');
       setSuccess(false);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleMfaSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!mfaCode.trim()) {
+      setError('Enter the 6-digit MFA code.');
+      return;
+    }
+    if (mfaCode.trim() !== TEMP_MFA_CODE) {
+      setError('Invalid MFA code. Use the temporary code provided.');
+      return;
+    }
+
+    // Optionally persist token for downstream calls; keep light-touch for now.
+    if (loginPayload?.token) {
+      try {
+        localStorage.setItem('dax_portal_token', loginPayload.token);
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    setError('');
+    setSuccess(true);
+    navigate('/dashboard', { replace: true });
   };
 
   useEffect(() => {
@@ -113,73 +148,105 @@ export default function LoginPage() {
               </svg>
             </span>
           </div>
-          <p className="text-xs uppercase tracking-[0.32em] text-white/60">{isAdmin ? 'Admin Access' : 'Access'}</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Login</h1>
-          <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
-            {isAdmin ? (
-              <>
-                <label className="block space-y-2 text-sm font-semibold">
-                  <span className="text-xs uppercase tracking-[0.2em] text-white/60">Username</span>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
-                    placeholder="admin@example.com"
-                    autoComplete="username"
-                  />
-                </label>
-                <label className="block space-y-2 text-sm font-semibold">
-                  <span className="text-xs uppercase tracking-[0.2em] text-white/60">Password</span>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
-                    placeholder="Your password"
-                    autoComplete="current-password"
-                  />
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="block space-y-2 text-sm font-semibold">
-                  <span className="text-xs uppercase tracking-[0.2em] text-white/60">Email</span>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
-                    placeholder="you@example.com"
-                    autoComplete="email"
-                  />
-                </label>
-                <label className="block space-y-2 text-sm font-semibold">
-                  <span className="text-xs uppercase tracking-[0.2em] text-white/60">Password</span>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
-                    placeholder="Your password"
-                    autoComplete="current-password"
-                  />
-                </label>
-              </>
-            )}
+          <p className="text-xs uppercase tracking-[0.32em] text-white/60">
+            {step === 'access' ? (isAdmin ? 'Admin Access' : 'Access') : 'MFA'}
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold text-white">{step === 'access' ? 'Login' : 'Multi-factor'}</h1>
 
-            {error && <p className="text-sm text-amber-300">{error}</p>}
+          {step === 'access' ? (
+            <form className="mt-8 space-y-4" onSubmit={handleAccessSubmit}>
+              {isAdmin ? (
+                <>
+                  <label className="block space-y-2 text-sm font-semibold">
+                    <span className="text-xs uppercase tracking-[0.2em] text-white/60">Username</span>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
+                      placeholder="admin@example.com"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm font-semibold">
+                    <span className="text-xs uppercase tracking-[0.2em] text-white/60">Password</span>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
+                      placeholder="Your password"
+                      autoComplete="current-password"
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label className="block space-y-2 text-sm font-semibold">
+                    <span className="text-xs uppercase tracking-[0.2em] text-white/60">Email</span>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm font-semibold">
+                    <span className="text-xs uppercase tracking-[0.2em] text-white/60">Password</span>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
+                      placeholder="Your password"
+                      autoComplete="current-password"
+                    />
+                  </label>
+                </>
+              )}
 
-            <div className="flex justify-end pt-2">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-full bg-white/95 px-6 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-[#0b0c11] shadow-[0_12px_34px_rgba(255,255,255,0.2)] transition hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_16px_42px_rgba(255,255,255,0.26)] disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {submitting ? 'Signing in…' : success ? 'Signed in' : 'Sign In'}
-              </button>
-            </div>
-          </form>
+              {error && <p className="text-sm text-amber-300">{error}</p>}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="rounded-full bg-white/95 px-6 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-[#0b0c11] shadow-[0_12px_34px_rgba(255,255,255,0.2)] transition hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_16px_42px_rgba(255,255,255,0.26)] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {submitting ? 'Signing in…' : 'Sign In'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form className="mt-8 space-y-4" onSubmit={handleMfaSubmit}>
+              <label className="block space-y-2 text-sm font-semibold">
+                <span className="text-xs uppercase tracking-[0.2em] text-white/60">Temporary MFA Code</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-white/40 focus:bg-white/10"
+                  placeholder="Enter 6-digit code"
+                />
+                <span className="text-[11px] text-white/60">Use the temporary code provided (default 123456).</span>
+              </label>
+
+              {error && <p className="text-sm text-amber-300">{error}</p>}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="rounded-full bg-white/95 px-6 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-[#0b0c11] shadow-[0_12px_34px_rgba(255,255,255,0.2)] transition hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_16px_42px_rgba(255,255,255,0.26)]"
+                >
+                  Verify
+                </button>
+              </div>
+            </form>
+          )}
         </div>
         <div className="mt-3 flex justify-start">
           <button
