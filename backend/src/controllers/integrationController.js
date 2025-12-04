@@ -6,11 +6,7 @@ import { AVAILABLE_EXCHANGES } from '../data/exchanges.js';
 function requireDev(req, res) {
   const role = String(req?.user?.role || '').toLowerCase();
   const isSuperAdmin = Boolean(req?.user?.isSuperAdmin);
-  if (!isSuperAdmin && !['admin', 'developer'].includes(role)) {
-    res.status(403).json({ error: 'Dev-only' });
-    return false;
-  }
-  return true;
+  return isSuperAdmin || ['admin', 'developer'].includes(role);
 }
 
 const workspaceParamSchema = z.object({
@@ -31,7 +27,10 @@ const createIntegrationSchema = z.object({
 
 export async function handleListIntegrations(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
+    if (!requireDev(req, res)) {
+      res.status(403).json({ error: 'Dev-only' });
+      return;
+    }
     const { workspaceId } = workspaceParamSchema.parse(req.params);
     const integrations = await listIntegrations(workspaceId);
     res.json(integrations);
@@ -42,7 +41,10 @@ export async function handleListIntegrations(req, res, next) {
 
 export async function handleCreateIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
+    if (!requireDev(req, res)) {
+      res.status(403).json({ error: 'Dev-only' });
+      return;
+    }
     const { workspaceId } = workspaceParamSchema.parse(req.params);
     const payload = createIntegrationSchema.parse(req.body);
     const integration = await createIntegration(workspaceId, payload);
@@ -57,7 +59,10 @@ export async function handleCreateIntegration(req, res, next) {
 
 export async function handleTestIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
+    if (!requireDev(req, res)) {
+      res.status(403).json({ error: 'Dev-only' });
+      return;
+    }
     const { workspaceId, integrationId } = {
       workspaceId: z.string().uuid().parse(req.params.workspaceId),
       integrationId: z.string().uuid().parse(req.params.integrationId)
@@ -80,7 +85,10 @@ export async function handleTestIntegration(req, res, next) {
 
 export async function handleRenameIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
+    if (!requireDev(req, res)) {
+      res.status(403).json({ error: 'Dev-only' });
+      return;
+    }
     const workspaceId = z.string().uuid().parse(req.params.workspaceId);
     const integrationId = z.string().uuid().parse(req.params.integrationId);
     const patch = z
