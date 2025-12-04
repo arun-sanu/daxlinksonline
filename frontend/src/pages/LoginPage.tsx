@@ -1,6 +1,22 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
+type PortalLoginResponse = {
+  token: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    isSuperAdmin?: boolean;
+  };
+  workspace?: {
+    id: string;
+    slug?: string | null;
+    name?: string | null;
+  };
+};
+
 export default function LoginPage() {
   const API_BASE =
     (window as any).__DAXLINKS_CONFIG__?.apiBase || import.meta.env.VITE_API_BASE || 'https://api.daxlinksonline.link/api';
@@ -13,7 +29,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [loginPayload, setLoginPayload] = useState<{ token: string; user: any } | null>(null);
+  const [loginPayload, setLoginPayload] = useState<PortalLoginResponse | null>(null);
   const navigate = useNavigate();
   const isAdmin = mode === 'admin';
   const TEMP_MFA_CODE = '123456';
@@ -54,7 +70,7 @@ export default function LoginPage() {
         return;
       }
 
-      const body = await res.json().catch(() => null);
+      const body = (await res.json().catch(() => null)) as PortalLoginResponse | null;
       setLoginPayload(body || null);
       setStep('mfa');
       setSuccess(false);
@@ -78,10 +94,17 @@ export default function LoginPage() {
       return;
     }
 
-    // Optionally persist token for downstream calls; keep light-touch for now.
     if (loginPayload?.token) {
       try {
+        // Persist tokens/workspace for API calls
+        localStorage.setItem('authToken', loginPayload.token);
         localStorage.setItem('dax_portal_token', loginPayload.token);
+        if (loginPayload.workspace?.id) {
+          localStorage.setItem('workspaceId', loginPayload.workspace.id);
+        }
+        if (loginPayload.user?.id) {
+          localStorage.setItem('userId', loginPayload.user.id);
+        }
       } catch {
         // ignore storage errors
       }

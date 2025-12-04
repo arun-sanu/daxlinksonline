@@ -5,7 +5,8 @@ import { AVAILABLE_EXCHANGES } from '../data/exchanges.js';
 
 function requireDev(req, res) {
   const role = String(req?.user?.role || '').toLowerCase();
-  if (!['admin', 'developer'].includes(role)) {
+  const isSuperAdmin = Boolean(req?.user?.isSuperAdmin);
+  if (!isSuperAdmin && !['admin', 'developer'].includes(role)) {
     res.status(403).json({ error: 'Dev-only' });
     return false;
   }

@@ -1,5 +1,6 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { createIntegration, listIntegrations, testIntegration } from '../../api/integrations';
 
 type ExchangeConfig = {
   name: string;
@@ -40,9 +41,35 @@ export default function ExchangeIntegrationPage() {
     { label: 'Primary', apiKey: '', apiSecret: '', passphrase: '', extra: '', sandbox: false }
   ]);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [integrationId, setIntegrationId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const title = useMemo(() => (config ? `${config.name} Integration` : 'Integration'), [config]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!config || !exchangeId) return;
+      setMessage(null);
+      setError(null);
+      try {
+        const integrations = await listIntegrations();
+        if (!mounted) return;
+        const match = integrations.find((i) => i.exchange === exchangeId);
+        if (match) {
+          setIntegrationId(match.id);
+          setMessage(`Existing integration found (status: ${match.status || 'n/a'}).`);
+        }
+      } catch (err: any) {
+        if (mounted) setError(err?.message || 'Failed to load integrations');
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [config, exchangeId]);
 
   if (!config) {
     return (
@@ -57,23 +84,53 @@ export default function ExchangeIntegrationPage() {
     setCreds((prev) => prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
   }
 
-  function addRow() {
-    setCreds((prev) => [...prev, { label: `Key ${prev.length + 1}`, apiKey: '', apiSecret: '', passphrase: '', extra: '', sandbox: false }]);
-  }
-
-  function removeRow(idx: number) {
-    setCreds((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function onSubmit(event: FormEvent) {
+  async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    setError(null);
     setSaving(true);
     setMessage(null);
-    // In a real build this would call a POST to /api/v1/platform/integrations/{exchangeId}/keys
-    setTimeout(() => {
+    const primary = creds[0];
+    try {
+      const created = await createIntegration({
+        exchange: exchangeId!,
+        environment: primary.sandbox ? 'paper' : 'live',
+        apiKey: primary.apiKey,
+        apiSecret: primary.apiSecret,
+        passphrase: primary.passphrase || undefined,
+        label: primary.label || undefined,
+        description: primary.extra || undefined
+      });
+      setIntegrationId(created.id);
+      setMessage(`Saved credentials for ${config.name}.`);
+      await handleTest(created.id);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save credentials');
+    } finally {
       setSaving(false);
-      setMessage(`Saved ${creds.length} credential${creds.length > 1 ? 's' : ''} for ${config.name}. Guardrails refreshed.`);
-    }, 500);
+    }
+  }
+
+  async function handleTest(id?: string) {
+    const targetId = id || integrationId;
+    if (!targetId) {
+      setError('Create the integration before testing.');
+      return;
+    }
+    setTesting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await testIntegration(targetId);
+      if (res.status === 'connected') {
+        setMessage('MEXC connectivity verified.');
+      } else {
+        setError(res.error || 'Connectivity test failed');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Connectivity test failed');
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
@@ -93,7 +150,7 @@ export default function ExchangeIntegrationPage() {
             <p className="section-label">API credentials</p>
             <p className="text-sm text-gray-300">Store one or more key pairs; all writes are encrypted with workspace KMS.</p>
           </div>
-          <button type="button" className="btn btn-secondary btn-small" onClick={addRow}>Add another key</button>
+          <span className="text-[11px] uppercase tracking-[0.24em] text-gray-500">MEXC</span>
         </div>
 
         <form className="space-y-4" onSubmit={onSubmit}>
@@ -109,9 +166,6 @@ export default function ExchangeIntegrationPage() {
                     placeholder="Desk A · Futures"
                   />
                 </div>
-                {creds.length > 1 && (
-                  <button type="button" className="text-xs text-red-400" onClick={() => removeRow(idx)}>Remove</button>
-                )}
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
@@ -172,6 +226,7 @@ export default function ExchangeIntegrationPage() {
           ))}
 
           {message && <div className="text-sm text-emerald-300">{message}</div>}
+          {error && <div className="text-sm text-red-300">{error}</div>}
 
           <div className="flex flex-wrap items-center gap-3">
             <button
@@ -180,6 +235,14 @@ export default function ExchangeIntegrationPage() {
               className={`btn btn-white-animated btn-small px-6 ${saving ? 'opacity-75' : ''}`}
             >
               {saving ? 'Saving…' : 'Save keys'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTest()}
+              disabled={testing || !integrationId}
+              className="btn btn-secondary btn-small"
+            >
+              {testing ? 'Testing…' : 'Test connectivity'}
             </button>
             <Link to="/platform/integrations" className="text-xs uppercase tracking-[0.24em] text-gray-400">Cancel</Link>
           </div>
