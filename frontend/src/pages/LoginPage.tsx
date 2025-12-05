@@ -105,6 +105,15 @@ export default function LoginPage() {
         if (loginPayload.user?.id) {
           localStorage.setItem('userId', loginPayload.user.id);
         }
+        if (loginPayload.user?.email) {
+          localStorage.setItem('userEmail', loginPayload.user.email);
+        }
+        if (loginPayload.user?.name) {
+          localStorage.setItem('userName', loginPayload.user.name);
+        }
+        if (loginPayload.user?.role) {
+          localStorage.setItem('userRole', loginPayload.user.role);
+        }
       } catch {
         // ignore storage errors
       }
