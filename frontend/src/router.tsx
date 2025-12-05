@@ -39,6 +39,8 @@ export function AppRouter() {
         { path: 'account', element: <AccountPage /> },
         { path: 'platform', element: <PlatformOverviewPage /> },
         { path: 'platform/integrations/:exchangeId', element: <ExchangeIntegrationPage /> },
+        { path: 'platform/integrations/:exchangeId/connectivity', element: <ExchangeIntegrationPage /> },
+        { path: 'platform/integrations/:exchangeId/data', element: <ExchangeIntegrationPage /> },
         { path: 'platform/:moduleId', element: <PlatformModulePage /> },
         { path: '*', element: <Navigate to="/dashboard" replace /> }
       ]

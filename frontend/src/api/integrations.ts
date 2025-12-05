@@ -8,9 +8,34 @@ type Integration = {
   description?: string | null;
   apiKeyMasked?: string | null;
   passphraseMasked?: string | null;
+  apiSecretMasked?: string | null;
   lastTestedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type IntegrationCredential = {
+  id: string;
+  label?: string | null;
+  apiKeyMasked?: string | null;
+  apiSecretMasked?: string | null;
+  passphraseMasked?: string | null;
+  subAccount?: string | null;
+  description?: string | null;
+  environment?: string | null;
+  createdAt?: string | null;
+};
+
+type IntegrationLog = {
+  id: string;
+  status: string;
+  message: string;
+  createdAt: string;
+};
+
+type IntegrationDetail = Integration & {
+  credentials?: IntegrationCredential[];
+  logs?: IntegrationLog[];
 };
 
 type AvailableExchange = {
@@ -99,5 +124,39 @@ export async function testIntegration(integrationId: string): Promise<{ status: 
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/test`,
     { method: 'POST' },
     'Failed to test integration'
+  );
+}
+
+export async function fetchIntegrationDetail(integrationId: string): Promise<IntegrationDetail | null> {
+  const ws = getWorkspaceId();
+  try {
+    return await fetchJson<IntegrationDetail>(
+      `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}`,
+      { method: 'GET' }
+    );
+  } catch {
+    return null;
+  }
+}
+
+export async function updateIntegrationCredential(
+  integrationId: string,
+  credentialId: string,
+  body: Partial<IntegrationCredential>
+): Promise<IntegrationCredential> {
+  const ws = getWorkspaceId();
+  return fetchJson<IntegrationCredential>(
+    `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/credentials/${encodeURIComponent(credentialId)}`,
+    { method: 'PUT', body: JSON.stringify(body) },
+    'Failed to update credential'
+  );
+}
+
+export async function deleteIntegrationCredential(integrationId: string, credentialId: string): Promise<void> {
+  const ws = getWorkspaceId();
+  await fetchJson<void>(
+    `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/credentials/${encodeURIComponent(credentialId)}`,
+    { method: 'DELETE' },
+    'Failed to delete credential'
   );
 }

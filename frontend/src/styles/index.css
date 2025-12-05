@@ -52,6 +52,14 @@ body {
   animation: lockPulse 1.6s ease-in-out infinite;
 }
 
+.animate-blink {
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+.animate-blink-onoff {
+  animation: blink-onoff 1.2s steps(2, start) infinite;
+}
+
 @keyframes pulse-blue {
   0% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -129,4 +137,17 @@ body {
   100% {
     box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
   }
+}
+
+@keyframes blink {
+  0% { opacity: 0.2; transform: scale(0.9); }
+  50% { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0.2; transform: scale(0.9); }
+}
+
+@keyframes blink-onoff {
+  0% { opacity: 0.15; }
+  50% { opacity: 0.15; }
+  50.1% { opacity: 1; }
+  100% { opacity: 1; }
 }

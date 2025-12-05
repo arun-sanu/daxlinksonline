@@ -21,6 +21,7 @@ import { notifyDebugRouter } from './notifyDebug.js';
 // Trade Bots Phase 0 routes
 import { notifyInboxRouter } from './notifyInbox.js';
 import { router as workflowRouter } from './v1/workflow.js';
+import { router as tradeBotsRouter } from './v1/tradeBots.js';
 
 export const router = Router();
 
@@ -44,6 +45,7 @@ router.use('/v1/notify/preferences', notifyPrefsRouter);
 router.use('/v1/notify', notifyInboxRouter);
 router.use('/debug', notifyDebugRouter);
 router.use('/v1/workflow', workflowRouter);
+router.use('/v1/trade-bots', tradeBotsRouter);
 // Phase 0 mounts for Trade Bots
 
 router.get('/v1/metadata', (_req, res) => {
