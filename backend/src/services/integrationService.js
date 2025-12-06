@@ -50,6 +50,53 @@ export async function createIntegration(workspaceId, payload) {
   });
 }
 
+function toCredentialView(integration, credential) {
+  const safeMask = (value) => {
+    try {
+      return maskCredential(decrypt(value));
+    } catch {
+      return '****';
+    }
+  };
+
+  return {
+    id: credential.id,
+    label: integration.label || 'Primary',
+    apiKeyMasked: integration.apiKeyMasked || safeMask(credential.apiKey),
+    apiSecretMasked: safeMask(credential.apiSecret),
+    passphraseMasked: integration.passphraseMasked || (credential.passphrase ? safeMask(credential.passphrase) : null),
+    subAccount: null,
+    description: integration.description || null,
+    environment: integration.environment,
+    createdAt: credential.createdAt,
+    updatedAt: credential.updatedAt
+  };
+}
+
+export async function getIntegrationDetail(workspaceId, integrationId) {
+  const integration = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: {
+      credential: true,
+      credentialEvents: { orderBy: { createdAt: 'desc' }, take: 50 }
+    }
+  });
+  if (!integration) {
+    throw Object.assign(new Error('Integration not found'), { status: 404 });
+  }
+
+  const credentials = integration.credential ? [toCredentialView(integration, integration.credential)] : [];
+  const logs = (integration.credentialEvents || []).map((evt) => ({
+    id: evt.id,
+    status: evt.eventType?.includes('failed') ? 'error' : 'info',
+    message: evt.detail || evt.eventType || 'event',
+    createdAt: evt.createdAt
+  }));
+
+  const { credential, credentialEvents, ...rest } = integration;
+  return { ...rest, credentials, logs };
+}
+
 export async function testIntegration(workspaceId, integrationId) {
   const integration = await prisma.integration.findFirst({
     where: { id: integrationId, workspaceId },
@@ -148,4 +195,58 @@ export async function renameIntegration(workspaceId, integrationId, patch) {
   if (Object.prototype.hasOwnProperty.call(patch, 'label')) data.label = patch.label || null;
   if (Object.prototype.hasOwnProperty.call(patch, 'description')) data.description = patch.description || null;
   return prisma.integration.update({ where: { id: integrationId }, data });
+}
+
+export async function updateIntegrationCredential(workspaceId, integrationId, credentialId, patch) {
+  const existing = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: { credential: true }
+  });
+  if (!existing || !existing.credential || existing.credential.id !== credentialId) {
+    throw Object.assign(new Error('Integration credential not found'), { status: 404 });
+  }
+
+  const update = {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'label')) update.label = patch.label || null;
+  if (Object.prototype.hasOwnProperty.call(patch, 'description')) update.description = patch.description || null;
+  if (Object.prototype.hasOwnProperty.call(patch, 'environment')) update.environment = patch.environment || existing.environment;
+
+  const updated = Object.keys(update).length
+    ? await prisma.integration.update({ where: { id: integrationId }, data: update })
+    : existing;
+
+  return toCredentialView(updated, existing.credential);
+}
+
+export async function deleteIntegrationCredential(workspaceId, integrationId, credentialId) {
+  const existing = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: { credential: true }
+  });
+  if (!existing || !existing.credential || existing.credential.id !== credentialId) {
+    throw Object.assign(new Error('Integration credential not found'), { status: 404 });
+  }
+
+  await prisma.$transaction([
+    prisma.integrationCredential.delete({ where: { id: credentialId } }),
+    prisma.integration.update({
+      where: { id: integrationId },
+      data: {
+        status: 'pending',
+        apiKeyMasked: '****',
+        passphraseMasked: null,
+        lastTestedAt: null
+      }
+    }),
+    prisma.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.credential.deleted',
+        detail: 'Credential removed by user'
+      }
+    })
+  ]);
+
+  return { success: true };
 }

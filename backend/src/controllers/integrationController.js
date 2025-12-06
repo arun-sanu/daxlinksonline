@@ -1,16 +1,27 @@
 import { z } from 'zod';
-import { listIntegrations, createIntegration, testIntegration, renameIntegration } from '../services/integrationService.js';
+import {
+  listIntegrations,
+  createIntegration,
+  testIntegration,
+  renameIntegration,
+  getIntegrationDetail,
+  updateIntegrationCredential,
+  deleteIntegrationCredential
+} from '../services/integrationService.js';
 import { recordAudit } from '../services/auditService.js';
 import { AVAILABLE_EXCHANGES } from '../data/exchanges.js';
 
-function requireDev(req, res) {
-  const role = String(req?.user?.role || '').toLowerCase();
-  const isSuperAdmin = Boolean(req?.user?.isSuperAdmin);
-  return isSuperAdmin || ['admin', 'developer'].includes(role);
-}
+const workspaceParamSchema = z.object({ workspaceId: z.string().uuid() });
 
-const workspaceParamSchema = z.object({
-  workspaceId: z.string().uuid()
+const integrationParamSchema = z.object({
+  workspaceId: z.string().uuid(),
+  integrationId: z.string().uuid()
+});
+
+const credentialParamSchema = z.object({
+  workspaceId: z.string().uuid(),
+  integrationId: z.string().uuid(),
+  credentialId: z.string().uuid()
 });
 
 const createIntegrationSchema = z.object({
@@ -25,12 +36,16 @@ const createIntegrationSchema = z.object({
   bandwidth: z.string().optional()
 });
 
+const updateCredentialSchema = z
+  .object({
+    label: z.string().min(1).max(128).optional(),
+    description: z.string().max(512).optional(),
+    environment: z.string().max(32).optional()
+  })
+  .refine((o) => Object.keys(o).length > 0, 'At least one field must be provided');
+
 export async function handleListIntegrations(req, res, next) {
   try {
-    if (!requireDev(req, res)) {
-      res.status(403).json({ error: 'Dev-only' });
-      return;
-    }
     const { workspaceId } = workspaceParamSchema.parse(req.params);
     const integrations = await listIntegrations(workspaceId);
     res.json(integrations);
@@ -41,10 +56,6 @@ export async function handleListIntegrations(req, res, next) {
 
 export async function handleCreateIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) {
-      res.status(403).json({ error: 'Dev-only' });
-      return;
-    }
     const { workspaceId } = workspaceParamSchema.parse(req.params);
     const payload = createIntegrationSchema.parse(req.body);
     const integration = await createIntegration(workspaceId, payload);
@@ -59,10 +70,6 @@ export async function handleCreateIntegration(req, res, next) {
 
 export async function handleTestIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) {
-      res.status(403).json({ error: 'Dev-only' });
-      return;
-    }
     const { workspaceId, integrationId } = {
       workspaceId: z.string().uuid().parse(req.params.workspaceId),
       integrationId: z.string().uuid().parse(req.params.integrationId)
@@ -85,10 +92,6 @@ export async function handleTestIntegration(req, res, next) {
 
 export async function handleRenameIntegration(req, res, next) {
   try {
-    if (!requireDev(req, res)) {
-      res.status(403).json({ error: 'Dev-only' });
-      return;
-    }
     const workspaceId = z.string().uuid().parse(req.params.workspaceId);
     const integrationId = z.string().uuid().parse(req.params.integrationId);
     const patch = z
@@ -110,6 +113,40 @@ export async function handleListAvailableExchanges(_req, res, next) {
   try {
     res.json(AVAILABLE_EXCHANGES);
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleGetIntegrationDetail(req, res, next) {
+  try {
+    const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
+    const detail = await getIntegrationDetail(workspaceId, integrationId);
+    res.json(detail);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleUpdateIntegrationCredential(req, res, next) {
+  try {
+    const { workspaceId, integrationId, credentialId } = credentialParamSchema.parse(req.params);
+    const patch = updateCredentialSchema.parse(req.body || {});
+    const updated = await updateIntegrationCredential(workspaceId, integrationId, credentialId, patch);
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleDeleteIntegrationCredential(req, res, next) {
+  try {
+    const { workspaceId, integrationId, credentialId } = credentialParamSchema.parse(req.params);
+    const result = await deleteIntegrationCredential(workspaceId, integrationId, credentialId);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
     next(error);
   }
 }
