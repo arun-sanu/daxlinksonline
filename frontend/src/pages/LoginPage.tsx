@@ -22,10 +22,11 @@ export default function LoginPage() {
     (window as any).__DAXLINKS_CONFIG__?.apiBase || import.meta.env.VITE_API_BASE || 'https://api.daxlinksonline.link/api';
   const [mode, setMode] = useState<'user' | 'admin'>('user');
   const [step, setStep] = useState<'access' | 'mfa'>('access');
-  const [email, setEmail] = useState('');
+  const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  const [email, setEmail] = useState(isLocalhost ? 'arn@dax.link' : '');
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [mfaCode, setMfaCode] = useState('');
+  const [password, setPassword] = useState(isLocalhost ? '123' : '');
+  const [mfaCode, setMfaCode] = useState(isLocalhost ? '123456' : '');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -33,16 +34,17 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const isAdmin = mode === 'admin';
   const TEMP_MFA_CODE = '123456';
+  const LOCAL_LOGIN = { email: 'arn@dax.link', password: '123', mfa: '123456' };
 
   const switchMode = (nextMode: 'user' | 'admin') => {
     setMode(nextMode);
     setStep('access');
     setError('');
     setSuccess(false);
-    setPassword('');
-    setEmail('');
+    setPassword(isLocalhost ? LOCAL_LOGIN.password : '');
+    setEmail(isLocalhost ? LOCAL_LOGIN.email : '');
     setUsername('');
-    setMfaCode('');
+    setMfaCode(isLocalhost ? LOCAL_LOGIN.mfa : '');
     setLoginPayload(null);
   };
 
@@ -56,8 +58,30 @@ export default function LoginPage() {
 
     setSubmitting(true);
     setError('');
+
+    // Local-only temporary login flow for manual testing on localhost
+    const isLocalTempLogin = isLocalhost && identifier === LOCAL_LOGIN.email && password === LOCAL_LOGIN.password;
+    if (isLocalTempLogin) {
+      setLoginPayload({
+        token: 'local-dev-token',
+        user: {
+          id: 'local-user',
+          email: LOCAL_LOGIN.email,
+          name: 'Local Tester',
+          role: 'admin',
+          isSuperAdmin: true
+        },
+        workspace: { id: 'local-workspace', slug: 'local', name: 'Local Workspace' }
+      });
+      setStep('mfa');
+      setSuccess(false);
+      setError('');
+      setSubmitting(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/v1/portal/login`, {
+      const res = await fetch(`${API_BASE}/api/v1/portal/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
