@@ -19,7 +19,7 @@ type PortalLoginResponse = {
 
 export default function LoginPage() {
   const API_BASE =
-    (window as any).__DAXLINKS_CONFIG__?.apiBase || import.meta.env.VITE_API_BASE || 'https://api.daxlinksonline.link/api';
+    (window as any).__DAXLINKS_CONFIG__?.apiBase || import.meta.env.VITE_API_BASE || 'https://api.daxlinksonline.link';
   const [mode, setMode] = useState<'user' | 'admin'>('user');
   const [step, setStep] = useState<'access' | 'mfa'>('access');
   const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
