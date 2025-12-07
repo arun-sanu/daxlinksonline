@@ -35,7 +35,22 @@ function authHeaders() {
 }
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit, errorMessage?: string): Promise<T> {
-  const res = await fetch(input, {
+  const API_BASE =
+    (window as any).__DAXLINKS_CONFIG__?.apiBase ||
+    import.meta.env.VITE_API_BASE ||
+    '';
+
+  const withBase = (path: string | URL) => {
+    if (typeof path !== 'string') return path;
+    if (path.startsWith('http')) return path;
+    const base = API_BASE.replace(/\/$/, '');
+    const cleaned = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${cleaned}`;
+  };
+
+  const url = withBase(input);
+
+  const res = await fetch(url, {
     credentials: 'include',
     headers: { ...authHeaders(), ...(init?.headers || {}) },
     ...init
