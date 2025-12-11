@@ -3,6 +3,38 @@ import { maskCredential, createCredentialReference } from './workspaceService.js
 import { createExchange } from '../sdk/index.js';
 import { encrypt, decrypt } from '../lib/kms.js';
 
+function normalizeSecret(value, label) {
+  const trimmed = typeof value === 'string' ? value.trim() : String(value || '').trim();
+  if (!trimmed) {
+    throw Object.assign(new Error(`${label} is empty after trimming`), { status: 400 });
+  }
+  return trimmed;
+}
+
+function normalizeOptionalSecret(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = typeof value === 'string' ? value.trim() : String(value || '').trim();
+  return trimmed || null;
+}
+
+function logCredentialSnapshot({ exchange, environment, integrationId, apiKey, apiSecret, passphrase }) {
+  try {
+    const parts = [
+      `[integration:test] exchange=${exchange}`,
+      `env=${environment || 'live'}`,
+      `integration=${integrationId}`,
+      `key=${maskCredential(apiKey)}`,
+      `secret=${maskCredential(apiSecret)}`
+    ];
+    if (passphrase) {
+      parts.push(`pass=${maskCredential(passphrase)}`);
+    }
+    console.log(parts.join(' '));
+  } catch {
+    // Logging must never break execution
+  }
+}
+
 export async function listIntegrations(workspaceId) {
   return prisma.integration.findMany({
     where: { workspaceId },
@@ -11,8 +43,11 @@ export async function listIntegrations(workspaceId) {
 }
 
 export async function createIntegration(workspaceId, payload) {
-  const credentialRef = createCredentialReference(payload.apiSecret);
-  const passphraseMasked = payload.passphrase ? maskCredential(payload.passphrase) : null;
+  const apiKey = normalizeSecret(payload.apiKey, 'API key');
+  const apiSecret = normalizeSecret(payload.apiSecret, 'API secret');
+  const passphrase = normalizeOptionalSecret(payload.passphrase);
+  const credentialRef = createCredentialReference(apiSecret);
+  const passphraseMasked = passphrase ? maskCredential(passphrase) : null;
 
   return prisma.$transaction(async (tx) => {
     const integration = await tx.integration.create({
@@ -22,7 +57,7 @@ export async function createIntegration(workspaceId, payload) {
         description: payload.description || null,
         exchange: payload.exchange,
         environment: payload.environment,
-        apiKeyMasked: maskCredential(payload.apiKey),
+        apiKeyMasked: maskCredential(apiKey),
         passphraseMasked,
         credentialRef,
         rateLimit: payload.rateLimit ?? 5,
@@ -32,9 +67,9 @@ export async function createIntegration(workspaceId, payload) {
     });
 
     // Encrypt credentials at rest
-    const encKey = encrypt(payload.apiKey);
-    const encSecret = encrypt(payload.apiSecret);
-    const encPass = payload.passphrase ? encrypt(payload.passphrase) : null;
+    const encKey = encrypt(apiKey);
+    const encSecret = encrypt(apiSecret);
+    const encPass = passphrase ? encrypt(passphrase) : null;
 
     await tx.integrationCredential.create({
       data: {
@@ -112,12 +147,25 @@ export async function testIntegration(workspaceId, integrationId) {
 
   const now = new Date();
   try {
+    const apiKey = normalizeSecret(decrypt(integration.credential.apiKey), 'Decrypted API key');
+    const apiSecret = normalizeSecret(decrypt(integration.credential.apiSecret), 'Decrypted API secret');
+    const passphrase = integration.credential.passphrase ? normalizeOptionalSecret(decrypt(integration.credential.passphrase)) : undefined;
+
+    logCredentialSnapshot({
+      exchange: integration.exchange,
+      environment: integration.environment,
+      integrationId,
+      apiKey,
+      apiSecret,
+      passphrase
+    });
+
     const exchange = createExchange({
       exchange: integration.exchange,
       environment: integration.environment,
-      apiKey: decrypt(integration.credential.apiKey),
-      apiSecret: decrypt(integration.credential.apiSecret),
-      passphrase: integration.credential.passphrase ? decrypt(integration.credential.passphrase) : undefined
+      apiKey,
+      apiSecret,
+      passphrase
     });
 
 
