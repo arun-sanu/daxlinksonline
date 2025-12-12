@@ -7,7 +7,8 @@ import {
   handleRenameIntegration,
   handleGetIntegrationDetail,
   handleUpdateIntegrationCredential,
-  handleDeleteIntegrationCredential
+  handleDeleteIntegrationCredential,
+  handlePurgeIntegrationCredentials
 } from '../../controllers/integrationController.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { guard } from '../../middleware/workspaceGuard.js';
@@ -25,5 +26,6 @@ router.post('/:workspaceId', requireAuth, handleCreateIntegration);
 router.get('/:workspaceId/:integrationId', requireAuth, handleGetIntegrationDetail);
 router.post('/:workspaceId/:integrationId/test', requireAuth, handleTestIntegration);
 router.patch('/:workspaceId/:integrationId', requireAuth, handleRenameIntegration);
+router.delete('/:workspaceId/:integrationId/credentials', requireAuth, handlePurgeIntegrationCredentials);
 router.put('/:workspaceId/:integrationId/credentials/:credentialId', requireAuth, handleUpdateIntegrationCredential);
 router.delete('/:workspaceId/:integrationId/credentials/:credentialId', requireAuth, handleDeleteIntegrationCredential);

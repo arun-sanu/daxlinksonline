@@ -298,3 +298,40 @@ export async function deleteIntegrationCredential(workspaceId, integrationId, cr
 
   return { success: true };
 }
+
+export async function purgeIntegrationCredentials(workspaceId, integrationId) {
+  const existing = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: { credential: true }
+  });
+
+  if (!existing) {
+    throw Object.assign(new Error('Integration not found'), { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (existing.credential) {
+      await tx.integrationCredential.delete({ where: { id: existing.credential.id } });
+    }
+    await tx.integration.update({
+      where: { id: integrationId },
+      data: {
+        status: 'pending',
+        apiKeyMasked: null,
+        passphraseMasked: null,
+        lastTestedAt: null,
+        credentialRef: null
+      }
+    });
+    await tx.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.credential.purged',
+        detail: 'All credentials removed'
+      }
+    });
+  });
+
+  return { status: 'pending' };
+}
