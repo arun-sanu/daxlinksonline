@@ -317,9 +317,10 @@ export async function deleteIntegrationCredential(workspaceId, integrationId, cr
       where: { id: integrationId },
       data: {
         status: 'pending',
-        apiKeyMasked: '****',
+        apiKeyMasked: null,
         passphraseMasked: null,
-        lastTestedAt: null
+        lastTestedAt: null,
+        credentialRef: null
       }
     }),
     prisma.credentialEvent.create({
