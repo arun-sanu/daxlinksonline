@@ -1,3 +1,14 @@
+import { purgeIntegrationCredentials } from '../services/integrationService.js';
+export async function handlePurgeIntegrationCredentials(req, res, next) {
+  try {
+    const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
+    const result = await purgeIntegrationCredentials(workspaceId, integrationId);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
 import { z } from 'zod';
 import {
   listIntegrations,

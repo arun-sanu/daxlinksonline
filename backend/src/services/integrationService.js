@@ -1,3 +1,39 @@
+// Purge all credentials for an integration (except the currently active one if desired)
+export async function purgeIntegrationCredentials(workspaceId, integrationId) {
+  // Find the integration and its credential
+  const integration = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: { credential: true }
+  });
+  if (!integration) {
+    throw Object.assign(new Error('Integration not found'), { status: 404 });
+  }
+
+  // Delete the credential if it exists
+  if (integration.credential) {
+    await prisma.$transaction([
+      prisma.integrationCredential.delete({ where: { id: integration.credential.id } }),
+      prisma.integration.update({
+        where: { id: integrationId },
+        data: {
+          status: 'pending',
+          apiKeyMasked: '****',
+          passphraseMasked: null,
+          lastTestedAt: null
+        }
+      }),
+      prisma.credentialEvent.create({
+        data: {
+          workspaceId,
+          integrationId,
+          eventType: 'integration.credential.purged',
+          detail: 'All credentials purged by user'
+        }
+      })
+    ]);
+  }
+  return { success: true };
+}
 import { prisma } from '../utils/prisma.js';
 import { maskCredential, createCredentialReference } from './workspaceService.js';
 import { createExchange } from '../sdk/index.js';
