@@ -1,6 +1,6 @@
-import { handlePurgeIntegrationCredentials } from '../../controllers/integrationController.js';
-// Purge all credentials for an integration
-router.delete('/:workspaceId/:integrationId/credentials', requireAuth, handlePurgeIntegrationCredentials);
+import { handleDeleteIntegration } from '../../controllers/integrationController.js';
+// Delete an entire integration (and its credentials)
+router.delete('/:workspaceId/:integrationId', requireAuth, handleDeleteIntegration);
 import { Router } from 'express';
 import {
   handleListIntegrations,

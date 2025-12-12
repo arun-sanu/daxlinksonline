@@ -1,6 +1,6 @@
-// Purge all credentials for an integration (except the currently active one if desired)
-export async function purgeIntegrationCredentials(workspaceId, integrationId) {
-  // Find the integration and its credential
+// Delete an entire integration and its credentials
+export async function deleteIntegration(workspaceId, integrationId) {
+  // Ensure the integration exists and belongs to the workspace
   const integration = await prisma.integration.findFirst({
     where: { id: integrationId, workspaceId },
     include: { credential: true }
@@ -8,30 +8,21 @@ export async function purgeIntegrationCredentials(workspaceId, integrationId) {
   if (!integration) {
     throw Object.assign(new Error('Integration not found'), { status: 404 });
   }
-
-  // Delete the credential if it exists
-  if (integration.credential) {
-    await prisma.$transaction([
-      prisma.integrationCredential.delete({ where: { id: integration.credential.id } }),
-      prisma.integration.update({
-        where: { id: integrationId },
-        data: {
-          status: 'pending',
-          apiKeyMasked: '****',
-          passphraseMasked: null,
-          lastTestedAt: null
-        }
-      }),
-      prisma.credentialEvent.create({
-        data: {
-          workspaceId,
-          integrationId,
-          eventType: 'integration.credential.purged',
-          detail: 'All credentials purged by user'
-        }
-      })
-    ]);
-  }
+  // Delete credential first (if exists), then integration
+  await prisma.$transaction([
+    integration.credential
+      ? prisma.integrationCredential.delete({ where: { id: integration.credential.id } })
+      : undefined,
+    prisma.integration.delete({ where: { id: integrationId } }),
+    prisma.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.deleted',
+        detail: 'Integration and credentials deleted by user'
+      }
+    })
+  ].filter(Boolean));
   return { success: true };
 }
 import { prisma } from '../utils/prisma.js';

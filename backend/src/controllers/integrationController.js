@@ -1,14 +1,15 @@
-import { purgeIntegrationCredentials } from '../services/integrationService.js';
-export async function handlePurgeIntegrationCredentials(req, res, next) {
+import { deleteIntegration } from '../services/integrationService.js';
+export async function handleDeleteIntegration(req, res, next) {
   try {
     const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
-    const result = await purgeIntegrationCredentials(workspaceId, integrationId);
+    const result = await deleteIntegration(workspaceId, integrationId);
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
   }
 }
+// Removed duplicate handlePurgeIntegrationCredentials declaration
 import { z } from 'zod';
 import {
   listIntegrations,
