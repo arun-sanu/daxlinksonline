@@ -176,6 +176,15 @@ export async function deleteIntegrationCredential(integrationId: string, credent
   );
 }
 
+export async function deleteIntegration(integrationId: string): Promise<void> {
+  const ws = getWorkspaceId();
+  await fetchJson<void>(
+    `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}`,
+    { method: 'DELETE' },
+    'Failed to delete integration'
+  );
+}
+
 export async function purgeIntegrationCredentials(
   integrationId: string
 ): Promise<{ status?: string }> {

@@ -1,3 +1,8 @@
+import { prisma } from '../utils/prisma.js';
+import { maskCredential, createCredentialReference } from './workspaceService.js';
+import { createExchange } from '../sdk/index.js';
+import { encrypt, decrypt } from '../lib/kms.js';
+
 // Delete an entire integration and its credentials
 export async function deleteIntegration(workspaceId, integrationId) {
   // Ensure the integration exists and belongs to the workspace
@@ -9,26 +14,24 @@ export async function deleteIntegration(workspaceId, integrationId) {
     throw Object.assign(new Error('Integration not found'), { status: 404 });
   }
   // Delete credential first (if exists), then integration
-  await prisma.$transaction([
-    integration.credential
-      ? prisma.integrationCredential.delete({ where: { id: integration.credential.id } })
-      : undefined,
-    prisma.integration.delete({ where: { id: integrationId } }),
-    prisma.credentialEvent.create({
-      data: {
-        workspaceId,
-        integrationId,
-        eventType: 'integration.deleted',
-        detail: 'Integration and credentials deleted by user'
-      }
-    })
-  ].filter(Boolean));
+  await prisma.$transaction(
+    [
+      integration.credential
+        ? prisma.integrationCredential.delete({ where: { id: integration.credential.id } })
+        : undefined,
+      prisma.integration.delete({ where: { id: integrationId } }),
+      prisma.credentialEvent.create({
+        data: {
+          workspaceId,
+          integrationId,
+          eventType: 'integration.deleted',
+          detail: 'Integration and credentials deleted by user'
+        }
+      })
+    ].filter(Boolean)
+  );
   return { success: true };
 }
-import { prisma } from '../utils/prisma.js';
-import { maskCredential, createCredentialReference } from './workspaceService.js';
-import { createExchange } from '../sdk/index.js';
-import { encrypt, decrypt } from '../lib/kms.js';
 
 function normalizeSecret(value, label) {
   const trimmed = typeof value === 'string' ? value.trim() : String(value || '').trim();

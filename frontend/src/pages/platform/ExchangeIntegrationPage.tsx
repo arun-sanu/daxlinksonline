@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   createIntegration,
-  deleteIntegrationCredential,
+  deleteIntegration,
   fetchIntegrationDetail,
   listIntegrations,
   purgeIntegrationCredentials,
@@ -59,6 +59,7 @@ type TabKey = 'overview' | 'connectivity' | 'data';
 export default function ExchangeIntegrationPage() {
   const { exchangeId } = useParams<{ exchangeId: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const config = exchangeId ? EXCHANGES[exchangeId] : null;
   const isDataTab = location.pathname.endsWith('/data');
   const isConnectivityTab = location.pathname.endsWith('/connectivity');
@@ -212,13 +213,18 @@ export default function ExchangeIntegrationPage() {
 
   async function handleDeleteCredential(target: SavedCredential) {
     if (!integrationId) return;
+    const confirmed = window.confirm('Delete this integration and all stored credentials? This cannot be undone.');
+    if (!confirmed) return;
     try {
       setUpdatingId(target.id);
-      await deleteIntegrationCredential(integrationId, target.id);
-      setSavedCreds((prev) => prev.filter((c) => c.id !== target.id));
-      setMessage('Credential deleted.');
+      await deleteIntegration(integrationId);
+      setSavedCreds([]);
+      setIntegrationId(null);
+      setIntegrationStatus(null);
+      setMessage('Integration deleted.');
+      navigate('/platform/integrations');
     } catch (err: any) {
-      setError(err?.message || 'Failed to delete credential');
+      setError(err?.message || 'Failed to delete integration');
     } finally {
       setUpdatingId(null);
     }

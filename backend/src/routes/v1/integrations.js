@@ -1,6 +1,3 @@
-import { handleDeleteIntegration } from '../../controllers/integrationController.js';
-// Delete an entire integration (and its credentials)
-router.delete('/:workspaceId/:integrationId', requireAuth, handleDeleteIntegration);
 import { Router } from 'express';
 import {
   handleListIntegrations,
@@ -11,7 +8,8 @@ import {
   handleGetIntegrationDetail,
   handleUpdateIntegrationCredential,
   handleDeleteIntegrationCredential,
-  handlePurgeIntegrationCredentials
+  handlePurgeIntegrationCredentials,
+  handleDeleteIntegration
 } from '../../controllers/integrationController.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { guard } from '../../middleware/workspaceGuard.js';
@@ -29,6 +27,7 @@ router.post('/:workspaceId', requireAuth, handleCreateIntegration);
 router.get('/:workspaceId/:integrationId', requireAuth, handleGetIntegrationDetail);
 router.post('/:workspaceId/:integrationId/test', requireAuth, handleTestIntegration);
 router.patch('/:workspaceId/:integrationId', requireAuth, handleRenameIntegration);
+router.delete('/:workspaceId/:integrationId', requireAuth, handleDeleteIntegration);
 router.delete('/:workspaceId/:integrationId/credentials', requireAuth, handlePurgeIntegrationCredentials);
 router.put('/:workspaceId/:integrationId/credentials/:credentialId', requireAuth, handleUpdateIntegrationCredential);
 router.delete('/:workspaceId/:integrationId/credentials/:credentialId', requireAuth, handleDeleteIntegrationCredential);
