@@ -5,6 +5,7 @@ import {
   deleteIntegrationCredential,
   fetchIntegrationDetail,
   listIntegrations,
+  purgeIntegrationCredentials,
   testIntegration,
   updateIntegrationCredential
 } from '../../api/integrations';
@@ -68,6 +69,8 @@ export default function ExchangeIntegrationPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [integrationId, setIntegrationId] = useState<string | null>(null);
+  const [integrationStatus, setIntegrationStatus] = useState<string | null>(null);
+  const [purging, setPurging] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedCreds, setSavedCreds] = useState<SavedCredential[]>([]);
@@ -92,6 +95,7 @@ export default function ExchangeIntegrationPage() {
         const match = integrations.find((i) => i.exchange === exchangeId);
         if (match) {
           setIntegrationId(match.id);
+          setIntegrationStatus(match.status || null);
           setMessage(`Existing integration found (status: ${match.status || 'n/a'}).`);
           await hydrateDetail(match.id);
         }
@@ -122,6 +126,7 @@ export default function ExchangeIntegrationPage() {
       const detail = await fetchIntegrationDetail(id);
       if (detail?.credentials) setSavedCreds(detail.credentials);
       if (detail?.logs) setLogs(detail.logs);
+      if (detail?.status) setIntegrationStatus(detail.status);
     } catch {
       // silent; fall back below
     } finally {
@@ -153,6 +158,7 @@ export default function ExchangeIntegrationPage() {
         description: primary.extra || undefined
       });
       setIntegrationId(created.id);
+      setIntegrationStatus(created.status || 'pending');
       setMessage(`Saved credentials for ${config.name}.`);
       await handleTest(created.id);
       await hydrateDetail(created.id);
@@ -218,6 +224,28 @@ export default function ExchangeIntegrationPage() {
     }
   }
 
+  async function handlePurgeCredentials() {
+    if (!integrationId) return;
+    const confirmed = window.confirm(
+      'Are you sure you want to remove all credentials for this integration? This will disconnect the adapter until new credentials are added.'
+    );
+    if (!confirmed) return;
+    setPurging(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await purgeIntegrationCredentials(integrationId);
+      setSavedCreds([]);
+      setLogs([]);
+      setIntegrationStatus(result?.status || 'pending');
+      setMessage('Credentials purged. Integration pending reconnect.');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to purge credentials');
+    } finally {
+      setPurging(false);
+    }
+  }
+
   function handleClearLogs() {
     setLogs([]);
   }
@@ -265,6 +293,10 @@ export default function ExchangeIntegrationPage() {
         title={title}
         basePath={basePath}
         active={activeTab as TabKey}
+        status={integrationStatus || undefined}
+        onPurge={handlePurgeCredentials}
+        purgeDisabled={!integrationId || purging}
+        isPurging={purging}
       />
 
       {activeTab !== 'data' && (
@@ -486,12 +518,20 @@ function TabHeader({
   config,
   title,
   basePath,
-  active
+  active,
+  status,
+  onPurge,
+  purgeDisabled,
+  isPurging
 }: {
   config: ExchangeConfig;
   title: string;
   basePath: string;
   active: TabKey;
+  status?: string;
+  onPurge?: () => void;
+  purgeDisabled?: boolean;
+  isPurging?: boolean;
 }) {
   const tabs = [
     { key: 'overview' as TabKey, code: 'OV', label: 'Overview', to: basePath },
@@ -499,13 +539,27 @@ function TabHeader({
     { key: 'data' as TabKey, code: 'DB', label: 'Data', to: `${basePath}/data` }
   ];
 
+  const statusTone = (status || '').toLowerCase();
+  const statusClass =
+    statusTone === 'connected'
+      ? 'border-emerald-400/60 bg-emerald-400/10 text-emerald-100'
+      : 'border-amber-300/40 bg-amber-300/10 text-amber-100';
+
   return (
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <p className="section-label">Integrations · {config.region}</p>
         <h1 className="headline text-3xl">{title}</h1>
-        {config.notes && <p className="mt-2 text-sm muted-text max-w-3xl">{config.notes}</p>}
-        <div className="mt-3 inline-flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {config.notes && <p className="text-sm muted-text max-w-3xl">{config.notes}</p>}
+          {status && (
+            <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.22em] ${statusClass}`}>
+              <span className={`h-2 w-2 rounded-full ${statusTone === 'connected' ? 'bg-emerald-300' : 'bg-amber-300'}`}></span>
+              {status}
+            </span>
+          )}
+        </div>
+        <div className="mt-3 inline-flex flex-wrap items-center gap-2">
           {tabs.map((tab) => (
             <Link
               key={tab.key}
@@ -526,6 +580,18 @@ function TabHeader({
         </div>
       </div>
       <div className="flex items-center gap-3">
+        {onPurge && (
+          <button
+            type="button"
+            onClick={onPurge}
+            disabled={purgeDisabled}
+            className={`btn btn-secondary btn-small border-red-500/60 text-red-200 hover:border-red-300 hover:text-white ${
+              purgeDisabled ? 'opacity-70' : ''
+            }`}
+          >
+            {isPurging ? 'Purging…' : 'Purge credentials'}
+          </button>
+        )}
         <Link to="/platform/integrations" className="text-xs uppercase tracking-[0.3em] text-primary-200">
           ← Back
         </Link>
