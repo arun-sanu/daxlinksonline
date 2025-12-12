@@ -1,14 +1,3 @@
-import { deleteIntegration } from '../services/integrationService.js';
-export async function handleDeleteIntegration(req, res, next) {
-  try {
-    const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
-    const result = await deleteIntegration(workspaceId, integrationId);
-    res.json(result);
-  } catch (error) {
-    if (error instanceof z.ZodError) error.status = 400;
-    next(error);
-  }
-}
 // Removed duplicate handlePurgeIntegrationCredentials declaration
 import { z } from 'zod';
 import {
@@ -19,6 +8,7 @@ import {
   getIntegrationDetail,
   updateIntegrationCredential,
   deleteIntegrationCredential,
+  deleteIntegration,
   purgeIntegrationCredentials
 } from '../services/integrationService.js';
 import { recordAudit } from '../services/auditService.js';
@@ -157,6 +147,17 @@ export async function handleDeleteIntegrationCredential(req, res, next) {
   try {
     const { workspaceId, integrationId, credentialId } = credentialParamSchema.parse(req.params);
     const result = await deleteIntegrationCredential(workspaceId, integrationId, credentialId);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleDeleteIntegration(req, res, next) {
+  try {
+    const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
+    const result = await deleteIntegration(workspaceId, integrationId);
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
