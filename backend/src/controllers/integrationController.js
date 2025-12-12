@@ -17,7 +17,8 @@ import {
   renameIntegration,
   getIntegrationDetail,
   updateIntegrationCredential,
-  deleteIntegrationCredential
+  deleteIntegrationCredential,
+  purgeIntegrationCredentials
 } from '../services/integrationService.js';
 import { recordAudit } from '../services/auditService.js';
 import { AVAILABLE_EXCHANGES } from '../data/exchanges.js';
@@ -155,6 +156,17 @@ export async function handleDeleteIntegrationCredential(req, res, next) {
   try {
     const { workspaceId, integrationId, credentialId } = credentialParamSchema.parse(req.params);
     const result = await deleteIntegrationCredential(workspaceId, integrationId, credentialId);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handlePurgeIntegrationCredentials(req, res, next) {
+  try {
+    const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
+    const result = await purgeIntegrationCredentials(workspaceId, integrationId);
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
