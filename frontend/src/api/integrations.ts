@@ -77,20 +77,7 @@ function authHeaders() {
 }
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit, message?: string): Promise<T> {
-  const API_BASE =
-    (window as any).__DAXLINKS_CONFIG__?.apiBase ||
-    import.meta.env.VITE_API_BASE ||
-    '';
-
-  const withBase = (path: string | URL) => {
-    if (typeof path !== 'string') return path;
-    if (path.startsWith('http')) return path;
-    const base = API_BASE.replace(/\/$/, '');
-    const cleaned = path.startsWith('/') ? path : `/${path}`;
-    return `${base}${cleaned}`;
-  };
-
-  const url = withBase(input);
+  const url = withApiBase(input as any);
 
   const res = await fetch(url, {
     credentials: 'include',
@@ -195,3 +182,4 @@ export async function purgeIntegrationCredentials(
     'Failed to purge credentials'
   );
 }
+import { withApiBase } from './client';

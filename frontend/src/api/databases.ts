@@ -31,7 +31,8 @@ function authHeaders() {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const url = withApiBase(path) as string;
+  const res = await fetch(url, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(init?.headers || {}) },
     ...init
@@ -61,3 +62,4 @@ export async function rotateDatabase(dbId: string) {
 export async function deleteDatabase(dbId: string) {
   return request<{ success: boolean }>(`/api/v1/admin/databases/${encodeURIComponent(dbId)}`, { method: 'DELETE' });
 }
+import { withApiBase } from './client';

@@ -28,7 +28,8 @@ function authHeaders() {
 }
 
 async function tryFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T | null> {
-  const res = await fetch(input, {
+  const url = withApiBase(input as any);
+  const res = await fetch(url, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(init?.headers || {}) },
     ...init
@@ -75,3 +76,4 @@ export async function toggleWebhook(webhookId: string, active: boolean): Promise
 }
 
 export { authHeaders as webhookAuthHeaders };
+import { withApiBase } from './client';

@@ -835,7 +835,7 @@ function DataSection({
   return (
     <section className="space-y-4" id="saved-keys">
       <div className="flex justify-end">
-        <div className="inline-flex items-center gap-2 rounded-md bg-white/5 px-2 py-1 text-xs uppercase tracking-[0.18em] text-gray-300">
+        <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-gray-300">
           {[
             { key: 'keys', label: 'Account Keys' },
             { key: 'trades', label: 'Trades' },
