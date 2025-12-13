@@ -1,114 +1,70 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { checkDnsAvailability, deleteDnsRecord, listMyDnsRecords, registerDnsRecord } from '../../../api/dns';
+import type { DnsRecord } from '../../../api/types';
 
-type Availability = { available: boolean; name: string } | null;
-type DnsRecord = { id: string; host: string; url: string; ip: string | null; cloudflareId: string };
+const BASE_DOMAIN = 'daxlinksonline.link';
+const SUBDOMAIN_REGEX = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/;
 
-const zones = [
-  { host: 'hooks.daxlinksonline.link', type: 'CNAME', target: 'router.edge.daxlinksonline.link', status: 'Healthy' },
-  { host: 'ops.daxlinksonline.link', type: 'A', target: '35.188.12.42', status: 'Healthy' },
-  { host: 'ws.daxlinksonline.link', type: 'SRV', target: 'wss://router.daxlinksonline.link:443', status: 'Degraded' }
-];
+type Availability = { available: boolean; name: string; reason?: string } | null;
+type Toast = { message: string; tone: 'success' | 'error' };
 
-const failoverTargets = [
-  { label: 'Primary', value: 'fra.edge.daxlinksonline.link' },
-  { label: 'Secondary', value: 'sin.edge.daxlinksonline.link' },
-  { label: 'Emergency', value: 'nyc.edge.daxlinksonline.link' }
-];
-
-const workflow = [
-  'Draft record updates and request peer review.',
-  'Validate propagation with automated dig checks.',
-  'Record change tickets for audit and rollback tracking.'
-];
-
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
+function formatDate(input: string) {
   try {
-    return (window as any).__appAuthToken__ || localStorage.getItem('authToken') || localStorage.getItem('daxlinksToken') || null;
+    return new Date(input).toLocaleString();
   } catch {
-    return null;
+    return input;
   }
 }
 
-function authHeaders() {
-  const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+function fullDomain(name: string) {
+  return `${name}.${BASE_DOMAIN}`;
 }
 
-function getBaseDomain() {
-  if (typeof window !== 'undefined') {
-    const fromGlobal = (window as any).__DAXLINKS_CONFIG__?.baseDomain || (window as any).__APP_CONFIG__?.baseDomain;
-    if (fromGlobal) return fromGlobal;
-  }
-  return 'daxlinksonline.link';
-}
-
-function runConfetti(canvas: HTMLCanvasElement | null) {
-  if (!canvas) return () => {};
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return () => {};
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = canvas.clientWidth || 1;
-  const h = canvas.clientHeight || 1;
-  canvas.width = Math.floor(w * dpr);
-  canvas.height = Math.floor(h * dpr);
-  ctx.scale(dpr, dpr);
-  const colors = ['#ffffff', '#89d8ff', '#6B6BF7', '#A78BFA', '#00ff9d'];
-  const N = Math.min(120, Math.floor((w * h) / 20000));
-  const parts = Array.from({ length: N }, () => ({
-    x: Math.random() * w,
-    y: -10 - Math.random() * 40,
-    vx: (Math.random() - 0.5) * 2.0,
-    vy: 2 + Math.random() * 2.2,
-    size: 3 + Math.random() * 3,
-    color: colors[(Math.random() * colors.length) | 0],
-    rot: Math.random() * Math.PI,
-    vr: (Math.random() - 0.5) * 0.2
-  }));
-  let raf: number;
-  let life = 0;
-  const maxLife = 1800; // ~3s
-  const step = () => {
-    ctx.clearRect(0, 0, w, h);
-    for (const p of parts) {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.rot += p.vr;
-      if (p.y > h + 20) {
-        p.y = -10;
-        p.x = Math.random() * w;
-      }
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rot);
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-      ctx.restore();
-    }
-    life += 16;
-    if (life < maxLife) raf = requestAnimationFrame(step);
-  };
-  raf = requestAnimationFrame(step);
-  return () => cancelAnimationFrame(raf);
+function statusTone(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('active')) return { label: 'Active', className: 'text-emerald-300' };
+  if (normalized.includes('pending')) return { label: 'Pending', className: 'text-amber-300' };
+  if (normalized.includes('error')) return { label: 'Error', className: 'text-red-300' };
+  return { label: status, className: 'text-gray-300' };
 }
 
 export default function DNSModule() {
-  const baseDomain = useMemo(() => getBaseDomain(), []);
   const [subdomain, setSubdomain] = useState('');
   const [ip, setIp] = useState('');
   const [availability, setAvailability] = useState<Availability>(null);
   const [checking, setChecking] = useState(false);
   const [registering, setRegistering] = useState(false);
-  const [resultUrl, setResultUrl] = useState('');
+  const [records, setRecords] = useState<DnsRecord[]>([]);
+  const [loadingRecords, setLoadingRecords] = useState(false);
   const [error, setError] = useState('');
-  const [myRecords, setMyRecords] = useState<DnsRecord[]>([]);
-  const [loadingMine, setLoadingMine] = useState(false);
-  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
-  const [showConfetti, setShowConfetti] = useState(false);
-  const confettiCanvas = useRef<HTMLCanvasElement | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<DnsRecord | null>(null);
+
+  const clientValidation = useMemo(() => {
+    if (!subdomain.trim()) return '';
+    const normalized = subdomain.trim().toLowerCase();
+    if (normalized.length < 3) return 'Min 3 characters required.';
+    if (!SUBDOMAIN_REGEX.test(normalized)) return 'Use lowercase letters/numbers, hyphens allowed in the middle.';
+    return '';
+  }, [subdomain]);
 
   useEffect(() => {
-    fetchMine();
+    let mounted = true;
+    (async () => {
+      setLoadingRecords(true);
+      setError('');
+      try {
+        const res = await listMyDnsRecords();
+        if (mounted) setRecords(res);
+      } catch (e: any) {
+        if (mounted) setError(e?.message || 'Failed to load DNS records');
+      } finally {
+        if (mounted) setLoadingRecords(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -116,289 +72,225 @@ export default function DNSModule() {
       setAvailability(null);
       return;
     }
-    const name = subdomain.trim().toLowerCase();
+    const normalized = subdomain.trim().toLowerCase();
+    if (clientValidation) {
+      setAvailability(null);
+      return;
+    }
     let cancelled = false;
+    setChecking(true);
     const timer = setTimeout(async () => {
-      setChecking(true);
-      setError('');
       try {
-        const res = await fetch(`/api/v1/dns/available/${encodeURIComponent(name)}`);
-        if (!res.ok) throw new Error('Availability check failed');
-        const data = await res.json();
-        if (!cancelled) setAvailability(data);
+        const res = await checkDnsAvailability(normalized);
+        if (!cancelled) setAvailability(res);
       } catch (e: any) {
         if (!cancelled) setAvailability(null);
-        if (!cancelled) setError(e?.message || 'Failed to check availability');
+        if (!cancelled) setError(e?.message || 'Availability check failed');
       } finally {
         if (!cancelled) setChecking(false);
       }
-    }, 250);
+    }, 400);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [subdomain]);
+  }, [subdomain, clientValidation]);
 
   useEffect(() => {
-    if (!showConfetti) return;
-    const stop = runConfetti(confettiCanvas.current);
-    const timer = setTimeout(() => {
-      stop();
-      setShowConfetti(false);
-    }, 2200);
-    return () => {
-      stop();
-      clearTimeout(timer);
-    };
-  }, [showConfetti]);
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2400);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
-  async function fetchMine() {
-    setLoadingMine(true);
-    setError('');
-    try {
-      const res = await fetch('/api/v1/dns/mine', { headers: { ...authHeaders() }, credentials: 'include' });
-      if (res.status === 401) {
-        setMyRecords([]);
-        return;
-      }
-      if (!res.ok) throw new Error('Failed to load DNS records');
-      const data = await res.json();
-      setMyRecords(Array.isArray(data?.items) ? data.items : []);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load DNS records');
-    } finally {
-      setLoadingMine(false);
+  const canSubmit = availability?.available && !!ip.trim() && !registering;
+  const helperText = clientValidation || (availability ? (availability.available ? 'Available' : availability.reason || 'Unavailable') : '');
+
+  async function handleRegister() {
+    if (clientValidation) {
+      setError(clientValidation);
+      return;
     }
-  }
-
-  async function registerDns() {
-    setError('');
-    setResultUrl('');
+    const name = subdomain.trim().toLowerCase();
+    if (!name || !ip.trim()) return;
     setRegistering(true);
+    setError('');
     try {
-      const res = await fetch('/api/v1/dns/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        credentials: 'include',
-        body: JSON.stringify({ subdomain: subdomain.trim().toLowerCase(), ip: ip.trim() })
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(payload?.error || payload?.message || 'Registration failed');
-      }
-      setResultUrl(payload?.url || '');
-      setShowConfetti(true);
-      fetchMine();
+      await registerDnsRecord({ name, ip: ip.trim() });
+      setToast({ message: `Added ${fullDomain(name)}`, tone: 'success' });
+      setSubdomain('');
+      setIp('');
+      const refreshed = await listMyDnsRecords();
+      setRecords(refreshed);
     } catch (e: any) {
       setError(e?.message || 'Failed to register DNS');
+      setToast({ message: e?.message || 'Failed to register DNS', tone: 'error' });
     } finally {
       setRegistering(false);
     }
   }
 
-  async function deleteRec(id: string) {
-    setDeleting((prev) => ({ ...prev, [id]: true }));
-    setError('');
+  async function handleDelete() {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    setConfirmDelete(null);
     try {
-      const res = await fetch(`/api/v1/dns/${id}`, {
-        method: 'DELETE',
-        headers: { ...authHeaders() },
-        credentials: 'include'
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.error || payload?.message || 'Failed to delete record');
-      }
-      setMyRecords((prev) => prev.filter((r) => r.id !== id));
+      await deleteDnsRecord(target.id);
+      setRecords((prev) => prev.filter((r) => r.id !== target.id));
+      setToast({ message: `Removed ${fullDomain(target.name)}`, tone: 'success' });
     } catch (e: any) {
-      setError(e?.message || 'Failed to delete record');
-    } finally {
-      setDeleting((prev) => ({ ...prev, [id]: false }));
+      setToast({ message: e?.message || 'Delete failed', tone: 'error' });
     }
   }
 
-  const availabilityTone = availability
-    ? availability.available
-      ? { text: 'Available', color: '#00D4AA' }
-      : { text: 'Taken', color: '#ef4444' }
-    : null;
+  async function handleCopy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast({ message: 'Copied', tone: 'success' });
+    } catch {
+      setToast({ message: 'Copy failed', tone: 'error' });
+    }
+  }
 
   return (
-    <div className="dns-shell w-full space-y-10">
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="dns-chip">Infrastructure</span>
-          <span className="dns-chip dns-chip--ghost dns-chip--pulse">Edge aligned</span>
+    <div className="space-y-10">
+      {toast && (
+        <div
+          className={`fixed right-4 top-4 z-40 rounded-xl border px-4 py-3 text-sm shadow-lg ${
+            toast.tone === 'success' ? 'bg-emerald-600/80 border-emerald-300/60 text-emerald-50' : 'bg-red-600/80 border-red-300/60 text-red-50'
+          }`}
+        >
+          {toast.message}
         </div>
-        <h1 className="text-3xl font-semibold text-main sm:text-4xl">DNS &amp; routing</h1>
+      )}
+
+      <header className="space-y-2">
+        <p className="section-label">DNS Management</p>
+        <h1 className="text-3xl font-semibold text-main sm:text-4xl">Custom subdomains for your webhooks</h1>
         <p className="max-w-3xl text-sm muted-text">
-          Keep webhook ingress, API callbacks, and operator dashboards resolvable in every region. Manage records, health checks, and
-          failover targets from a single console.
+          Request, validate, and delete A records under {BASE_DOMAIN}. Every change runs through the live DNS API and Cloudflare cleanup.
         </p>
-      </section>
+      </header>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)] items-start">
-        <article className="dns-card dns-card--grid space-y-4 h-full">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-main">Active zones</h2>
-            <span className="dns-token">Aligned</span>
+      <section className="card-shell space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-main">Request a new subdomain</p>
+            <p className="text-xs muted-text">We debounce availability checks after you stop typing.</p>
           </div>
-          <table className="w-full text-sm text-gray-300">
-            <thead className="text-left text-[11px] uppercase tracking-[0.18em] text-gray-500">
-              <tr>
-                <th className="pb-2">Hostname</th>
-                <th className="pb-2">Type</th>
-                <th className="pb-2">Target</th>
-                <th className="pb-2 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {zones.map((zone) => (
-                <tr key={zone.host} className="border-t border-white/5 align-middle">
-                  <td className="py-3 font-semibold text-main">{zone.host}</td>
-                  <td className="py-3">{zone.type}</td>
-                  <td className="py-3 text-gray-400">{zone.target}</td>
-                  <td className="py-3 text-right text-xs uppercase tracking-[0.18em]" style={{ color: zone.status === 'Healthy' ? 'var(--primary)' : undefined }}>
-                    {zone.status}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        <aside className="dns-card dns-card--accent space-y-4 h-full">
-          <div className="space-y-0.5">
-            <p className="text-sm font-semibold text-main">Cloudflare edge</p>
-            <p className="text-xs" style={{ color: '#F3801A' }}>Always-on DDoS &amp; WAF protection</p>
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-main">Failover policy</h3>
-            <p className="text-xs muted-text">
-              Ordered health checks with instant fallbacks. When latency breaches thresholds, traffic shifts to the next available region.
-            </p>
-            <div className="grid gap-2 text-xs muted-text">
-              {failoverTargets.map((target) => (
-                <div key={target.value} className="dns-row">
-                  <span>{target.label}</span>
-                  <span style={{ color: 'var(--primary)' }}>{target.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <section className="dns-card space-y-3 w-full">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-main">Change workflow</h2>
-          <span className="dns-token dns-token--ghost">Minimal</span>
+          <span className="dns-chip dns-chip--ghost text-xs uppercase tracking-[0.28em]">DMS</span>
         </div>
-        <ol className="dns-timeline text-sm muted-text">
-          {workflow.map((step, idx) => (
-            <li key={step} className="dns-timeline__item">
-              <span className="dns-timeline__dot">{idx + 1}</span>
-              <span className="text-main">{step}</span>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="relative dns-card space-y-4 w-full">
-        {showConfetti && (
-          <div className="pointer-events-none absolute inset-0 z-10">
-            <canvas ref={confettiCanvas} className="h-full w-full"></canvas>
-          </div>
-        )}
-        <h2 className="text-lg font-semibold text-main">Custom domain</h2>
-        <p className="text-sm muted-text">Create an A record under {baseDomain} to your public IP. Unproxied for direct control.</p>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] muted-text">Subdomain</label>
-            <div className="hero-input mt-1 flex items-center">
-              <input value={subdomain} onChange={(e) => setSubdomain(e.target.value)} placeholder="mybot" />
-              <span className="text-xs text-gray-500">.{baseDomain}</span>
+          <label className="flex flex-col gap-2 text-sm muted-text">
+            Subdomain
+            <div className="hero-input flex items-center">
+              <input
+                value={subdomain}
+                onChange={(e) => setSubdomain(e.target.value.toLowerCase())}
+                placeholder="moneyplantbot1"
+                aria-describedby="subdomain-help"
+              />
+              <span className="text-xs text-gray-500">.{BASE_DOMAIN}</span>
             </div>
-            <p className="mt-1 text-xs" style={availabilityTone ? { color: availabilityTone.color } : undefined}>
-              {checking ? 'Checking…' : availabilityTone ? availabilityTone.text : '\u00a0'}
-            </p>
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-[0.2em] muted-text">Public IP</label>
-            <div className="hero-input mt-1">
+            <span id="subdomain-help" className="text-xs" style={{ color: clientValidation ? '#f97316' : availability?.available ? '#34D399' : '#9CA3AF' }}>
+              {checking ? 'Checking…' : helperText || 'Lowercase, numbers, hyphen (not at edges)'}
+            </span>
+          </label>
+          <label className="flex flex-col gap-2 text-sm muted-text">
+            Target IP
+            <div className="hero-input">
               <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="167.99.12.45" />
             </div>
-          </div>
-          <div className="flex md:justify-end">
-            <button
-              type="button"
-              className="btn btn-primary text-xs tracking-[0.2em] w-full md:w-auto"
-              disabled={!(availability?.available && subdomain && ip) || registering}
-              onClick={registerDns}
-            >
-              {registering ? 'Adding…' : 'Add'}
-            </button>
-          </div>
+          </label>
+          <button type="button" className="btn btn-primary w-full text-xs md:w-auto" disabled={!canSubmit} onClick={handleRegister}>
+            {registering ? 'Saving…' : 'Add record'}
+          </button>
         </div>
-        {resultUrl && (
-          <p className="text-sm" style={{ color: '#00D4AA' }}>
-            Success — Use{' '}
-            <a href={resultUrl} target="_blank" rel="noreferrer" className="underline">
-              {resultUrl}
-            </a>
-          </p>
-        )}
-        {error && (
-          <p className="text-sm" style={{ color: '#ef4444' }}>
-            {error}
-          </p>
-        )}
-        <p className="text-xs muted-text">Real-time availability checks and instant Cloudflare A record creation.</p>
+        {error && <p className="text-sm text-amber-300">{error}</p>}
+      </section>
 
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-main">Your Custom Subdomains</h3>
-          {loadingMine && <p className="text-sm muted-text">Loading…</p>}
-          {!loadingMine && !getAuthToken() && <p className="text-sm muted-text">Sign in to view your records.</p>}
-          {!loadingMine && getAuthToken() && myRecords.length > 0 && (
-            <table className="w-full text-xs muted-text">
+      <section className="card-shell space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-main">Your DNS records</h2>
+            <p className="text-xs muted-text">Active, pending, or errored records under {BASE_DOMAIN}.</p>
+          </div>
+          <button type="button" className="btn btn-secondary btn-xs" onClick={() => listMyDnsRecords().then(setRecords)}>
+            Refresh
+          </button>
+        </div>
+        {loadingRecords && <p className="text-sm muted-text">Loading records…</p>}
+        {!loadingRecords && records.length === 0 && <p className="text-sm muted-text">No custom subdomains yet.</p>}
+        {!loadingRecords && records.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs text-gray-300">
               <thead className="text-left text-[11px] uppercase tracking-[0.2em] muted-text">
                 <tr>
-                  <th className="pb-2">Hostname</th>
+                  <th className="pb-2">Subdomain</th>
                   <th className="pb-2">Target IP</th>
-                  <th className="pb-2">Cloudflare ID</th>
-                  <th className="pb-2"></th>
+                  <th className="pb-2">Status</th>
+                  <th className="pb-2">Created</th>
+                  <th className="pb-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {myRecords.map((rec) => (
-                  <tr key={rec.id} className="border-t border-white/5">
-                    <td className="py-3">
-                      <a href={rec.url} target="_blank" rel="noreferrer" className="underline">
-                        {rec.host}
-                      </a>
-                    </td>
-                    <td className="py-3">{rec.ip || '—'}</td>
-                    <td className="py-3">
-                      <span className="truncate">{rec.cloudflareId}</span>
-                    </td>
-                    <td className="py-3 text-right">
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-xs"
-                        onClick={() => deleteRec(rec.id)}
-                        disabled={Boolean(deleting[rec.id])}
-                      >
-                        {deleting[rec.id] ? 'Deleting…' : 'Delete'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {records.map((rec) => {
+                  const tone = statusTone(rec.status);
+                  const fqdn = fullDomain(rec.name);
+                  return (
+                    <tr key={rec.id} className="border-t border-white/5">
+                      <td className="py-3">
+                        <div className="flex items-center gap-2">
+                          <a href={`https://${fqdn}`} target="_blank" rel="noreferrer" className="font-semibold text-main underline">
+                            {fqdn}
+                          </a>
+                          <button type="button" className="btn btn-secondary btn-xxs" onClick={() => handleCopy(fqdn)}>
+                            Copy
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-gray-500">{rec.cloudflareId ? `Cloudflare: ${rec.cloudflareId}` : 'Pending Cloudflare ID'}</p>
+                      </td>
+                      <td className="py-3">{rec.ip || '—'}</td>
+                      <td className="py-3">
+                        <span className={tone.className}>{tone.label}</span>
+                      </td>
+                      <td className="py-3">{formatDate(rec.createdAt)}</td>
+                      <td className="py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button type="button" className="btn btn-secondary btn-xxs" onClick={() => handleCopy(fqdn)}>
+                            Copy URL
+                          </button>
+                          <button type="button" className="btn btn-danger btn-xxs" onClick={() => setConfirmDelete(rec)}>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          )}
-          {!loadingMine && getAuthToken() && myRecords.length === 0 && <p className="text-sm muted-text">No custom subdomains yet.</p>}
-        </div>
+          </div>
+        )}
       </section>
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-white/10 bg-[#0b0c10] p-5 shadow-xl">
+            <p className="text-lg font-semibold text-main">Delete DNS record</p>
+            <p className="text-sm muted-text">
+              Remove <span className="font-semibold text-main">{fullDomain(confirmDelete.name)}</span>? This also deletes the Cloudflare entry.
+            </p>
+            <div className="flex justify-end gap-3 text-sm">
+              <button className="btn btn-secondary" type="button" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" type="button" onClick={handleDelete}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

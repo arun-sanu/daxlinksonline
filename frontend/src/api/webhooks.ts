@@ -1,4 +1,5 @@
-import type { Webhook, WebhookMethod } from './types';
+import type { Webhook, WebhookDelivery, WebhookMethod, WebhookProfile } from './types';
+import { withApiBase } from './client';
 
 type CreateWebhookPayload = {
   name: string;
@@ -76,4 +77,18 @@ export async function toggleWebhook(webhookId: string, active: boolean): Promise
 }
 
 export { authHeaders as webhookAuthHeaders };
-import { withApiBase } from './client';
+
+export async function fetchWebhookProfile(): Promise<WebhookProfile | null> {
+  const profile = await tryFetch<{ webhook?: WebhookProfile }>('/api/v1/auth/profile', { method: 'GET' });
+  if (profile && profile.webhook) return profile.webhook;
+  return null;
+}
+
+export async function fetchWebhookDeliveries(limit = 10): Promise<WebhookDelivery[]> {
+  const ws = getWorkspaceId();
+  const deliveries = await tryFetch<{ items?: WebhookDelivery[] } | WebhookDelivery[]>(
+    `/api/v1/admin/webhooks/deliveries?workspaceId=${encodeURIComponent(ws)}&limit=${limit}`
+  );
+  if (Array.isArray(deliveries)) return deliveries;
+  return deliveries.items || [];
+}

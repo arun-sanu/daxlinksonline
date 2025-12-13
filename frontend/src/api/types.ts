@@ -22,8 +22,24 @@ export interface Webhook {
   active: boolean;
   signingSecretRef?: string | null;
   lastDeliveryAt?: string | null;
+  lastResponseCode?: number | null;
+  lastError?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WebhookProfile {
+  url: string;
+  secret: string | null;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  event?: string | null;
+  status: string;
+  responseCode?: number | null;
+  lastError?: string | null;
+  createdAt: string;
 }
 
 export interface Bot {
@@ -182,4 +198,13 @@ export interface InstanceSecurity {
   rateLimit: { lastTriggeredAt?: string | null; detail?: string | null };
   signature: { lastCheckAt?: string | null; lastFailureAt?: string | null };
   guardrail: { lastTriggeredAt?: string | null; detail?: string | null };
+}
+
+export interface DnsRecord {
+  id: string;
+  name: string;
+  ip: string;
+  status: 'active' | 'pending' | 'error' | string;
+  cloudflareId?: string | null;
+  createdAt: string;
 }
