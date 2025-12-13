@@ -766,15 +766,6 @@ function TabHeader({
                   {tab.icon}
                 </span>
                 <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
-                <span className="relative z-10 mt-1 flex h-3 items-center justify-center gap-1" aria-hidden="true">
-                  {[0, 0.1, 0.2].map((delay) => (
-                    <span
-                      key={delay}
-                      className={`h-1.5 w-1.5 rounded-full bg-white/80 ${isActive ? 'opacity-80 animate-[pulse_0.8s_ease-in-out_infinite]' : 'opacity-0'}`}
-                      style={{ animationDelay: `${delay}s` }}
-                    ></span>
-                  ))}
-                </span>
               </Link>
             );
           })}
@@ -854,7 +845,7 @@ function DataSection({
               key={tab.key}
               type="button"
               onClick={() => setDataTab(tab.key as typeof dataTab)}
-              className={`group relative flex aspect-square w-40 flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border px-6 py-6 text-center text-base font-semibold transition ${
+              className={`group relative flex flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border px-4 py-3 text-center text-sm font-semibold transition min-w-[6rem] ${
                 dataTab === tab.key
                   ? 'border-primary-200/80 bg-primary-400/10 text-white'
                   : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
@@ -862,15 +853,6 @@ function DataSection({
             >
               <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
               <span className={`relative z-10 ${dataTab === tab.key ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
-              <span className="relative z-10 mt-1 flex h-3 items-center justify-center gap-1" aria-hidden="true">
-                {[0, 0.1, 0.2].map((delay) => (
-                  <span
-                    key={delay}
-                    className={`h-1.5 w-1.5 rounded-full bg-white/80 ${dataTab === tab.key ? 'opacity-80 animate-[pulse_0.8s_ease-in-out_infinite]' : 'opacity-0'}`}
-                    style={{ animationDelay: `${delay}s` }}
-                  ></span>
-                ))}
-              </span>
             </button>
           ))}
         </div>
