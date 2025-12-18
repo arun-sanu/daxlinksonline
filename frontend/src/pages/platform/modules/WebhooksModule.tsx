@@ -1,7 +1,15 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import type { Webhook, WebhookDelivery, WebhookProfile } from '../../../api/types';
-import { fetchWebhookDeliveries, fetchWebhookProfile, listWebhooks, toggleWebhook } from '../../../api/webhooks';
+import {
+  assignWebhook,
+  fetchWebhookDeliveries,
+  fetchWebhookProfile,
+  getMyWebhook,
+  listWebhooks,
+  testWebhook,
+  toggleWebhook
+} from '../../../api/webhooks';
 
 type Toast = { message: string; tone: 'success' | 'error' };
 
@@ -25,26 +33,55 @@ function formatDeliveryRow(delivery: WebhookDelivery) {
 }
 
 export default function WebhooksModule() {
+  type MyWebhook = Awaited<ReturnType<typeof getMyWebhook>>;
+
+  const [myWebhook, setMyWebhook] = useState<MyWebhook | null>(null);
   const [profile, setProfile] = useState<WebhookProfile | null>(null);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [loadingWebhooks, setLoadingWebhooks] = useState(true);
   const [loadingDeliveries, setLoadingDeliveries] = useState(true);
+  const [assigning, setAssigning] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [error, setError] = useState('');
-  const [showRevealConfirm, setShowRevealConfirm] = useState(false);
   const [secretVisible, setSecretVisible] = useState(false);
+  const [hmacVisible, setHmacVisible] = useState(false);
+  const [showRevealConfirm, setShowRevealConfirm] = useState(false);
+  const [revealTarget, setRevealTarget] = useState<'secret' | 'hmac' | null>(null);
+  const [testForm, setTestForm] = useState({
+    symbol: 'TEST',
+    side: 'buy',
+    amount: 100,
+    timestamp: Date.now(),
+    hmac: ''
+  });
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setLoadingProfile(true);
+      setError('');
+      let hasMyWebhook = false;
+      try {
+        const payload = await getMyWebhook();
+        if (mounted) {
+          setMyWebhook(payload);
+          hasMyWebhook = true;
+        }
+      } catch (e: any) {
+        if (mounted) setMyWebhook(null);
+      }
       try {
         const p = await fetchWebhookProfile();
         if (mounted) setProfile(p);
       } catch (e: any) {
-        if (mounted) setError(e?.message || 'Failed to load webhook profile');
+        if (mounted && !hasMyWebhook) {
+          setError(e?.message || 'Failed to load webhook profile');
+        }
       } finally {
         if (mounted) setLoadingProfile(false);
       }
@@ -100,13 +137,19 @@ export default function WebhooksModule() {
   }, [toast]);
 
   const ingressUrl = useMemo(() => {
+    if (myWebhook?.url) return myWebhook.url;
     if (profile?.url) return profile.url;
     if (webhooks[0]?.url) return webhooks[0].url;
     return 'https://<sub>.daxlinksonline.link/webhook';
-  }, [profile, webhooks]);
+  }, [myWebhook, profile, webhooks]);
 
-  const secretValue = profile?.secret || webhooks[0]?.signingSecretRef || '';
+  const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
+  const hmacValue = myWebhook?.hmacKey || '';
+  const enforceHmac = myWebhook?.enforceHmac || false;
+  const baseDomain = myWebhook?.baseDomain || 'daxlinksonline.link';
+  const hasAssignedWebhook = Boolean(myWebhook?.url || profile?.url);
   const maskedSecret = secretVisible ? secretValue || '—' : '••••••••••••';
+  const maskedHmac = hmacVisible ? hmacValue || '—' : '••••••••••••';
 
   const tradingViewPayload = useMemo(
     () =>
@@ -114,9 +157,11 @@ export default function WebhooksModule() {
   "symbol": "NSE:INFY",
   "side": "buy",
   "amount": 25,
-  "secret": "${secretValue || '<set-your-secret>'}"
+  "timestamp": ${Date.now()},
+  "secret": "${secretValue || '<set-your-secret>'}",
+  "hmac": "${hmacValue ? '<computed-hmac>' : '<optional-hmac>'}"
 }`,
-    [secretValue]
+    [secretValue, hmacValue]
   );
 
   async function handleToggle(hook: Webhook) {
@@ -151,7 +196,77 @@ export default function WebhooksModule() {
       setSecretVisible(false);
       return;
     }
+    setRevealTarget('secret');
     setShowRevealConfirm(true);
+  }
+
+  function handleRevealHmac() {
+    if (hmacVisible) {
+      setHmacVisible(false);
+      return;
+    }
+    setRevealTarget('hmac');
+    setShowRevealConfirm(true);
+  }
+
+  async function refreshIngress() {
+    setLoadingProfile(true);
+    setError('');
+    try {
+      const payload = await getMyWebhook();
+      setMyWebhook(payload);
+    } catch (e: any) {
+      setMyWebhook(null);
+      if (e?.message) setError(e.message);
+    } finally {
+      try {
+        const p = await fetchWebhookProfile();
+        setProfile(p);
+      } catch {
+        // ignore; older profile may not exist
+      } finally {
+        setLoadingProfile(false);
+      }
+    }
+  }
+
+  async function handleAssignWebhook() {
+    setAssigning(true);
+    setError('');
+    setSecretVisible(false);
+    setHmacVisible(false);
+    try {
+      await assignWebhook();
+      await refreshIngress();
+      setToast({ message: 'Webhook assigned', tone: 'success' });
+    } catch (e: any) {
+      setToast({ message: e?.message || 'Assign failed', tone: 'error' });
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  async function handleTestWebhook() {
+    setTesting(true);
+    setTestResult(null);
+    setError('');
+    const payload = {
+      symbol: testForm.symbol,
+      side: testForm.side,
+      amount: Number(testForm.amount),
+      timestamp: Number(testForm.timestamp),
+      ...(testForm.hmac ? { hmac: testForm.hmac } : {})
+    };
+    try {
+      const res = await testWebhook(payload);
+      setTestResult(JSON.stringify(res, null, 2));
+      setToast({ message: 'Test sent', tone: 'success' });
+    } catch (e: any) {
+      setTestResult(e?.message || 'Test failed');
+      setToast({ message: e?.message || 'Test failed', tone: 'error' });
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
@@ -178,30 +293,64 @@ export default function WebhooksModule() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
-            <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under daxlinksonline.link.</p>
+            <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')}>
+            <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
               Copy URL
             </button>
-            <button className="btn btn-secondary btn-xs" onClick={handleRevealSecret} disabled={!secretValue}>
-              {secretVisible ? 'Hide secret' : 'Reveal secret'}
+            <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
+              {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
             </button>
           </div>
         </div>
         {loadingProfile ? (
           <p className="text-sm muted-text">Loading webhook profile…</p>
-        ) : profile ? (
+        ) : hasAssignedWebhook ? (
           <>
-            <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
-              <div className="hero-input">
-                <input value={ingressUrl} readOnly aria-label="Webhook URL" />
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={ingressUrl} readOnly aria-label="Webhook URL" />
+                </div>
+                <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+                  Copy URL
+                </button>
               </div>
-              <div className="hero-input">
-                <input value={maskedSecret} readOnly aria-label="Webhook secret" />
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={maskedSecret} readOnly aria-label="Webhook secret" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs" onClick={handleRevealSecret} disabled={!secretValue}>
+                    {secretVisible ? 'Hide secret' : 'Reveal secret'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
+                    Copy secret
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
+                    {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
+                    Copy HMAC
+                  </button>
+                </div>
               </div>
             </div>
-            <p className="text-xs text-gray-500">POST alerts to this URL and include the secret in the payload for validation.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+              <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
+              <span>Base domain: {baseDomain}</span>
+            </div>
+            <p className="text-xs text-gray-500">
+              POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
+            </p>
           </>
         ) : (
           <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-100">
@@ -210,9 +359,10 @@ export default function WebhooksModule() {
               <button
                 type="button"
                 className="btn btn-primary btn-xs"
-                onClick={() => setToast({ message: 'Contact support to provision your ingress.', tone: 'success' })}
+                onClick={handleAssignWebhook}
+                disabled={assigning}
               >
-                Request provisioning
+                {assigning ? 'Assigning…' : 'Assign webhook'}
               </button>
               <Link to="/support" className="btn btn-secondary btn-xs">
                 Open support
@@ -238,7 +388,8 @@ export default function WebhooksModule() {
             <p className="font-semibold text-main">Steps</p>
             <ol className="space-y-1 pl-4 list-decimal">
               <li>Set Webhook URL to <span className="font-mono text-main break-all">{ingressUrl}</span></li>
-              <li>Paste the JSON payload below (includes your secret).</li>
+              <li>Paste the JSON payload below (includes your secret and timestamp).</li>
+              <li>{enforceHmac ? 'Compute and include' : 'Optionally include'} the HMAC signature.</li>
               <li>Send a test alert and watch delivery status in real time.</li>
             </ol>
           </div>
@@ -246,6 +397,83 @@ export default function WebhooksModule() {
 {tradingViewPayload}
           </pre>
         </div>
+        <p className="text-xs text-gray-500">
+          HMAC tip: compute SHA-256 over the JSON payload without the <span className="font-mono text-main">hmac</span> field, using your HMAC key.
+        </p>
+      </section>
+
+      <section className="card-shell space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] muted-text">Webhook test</p>
+            <p className="text-sm text-gray-400">Send a sample payload to your ingress endpoint.</p>
+          </div>
+          <button
+            className="btn btn-secondary btn-xs"
+            type="button"
+            onClick={() => setTestForm((prev) => ({ ...prev, timestamp: Date.now() }))}
+          >
+            Use current time
+          </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
+            Symbol
+            <input
+              value={testForm.symbol}
+              onChange={(e) => setTestForm((prev) => ({ ...prev, symbol: e.target.value }))}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
+            />
+          </label>
+          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
+            Side
+            <input
+              value={testForm.side}
+              onChange={(e) => setTestForm((prev) => ({ ...prev, side: e.target.value }))}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
+            />
+          </label>
+          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
+            Amount
+            <input
+              type="number"
+              value={testForm.amount}
+              onChange={(e) => setTestForm((prev) => ({ ...prev, amount: Number(e.target.value) }))}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
+            />
+          </label>
+          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
+            Timestamp (ms)
+            <input
+              type="number"
+              value={testForm.timestamp}
+              onChange={(e) => setTestForm((prev) => ({ ...prev, timestamp: Number(e.target.value) }))}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
+            />
+          </label>
+          <label className="text-xs uppercase tracking-[0.2em] text-gray-400 md:col-span-2">
+            HMAC (optional)
+            <input
+              value={testForm.hmac}
+              onChange={(e) => setTestForm((prev) => ({ ...prev, hmac: e.target.value }))}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
+              placeholder={enforceHmac ? 'Required when HMAC enforcement is enabled' : 'Optional'}
+            />
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn btn-primary btn-xs" type="button" onClick={handleTestWebhook} disabled={testing}>
+            {testing ? 'Sending…' : 'Send test webhook'}
+          </button>
+          <button className="btn btn-secondary btn-xs" type="button" onClick={() => handleCopy(JSON.stringify(testForm, null, 2), 'Test payload')}>
+            Copy test payload
+          </button>
+        </div>
+        {testResult && (
+          <pre className="rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-primary-100 overflow-auto" aria-label="Test webhook result">
+{testResult}
+          </pre>
+        )}
       </section>
 
       <section className="card-shell space-y-4">
@@ -376,20 +604,34 @@ export default function WebhooksModule() {
       {showRevealConfirm && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-md space-y-4 rounded-2xl border border-white/10 bg-[#0b0c10] p-5 shadow-xl">
-            <p className="text-lg font-semibold text-main">Reveal webhook secret?</p>
+            <p className="text-lg font-semibold text-main">
+              Reveal {revealTarget === 'hmac' ? 'HMAC key' : 'webhook secret'}?
+            </p>
             <p className="text-sm muted-text">
-              Only reveal in a private setting. Anyone with this secret can send alerts that pass validation.
+              Only reveal in a private setting. Anyone with this value can send alerts that pass validation.
             </p>
             <div className="flex justify-end gap-3 text-sm">
-              <button type="button" className="btn btn-secondary" onClick={() => setShowRevealConfirm(false)}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowRevealConfirm(false);
+                  setRevealTarget(null);
+                }}
+              >
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={() => {
-                  setSecretVisible(true);
+                  if (revealTarget === 'hmac') {
+                    setHmacVisible(true);
+                  } else {
+                    setSecretVisible(true);
+                  }
                   setShowRevealConfirm(false);
+                  setRevealTarget(null);
                 }}
               >
                 Reveal

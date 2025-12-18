@@ -92,3 +92,38 @@ export async function fetchWebhookDeliveries(limit = 10): Promise<WebhookDeliver
   if (Array.isArray(deliveries)) return deliveries;
   return deliveries.items || [];
 }
+
+type MyWebhookResponse = {
+  url?: string | null;
+  secret?: string | null;
+  hmacKey?: string | null;
+  enforceHmac?: boolean;
+  baseDomain?: string | null;
+};
+
+export async function getMyWebhook(): Promise<MyWebhookResponse> {
+  const res = await tryFetch<MyWebhookResponse>('/api/v1/users/my-webhook', { method: 'GET' });
+  if (!res) {
+    throw new Error('Failed to fetch webhook details');
+  }
+  return res;
+}
+
+export async function assignWebhook(): Promise<MyWebhookResponse> {
+  const res = await tryFetch<MyWebhookResponse>('/api/v1/users/assign-webhook', { method: 'POST' });
+  if (!res) {
+    throw new Error('Failed to assign webhook');
+  }
+  return res;
+}
+
+export async function testWebhook(testData: Record<string, unknown>) {
+  const res = await tryFetch<any>('/api/v1/users/test-webhook', {
+    method: 'POST',
+    body: JSON.stringify(testData)
+  });
+  if (!res) {
+    throw new Error('Test webhook failed');
+  }
+  return res;
+}
