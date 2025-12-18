@@ -7,7 +7,7 @@
     "dev": "nodemon --watch src --ext js,mjs --exec node src/server.js",
     "start": "node src/server.js",
     "test": "node --test",
-    "lint": "eslint .",
+    "lint": "eslint 'src/**/*.js' 'test/**/*.js'",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

@@ -20,7 +20,9 @@ const EnvSchema = z
     SMTP_PASSWORD: z.string().optional(),
     EMAIL_FROM: z.string().email().optional(),
     APP_BASE_URL: z.string().url().optional(),
-    FEATURE_NOTIFICATIONS: z.enum(['true', 'false']).default('true')
+    FEATURE_NOTIFICATIONS: z.enum(['true', 'false']).default('true'),
+    WEBHOOK_MAX_SKEW_MS: z.string().optional(),
+    ENFORCE_WEBHOOK_HMAC: z.enum(['true', 'false']).optional()
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production' && !env.KMS_KEY) {
@@ -36,6 +38,12 @@ const EnvSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/EMAIL_FROM must all be set together'
+      });
+    }
+    if (env.WEBHOOK_MAX_SKEW_MS && Number.isNaN(Number(env.WEBHOOK_MAX_SKEW_MS))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'WEBHOOK_MAX_SKEW_MS must be a number in milliseconds'
       });
     }
   });

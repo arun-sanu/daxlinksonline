@@ -8,8 +8,8 @@ export const router = Router();
 router.get('/available/:name', async (req, res, next) => {
   try {
     const { name } = z.object({ name: z.string() }).parse(req.params);
-    const ok = await isSubdomainAvailable(name);
-    res.json({ name, available: ok });
+    const result = await isSubdomainAvailable(name);
+    res.json({ name: result.name || name, available: result.available, reason: result.reason || null });
   } catch (error) {
     next(error);
   }
@@ -17,11 +17,11 @@ router.get('/available/:name', async (req, res, next) => {
 
 router.post('/register', requireAuth, async (req, res, next) => {
   try {
-    const { subdomain, ip } = z.object({
-      subdomain: z.string(),
+    const { name, ip } = z.object({
+      name: z.string().min(1),
       ip: z.string()
     }).parse(req.body || {});
-    const result = await registerCustomDns({ userId: req.user.id, subdomain, ip });
+    const result = await registerCustomDns({ userId: req.user.id, subdomain: name, ip });
     res.status(201).json(result);
   } catch (error) {
     next(error);

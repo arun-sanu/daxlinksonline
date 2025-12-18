@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Workspace {
@@ -191,8 +192,11 @@ model User {
   role             String               @default("operator")
   isSuperAdmin     Boolean              @default(false)
   // Webhook trial + ingress fields
-  webhookSubdomain String?              @unique
+  subdomainPrefix  String?              @unique
+  webhookSubdomain String?             @unique
   webhookSecret    String?
+  webhookHmacKey   String?
+  enforceHmac      Boolean              @default(false)
   trialEndsAt      DateTime?
   isActive         Boolean              @default(true)
   createdAt        DateTime             @default(now())
@@ -439,6 +443,8 @@ model DnsRecord {
   cloudflareId String
   ip           String?
   userId       String
+  status       String  @default("active")
+  createdAt    DateTime @default(now())
   user         User    @relation(fields: [userId], references: [id])
 
   @@index([subdomain])

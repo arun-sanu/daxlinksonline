@@ -7,6 +7,7 @@ import { signAuthToken } from '../middleware/auth.js';
 import { sendMail } from '../lib/mailer.js';
 import { provisionDefaultWorkspaceForUser } from './workspaceService.js';
 import { randomBytes } from 'crypto';
+import { buildTradingviewWebhookUrl } from '../lib/webhookDomains.js';
 
 function normalizeEmail(email) {
   return email.trim().toLowerCase();
@@ -31,12 +32,14 @@ function serializeUser(user) {
 
 function buildWebhookSummary(user) {
   if (!user) return null;
-  const baseDomain = process.env.WEBHOOK_BASE_DOMAIN || 'daxlinksonline.link';
-  const sub = user.webhookSubdomain || null;
-  const url = sub ? `https://${sub}.${baseDomain}/api/v1/webhook` : null;
+  const prefix = user.subdomainPrefix || user.webhookSubdomain || null;
+  const secret = user.webhookSecret || null;
+  const url = prefix && secret ? buildTradingviewWebhookUrl(prefix, secret) : null;
   return {
     url,
-    secret: user.webhookSecret || null,
+    secret,
+    hmacKey: user.webhookHmacKey || null,
+    enforceHmac: Boolean(user.enforceHmac),
     trialEndsAt: user.trialEndsAt || null,
     isActive: user.isActive !== false
   };
@@ -86,10 +89,8 @@ export async function registerUser({ name, email, password }) {
   const shortCode = await ensureUserShortCode(user);
   // Provision platform webhook subdomain + secret for 28-day trial
   const provisioned = await ensureTrialWebhook(user.id);
-  const baseDomain = process.env.WEBHOOK_BASE_DOMAIN || 'daxlinksonline.link';
-  const webhookUrl = provisioned.webhookSubdomain
-    ? `https://${provisioned.webhookSubdomain}.${baseDomain}/api/v1/webhook`
-    : null;
+  const prefix = provisioned.subdomainPrefix || provisioned.webhookSubdomain;
+  const webhookUrl = prefix && provisioned.webhookSecret ? buildTradingviewWebhookUrl(prefix, provisioned.webhookSecret) : null;
 
   const workspace = await provisionDefaultWorkspaceForUser(user);
   const token = signAuthToken(user.id);
@@ -97,7 +98,9 @@ export async function registerUser({ name, email, password }) {
     token,
     user: serializeUser({ ...user, shortCode }),
     workspace,
-    webhook: webhookUrl ? { url: webhookUrl, secret: provisioned.webhookSecret, trialEndsAt: provisioned.trialEndsAt } : null
+    webhook: webhookUrl
+      ? { url: webhookUrl, secret: provisioned.webhookSecret, hmacKey: provisioned.webhookHmacKey, trialEndsAt: provisioned.trialEndsAt }
+      : null
   };
 }
 

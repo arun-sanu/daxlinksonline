@@ -5,6 +5,7 @@ import { prisma } from '../utils/prisma.js';
 import { deleteDnsRecordById } from '../services/dnsService.js';
 import { sendMail } from '../lib/mailer.js';
 import { renderTrialExpiryWarning } from '../emails/trialExpiryTemplate.js';
+import { getWebhookBaseDomain } from '../lib/webhookDomains.js';
 
 function daysBetween(a, b) {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
@@ -13,16 +14,18 @@ function daysBetween(a, b) {
 async function emailWarnings() {
   const now = new Date();
   const in24h = new Date(Date.now() + 24 * 3600 * 1000);
+  const baseDomain = getWebhookBaseDomain();
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
       trialEndsAt: { gte: now, lte: in24h }
     },
-    select: { id: true, email: true, name: true, webhookSubdomain: true, trialEndsAt: true }
+    select: { id: true, email: true, name: true, webhookSubdomain: true, subdomainPrefix: true, trialEndsAt: true }
   });
   for (const u of users) {
     try {
-      const html = renderTrialExpiryWarning({ name: u.name, subdomain: u.webhookSubdomain, baseDomain: process.env.WEBHOOK_BASE_DOMAIN });
+      const prefix = u.subdomainPrefix || u.webhookSubdomain;
+      const html = renderTrialExpiryWarning({ name: u.name, prefix, baseDomain });
       await sendMail({ to: u.email, subject: 'Your webhook will stop in 24h — upgrade now', html, text: 'Your webhook will stop in 24h — upgrade now' });
     } catch (err) {
       console.error('Email warn failed', u.email, err?.message || err);
@@ -68,4 +71,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

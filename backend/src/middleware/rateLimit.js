@@ -2,9 +2,10 @@ import rateLimit from 'express-rate-limit';
 import RateLimitRedis from 'rate-limit-redis';
 import { connection } from '../lib/redis.js';
 import { logRateLimitEvent } from '../lib/tradeGuards.js';
+import { extractSubdomain, getWebhookBaseDomain } from '../lib/webhookDomains.js';
 
 const RedisStore = typeof RateLimitRedis === 'function' ? RateLimitRedis : RateLimitRedis?.RedisStore;
-const DEFAULT_WEBHOOK_DOMAIN = (process.env.WEBHOOK_BASE_DOMAIN || 'daxlinksonline.link').toLowerCase();
+const DEFAULT_WEBHOOK_DOMAIN = getWebhookBaseDomain();
 
 function buildStore() {
   if (!connection) return undefined;
@@ -12,17 +13,6 @@ function buildStore() {
   return new RedisStore({
     sendCommand: (...args) => connection.call(...args)
   });
-}
-
-function extractSubdomain(host) {
-  if (!host) return null;
-  const cleanHost = String(host).toLowerCase().split(':')[0];
-  const base = DEFAULT_WEBHOOK_DOMAIN;
-  if (!cleanHost.endsWith(base)) return null;
-  const parts = cleanHost.split('.');
-  const baseParts = base.split('.');
-  if (parts.length <= baseParts.length) return null;
-  return parts.slice(0, parts.length - baseParts.length).join('.');
 }
 
 export function createWorkspaceRateLimiter({
@@ -62,7 +52,7 @@ export function perSubdomainRateLimit({ maxPerSecond = 20, windowMs = 1000 } = {
     store,
     keyGenerator: (req) => {
       const host = req.headers['x-forwarded-host'] || req.headers.host;
-      const subdomain = extractSubdomain(host);
+      const subdomain = req.subdomainPrefix || extractSubdomain(host, DEFAULT_WEBHOOK_DOMAIN);
       if (subdomain) return `subdomain:${subdomain}`;
       const ip = req.ip || req.headers['x-forwarded-for'] || 'anonymous';
       return `ip:${ip}`;

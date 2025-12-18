@@ -3,36 +3,6 @@ import { maskCredential, createCredentialReference } from './workspaceService.js
 import { createExchange } from '../sdk/index.js';
 import { encrypt, decrypt } from '../lib/kms.js';
 
-// Delete an entire integration and its credentials
-export async function deleteIntegration(workspaceId, integrationId) {
-  // Ensure the integration exists and belongs to the workspace
-  const integration = await prisma.integration.findFirst({
-    where: { id: integrationId, workspaceId },
-    include: { credential: true }
-  });
-  if (!integration) {
-    throw Object.assign(new Error('Integration not found'), { status: 404 });
-  }
-  // Delete credential first (if exists), then integration
-  await prisma.$transaction(
-    [
-      integration.credential
-        ? prisma.integrationCredential.delete({ where: { id: integration.credential.id } })
-        : undefined,
-      prisma.integration.delete({ where: { id: integrationId } }),
-      prisma.credentialEvent.create({
-        data: {
-          workspaceId,
-          integrationId,
-          eventType: 'integration.deleted',
-          detail: 'Integration and credentials deleted by user'
-        }
-      })
-    ].filter(Boolean)
-  );
-  return { success: true };
-}
-
 function normalizeSecret(value, label) {
   const trimmed = typeof value === 'string' ? value.trim() : String(value || '').trim();
   if (!trimmed) {
@@ -63,6 +33,43 @@ function logCredentialSnapshot({ exchange, environment, integrationId, apiKey, a
   } catch {
     // Logging must never break execution
   }
+}
+
+// Delete an entire integration and its credentials
+export async function deleteIntegration(workspaceId, integrationId) {
+  // Ensure the integration exists and belongs to the workspace
+  const integration = await prisma.integration.findFirst({
+    where: { id: integrationId, workspaceId },
+    include: { credential: true }
+  });
+  if (!integration) {
+    throw Object.assign(new Error('Integration not found'), { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (integration.credential) {
+      await tx.integrationCredential.delete({ where: { id: integration.credential.id } });
+    }
+
+    await tx.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.deleted',
+        detail: 'Integration and credentials deleted by user'
+      }
+    });
+
+    await tx.integration.delete({ where: { id: integrationId } });
+  });
+
+  return { success: true };
+}
+
+function isUnsupportedConnectivityError(error) {
+  if (!error) return false;
+  const message = typeof error === 'string' ? error : error.message || '';
+  return /api not supported for exchange/i.test(message);
 }
 
 export async function listIntegrations(workspaceId) {
@@ -200,7 +207,15 @@ export async function testIntegration(workspaceId, integrationId) {
 
 
     if (typeof exchange.testConnectivity === 'function') {
-      await exchange.testConnectivity();
+      try {
+        await exchange.testConnectivity();
+      } catch (err) {
+        if (isUnsupportedConnectivityError(err)) {
+          console.warn(`[integration:test] skipping testConnectivity for ${integration.exchange}: ${err.message}`);
+        } else {
+          throw err;
+        }
+      }
     }
 
     if (typeof exchange.exportCredentialState === 'function') {

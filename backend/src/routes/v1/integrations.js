@@ -16,6 +16,9 @@ import { guard } from '../../middleware/workspaceGuard.js';
 
 export const router = Router({ mergeParams: true });
 
+// Delete an entire integration (and its credentials)
+router.delete('/:workspaceId/:integrationId', requireAuth, handleDeleteIntegration);
+
 // Meta routes must be defined before parameterized routes
 router.get('/meta/exchanges', requireAuth, handleListAvailableExchanges);
 

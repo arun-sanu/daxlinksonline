@@ -1,15 +1,27 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 import { correlationId } from './middleware/correlation.js';
 
 import { router as apiRouter } from './routes/index.js';
 import { attachUser } from './middleware/auth.js';
 import { betterAuthHandler } from './auth/betterAuth.js';
+import { attachSubdomain } from './middleware/subdomain.js';
+import { tradingviewIngressRouter } from './routes/tradingviewIngress.js';
+import { getWebhookBaseDomain } from './lib/webhookDomains.js';
 
 export async function createServer() {
   const app = express();
+  app.set('trust proxy', 1);
+
+  const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 100,
+    standardHeaders: true,
+    legacyHeaders: false
+  });
 
   app.use(
     helmet({
@@ -44,15 +56,69 @@ export async function createServer() {
     })
   );
 
-  const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean);
-  const allowAllOrigins = corsOrigins.length === 0;
-  app.use(cors({
-    origin: allowAllOrigins ? true : corsOrigins,
-    credentials: true
-  }));
+  const corsOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const configuredBaseDomain = (process.env.WEBHOOK_BASE_DOMAIN || '').trim();
+  const derivedOrigins = [];
+  let derivedBaseHost = null;
+  if (configuredBaseDomain) {
+    const normalized = getWebhookBaseDomain();
+    if (normalized) {
+      derivedOrigins.push(`https://${normalized}`);
+      derivedBaseHost = normalized;
+    }
+  }
+  const allowedOrigins = Array.from(new Set([...corsOrigins, ...derivedOrigins].filter(Boolean)));
+  const allowAllOrigins = allowedOrigins.length === 0;
 
+  function originAllowed(origin) {
+    if (allowAllOrigins || !origin) {
+      return true;
+    }
+    if (allowedOrigins.includes(origin)) {
+      return true;
+    }
+    if (!derivedBaseHost) {
+      return false;
+    }
+    try {
+      const { hostname, protocol } = new URL(origin);
+      if (!/^https?:$/.test(protocol)) {
+        return false;
+      }
+      const normalizedHost = hostname.toLowerCase();
+      return normalizedHost === derivedBaseHost || normalizedHost.endsWith(`.${derivedBaseHost}`);
+    } catch {
+      return false;
+    }
+  }
+
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (originAllowed(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error(`Origin ${origin} not allowed by CORS`));
+      },
+      credentials: true
+    })
+  );
+
+  app.use(attachSubdomain());
   app.use(correlationId());
-  app.use(express.json({ limit: '1mb' }));
+  app.use(tradingviewIngressRouter);
+  app.use(globalLimiter);
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buf) => {
+        req.rawBody = Buffer.from(buf);
+      }
+    })
+  );
   app.use(express.urlencoded({ extended: false }));
 
   morgan.token('cid', (req) => req.correlationId || '-');
