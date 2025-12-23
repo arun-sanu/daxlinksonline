@@ -28,8 +28,11 @@ export function checkDnsAvailability(name: string) {
   return request<{ available: boolean; name: string; reason?: string }>(`/api/v1/dns/available/${encodeURIComponent(name)}`);
 }
 
-export function registerDnsRecord(payload: { name: string; ip: string }) {
-  return request<DnsRecord>('/api/v1/dns/register', { method: 'POST', body: JSON.stringify(payload) });
+export type RegisterDnsPayload = { subdomain: string; ip: string; name?: string };
+
+export function registerDnsRecord(payload: RegisterDnsPayload) {
+  const body = { subdomain: payload.subdomain, name: payload.name || payload.subdomain, ip: payload.ip };
+  return request<DnsRecord>('/api/v1/dns/register', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function listMyDnsRecords() {

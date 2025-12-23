@@ -110,13 +110,14 @@ export default function DNSModule() {
       setError(clientValidation);
       return;
     }
-    const name = subdomain.trim().toLowerCase();
-    if (!name || !ip.trim()) return;
+    const normalizedSubdomain = subdomain.trim().toLowerCase();
+    const targetIp = ip.trim();
+    if (!normalizedSubdomain || !targetIp) return;
     setRegistering(true);
     setError('');
     try {
-      await registerDnsRecord({ name, ip: ip.trim() });
-      setToast({ message: `Added ${fullDomain(name)}`, tone: 'success' });
+      await registerDnsRecord({ subdomain: normalizedSubdomain, name: normalizedSubdomain, ip: targetIp });
+      setToast({ message: `Added ${fullDomain(normalizedSubdomain)}`, tone: 'success' });
       setSubdomain('');
       setIp('');
       const refreshed = await listMyDnsRecords();
