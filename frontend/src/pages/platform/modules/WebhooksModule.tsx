@@ -59,6 +59,7 @@ export default function WebhooksModule() {
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -136,12 +137,23 @@ export default function WebhooksModule() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  const dnsRecords = myWebhook?.dnsRecords || [];
+  const selectedDnsUrlValid = dnsRecords.some((rec) => rec.url === selectedDnsUrl) ? selectedDnsUrl : null;
+  const activeDnsUrl = selectedDnsUrlValid || dnsRecords[0]?.url || null;
+
+  useEffect(() => {
+    if (!selectedDnsUrlValid && selectedDnsUrl) {
+      setSelectedDnsUrl(null);
+    }
+  }, [selectedDnsUrlValid, selectedDnsUrl]);
+
   const ingressUrl = useMemo(() => {
+    if (activeDnsUrl) return activeDnsUrl;
     if (myWebhook?.url) return myWebhook.url;
     if (profile?.url) return profile.url;
     if (webhooks[0]?.url) return webhooks[0].url;
     return 'https://<sub>.daxlinksonline.link/webhook';
-  }, [myWebhook, profile, webhooks]);
+  }, [activeDnsUrl, myWebhook, profile, webhooks]);
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const hmacValue = myWebhook?.hmacKey || '';
@@ -348,6 +360,36 @@ export default function WebhooksModule() {
               <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
               <span>Base domain: {baseDomain}</span>
             </div>
+            {dnsRecords.length > 0 && (
+              <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
+                  <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {dnsRecords.map((rec) => {
+                    const isActive = activeDnsUrl === rec.url;
+                    return (
+                      <button
+                        key={rec.url}
+                        type="button"
+                        onClick={() => setSelectedDnsUrl(rec.url)}
+                        className={`flex min-w-[220px] flex-1 flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                          isActive
+                            ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
+                            : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
+                        }`}
+                      >
+                        <span className="font-semibold text-main">
+                          {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                        </span>
+                        <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <p className="text-xs text-gray-500">
               POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
             </p>

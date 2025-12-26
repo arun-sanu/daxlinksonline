@@ -99,6 +99,7 @@ type MyWebhookResponse = {
   hmacKey?: string | null;
   enforceHmac?: boolean;
   baseDomain?: string | null;
+  dnsRecords?: { subdomain: string; host: string; url: string }[];
 };
 
 export async function getMyWebhook(): Promise<MyWebhookResponse> {
