@@ -403,21 +403,21 @@ export default function WebhooksModule() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                        aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
-                        onClick={handleRevealSecret}
-                        disabled={!secretValue}
-                      >
-                        <EyeIcon slashed={!secretVisible} />
-                      </button>
-                      <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                        onClick={() => handleCopy(secretValue, 'Secret')}
-                        aria-label="Copy secret"
-                        disabled={!secretValue}
-                      >
-                        <CopyIcon />
-                      </button>
+                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
+                    aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
+                    onClick={handleRevealSecret}
+                    disabled={!secretValue}
+                  >
+                    <EyeIcon slashed={!secretVisible} />
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
+                    onClick={() => handleCopy(secretValue, 'Secret')}
+                    aria-label="Copy secret"
+                    disabled={!secretValue}
+                  >
+                    <CopyIcon />
+                  </button>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -426,23 +426,21 @@ export default function WebhooksModule() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                        onClick={handleRevealHmac}
-                        aria-label={hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
-                        disabled={!hmacValue}
-                      >
-                        <EyeIcon slashed={!hmacVisible} />
-                        <span>{hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}</span>
-                      </button>
-                      <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                        onClick={() => handleCopy(hmacValue, 'HMAC key')}
-                        aria-label="Copy HMAC"
-                        disabled={!hmacValue}
-                      >
-                        <CopyIcon />
-                        <span>Copy HMAC</span>
-                      </button>
+                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
+                    onClick={handleRevealHmac}
+                    aria-label={hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                    disabled={!hmacValue}
+                  >
+                    <EyeIcon slashed={!hmacVisible} />
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
+                    onClick={() => handleCopy(hmacValue, 'HMAC key')}
+                    aria-label="Copy HMAC"
+                    disabled={!hmacValue}
+                  >
+                    <CopyIcon />
+                  </button>
                     </div>
                   </div>
                 </div>
