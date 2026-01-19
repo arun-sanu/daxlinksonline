@@ -381,28 +381,29 @@ export default function WebhooksModule() {
                   <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
                   <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <ul className="space-y-2">
                   {dnsRecords.map((rec) => {
                     const isActive = activeDnsUrl === rec.url;
                     return (
-                      <button
-                        key={rec.url}
-                        type="button"
-                        onClick={() => setSelectedDnsUrl(rec.url)}
-                        className={`flex min-w-[220px] flex-1 flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
-                          isActive
-                            ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
-                            : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
-                        }`}
-                      >
-                        <span className="font-semibold text-main">
-                          {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                        </span>
-                        <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
-                      </button>
+                      <li key={rec.url}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDnsUrl(rec.url)}
+                          className={`flex w-full flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                            isActive
+                              ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
+                              : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
+                          }`}
+                        >
+                          <span className="font-semibold text-main">
+                            {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                          </span>
+                          <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
+                        </button>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               </div>
             )}
             <p className="text-xs text-gray-500">
