@@ -149,13 +149,13 @@ export default function WebhooksModule() {
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const ingressUrl = useMemo(() => {
-    if (myWebhook?.url) return myWebhook.url;
-    if (profile?.url) return profile.url;
     if (activeDnsUrl) {
       const base = activeDnsUrl.replace(/\/+$/, '');
       const secretSuffix = secretValue ? `?secret=${encodeURIComponent(secretValue)}` : '';
       return `${base}/webhook/tradingview${secretSuffix}`;
     }
+    if (myWebhook?.url) return myWebhook.url;
+    if (profile?.url) return profile.url;
     if (webhooks[0]?.url) return webhooks[0].url;
     return 'https://<sub>.daxlinksonline.link/webhook/tradingview';
   }, [activeDnsUrl, myWebhook, profile, webhooks, secretValue]);
