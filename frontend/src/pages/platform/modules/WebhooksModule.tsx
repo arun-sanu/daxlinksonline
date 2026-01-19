@@ -147,15 +147,18 @@ export default function WebhooksModule() {
     }
   }, [selectedDnsUrlValid, selectedDnsUrl]);
 
+  const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const ingressUrl = useMemo(() => {
-    if (activeDnsUrl) return activeDnsUrl;
     if (myWebhook?.url) return myWebhook.url;
     if (profile?.url) return profile.url;
+    if (activeDnsUrl) {
+      const base = activeDnsUrl.replace(/\/+$/, '');
+      const secretSuffix = secretValue ? `?secret=${encodeURIComponent(secretValue)}` : '';
+      return `${base}/webhook/tradingview${secretSuffix}`;
+    }
     if (webhooks[0]?.url) return webhooks[0].url;
-    return 'https://<sub>.daxlinksonline.link/webhook';
-  }, [activeDnsUrl, myWebhook, profile, webhooks]);
-
-  const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
+    return 'https://<sub>.daxlinksonline.link/webhook/tradingview';
+  }, [activeDnsUrl, myWebhook, profile, webhooks, secretValue]);
   const hmacValue = myWebhook?.hmacKey || '';
   const enforceHmac = myWebhook?.enforceHmac || false;
   const baseDomain = myWebhook?.baseDomain || 'daxlinksonline.link';
