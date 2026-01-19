@@ -139,7 +139,7 @@ export default function WebhooksModule() {
 
   const dnsRecords = myWebhook?.dnsRecords || [];
   const selectedDnsUrlValid = dnsRecords.some((rec) => rec.url === selectedDnsUrl) ? selectedDnsUrl : null;
-  const activeDnsUrl = selectedDnsUrlValid || dnsRecords[0]?.url || null;
+  const activeDnsUrl = selectedDnsUrlValid || null;
 
   useEffect(() => {
     if (!selectedDnsUrlValid && selectedDnsUrl) {
@@ -379,7 +379,9 @@ export default function WebhooksModule() {
               <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
-                  <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
+                  <span className="text-[11px] text-gray-500">
+                    {activeDnsUrl ? 'Click to switch URL' : 'Select a DNS record to use its URL'}
+                  </span>
                 </div>
                 <ul className="space-y-2">
                   {dnsRecords.map((rec) => {
