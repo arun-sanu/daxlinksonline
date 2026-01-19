@@ -79,6 +79,7 @@ export default function WebhooksModule() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
+  const [showRotateConfirm, setShowRotateConfirm] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -264,26 +265,28 @@ export default function WebhooksModule() {
     }
   }
 
-  async function handleAssignWebhook() {
-    if (hasAssignedWebhook) {
-      const confirmed = window.confirm(
-        'Rotate webhook? This will generate a new secret and HMAC key. Old TradingView URLs will stop working.'
-      );
-      if (!confirmed) return;
-    }
+  async function performAssign(rotation: boolean) {
     setAssigning(true);
     setError('');
     setSecretVisible(false);
     setHmacVisible(false);
     try {
-      await assignWebhook(hasAssignedWebhook ? { rotateSecret: true, rotateHmacKey: true } : undefined);
+      await assignWebhook(rotation ? { rotateSecret: true, rotateHmacKey: true } : undefined);
       await refreshIngress();
-      setToast({ message: hasAssignedWebhook ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
+      setToast({ message: rotation ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
     } catch (e: any) {
       setToast({ message: e?.message || 'Assign failed', tone: 'error' });
     } finally {
       setAssigning(false);
     }
+  }
+
+  async function handleAssignWebhook() {
+    if (hasAssignedWebhook) {
+      setShowRotateConfirm(true);
+      return;
+    }
+    await performAssign(false);
   }
 
   async function handleTestWebhook() {
@@ -335,9 +338,6 @@ export default function WebhooksModule() {
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
           </div>
-          <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
-            {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
-          </button>
         </div>
         {loadingProfile ? (
           <p className="text-sm muted-text">Loading webhook profile…</p>
@@ -449,6 +449,11 @@ export default function WebhooksModule() {
                   POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
                 </p>
               </div>
+            </div>
+            <div className="flex justify-end">
+              <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
+                {assigning ? 'Updating…' : 'Rotate Webhook'}
+              </button>
             </div>
           </>
         ) : (
@@ -699,6 +704,50 @@ export default function WebhooksModule() {
           </div>
         )}
       </section>
+
+      {showRotateConfirm && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-lg space-y-4 rounded-2xl border border-white/10 bg-black/50 p-6 backdrop-blur">
+            <p className="text-lg font-semibold text-main">Rotate webhook?</p>
+            <p className="text-sm text-gray-200">
+              Rotating will generate a new secret and HMAC key. Old TradingView URLs and signatures will stop working until you update them.
+            </p>
+            <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Saved DNS addresses</p>
+              {dnsRecords.length > 0 ? (
+                <ul className="space-y-1 text-sm text-gray-200">
+                  {dnsRecords.map((rec) => (
+                    <li key={rec.url} className="flex flex-col">
+                      <span className="font-semibold text-main">
+                        {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                      </span>
+                      <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-400">No DNS records saved.</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 text-sm">
+              <button className="btn btn-secondary" type="button" onClick={() => setShowRotateConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => {
+                  setShowRotateConfirm(false);
+                  void performAssign(true);
+                }}
+                disabled={assigning}
+              >
+                {assigning ? 'Rotating…' : 'Confirm rotate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRevealConfirm && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
