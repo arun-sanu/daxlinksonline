@@ -425,11 +425,23 @@ export default function WebhooksModule() {
                       <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
-                        {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                      <button
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[11px]"
+                        onClick={handleRevealHmac}
+                        aria-label={hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                        disabled={!hmacValue}
+                      >
+                        <EyeIcon slashed={!hmacVisible} />
+                        <span>{hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}</span>
                       </button>
-                      <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
-                        Copy HMAC
+                      <button
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[11px]"
+                        onClick={() => handleCopy(hmacValue, 'HMAC key')}
+                        aria-label="Copy HMAC"
+                        disabled={!hmacValue}
+                      >
+                        <CopyIcon />
+                        <span>Copy HMAC</span>
                       </button>
                     </div>
                   </div>
