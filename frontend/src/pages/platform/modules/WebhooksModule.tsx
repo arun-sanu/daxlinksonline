@@ -335,18 +335,9 @@ export default function WebhooksModule() {
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
           </div>
-          <div className="flex gap-2">
-            <button
-              className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
-              onClick={() => handleCopy(ingressUrl, 'URL')}
-              disabled={!ingressUrl}
-            >
-              Copy URL
-            </button>
-            <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
-              {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
-            </button>
-          </div>
+          <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
+            {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
+          </button>
         </div>
         {loadingProfile ? (
           <p className="text-sm muted-text">Loading webhook profile…</p>
