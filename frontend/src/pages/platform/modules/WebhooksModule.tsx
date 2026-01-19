@@ -13,6 +13,25 @@ import {
 
 type Toast = { message: string; tone: 'success' | 'error' };
 
+function EyeIcon({ slashed }: { slashed?: boolean }) {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M12 5c-5 0-9 7-9 7s4 7 9 7 9-7 9-7-4-7-9-7Z" />
+      <circle cx="12" cy="12" r="3" />
+      {slashed && <path d="M5 5l14 14" />}
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
 function formatTs(input?: string | null) {
   if (!input) return '—';
   try {
@@ -345,15 +364,21 @@ export default function WebhooksModule() {
                   <input value={maskedSecret} readOnly aria-label="Webhook secret" />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs px-2 py-1 text-[11px]" onClick={handleRevealSecret} disabled={!secretValue}>
-                    {secretVisible ? 'Hide secret' : 'Reveal secret'}
-                  </button>
                   <button
-                    className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
-                    onClick={() => handleCopy(secretValue, 'Secret')}
+                    className="btn btn-secondary btn-xs px-2 py-1"
+                    aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
+                    onClick={handleRevealSecret}
                     disabled={!secretValue}
                   >
-                    Copy secret
+                    <EyeIcon slashed={!secretVisible} />
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-xs px-2 py-1"
+                    onClick={() => handleCopy(secretValue, 'Secret')}
+                    aria-label="Copy secret"
+                    disabled={!secretValue}
+                  >
+                    <CopyIcon />
                   </button>
                 </div>
               </div>
