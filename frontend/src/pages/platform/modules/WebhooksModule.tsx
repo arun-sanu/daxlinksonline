@@ -346,61 +346,7 @@ export default function WebhooksModule() {
           <p className="text-sm muted-text">Loading webhook profile…</p>
         ) : hasAssignedWebhook ? (
           <>
-            <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
-              <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={ingressUrl} readOnly aria-label="Webhook URL" />
-                </div>
-                <button
-                  className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
-                  onClick={() => handleCopy(ingressUrl, 'URL')}
-                  disabled={!ingressUrl}
-                >
-                  Copy URL
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={maskedSecret} readOnly aria-label="Webhook secret" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="btn btn-secondary btn-xs px-2 py-1"
-                    aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
-                    onClick={handleRevealSecret}
-                    disabled={!secretValue}
-                  >
-                    <EyeIcon slashed={!secretVisible} />
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-xs px-2 py-1"
-                    onClick={() => handleCopy(secretValue, 'Secret')}
-                    aria-label="Copy secret"
-                    disabled={!secretValue}
-                  >
-                    <CopyIcon />
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
-                    {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
-                  </button>
-                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
-                    Copy HMAC
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
-              <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
-              <span>Base domain: {baseDomain}</span>
-            </div>
-            {dnsRecords.length > 0 && (
+            <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
               <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
@@ -408,34 +354,95 @@ export default function WebhooksModule() {
                     {activeDnsUrl ? 'Click to switch URL' : 'Select a DNS record to use its URL'}
                   </span>
                 </div>
-                <ul className="space-y-2">
-                  {dnsRecords.map((rec) => {
-                    const isActive = activeDnsUrl === rec.url;
-                    return (
-                      <li key={rec.url}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDnsUrl(rec.url)}
-                          className={`flex w-full flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
-                            isActive
-                              ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
-                              : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
-                          }`}
-                        >
-                          <span className="font-semibold text-main">
-                            {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                          </span>
-                          <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                {dnsRecords.length > 0 ? (
+                  <ul className="space-y-2">
+                    {dnsRecords.map((rec) => {
+                      const isActive = activeDnsUrl === rec.url;
+                      return (
+                        <li key={rec.url}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDnsUrl(rec.url)}
+                            className={`flex w-full flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm ${
+                              isActive
+                                ? 'border-primary-300 bg-primary-500/10 text-main'
+                                : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
+                            }`}
+                          >
+                            <span className="font-semibold text-main">
+                              {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                            </span>
+                            <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-400">No DNS records saved yet.</p>
+                )}
               </div>
-            )}
-            <p className="text-xs text-gray-500">
-              POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
-            </p>
+
+              <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
+                  <div className="space-y-2">
+                    <div className="hero-input">
+                      <input value={ingressUrl} readOnly aria-label="Webhook URL" />
+                    </div>
+                    <button
+                      className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
+                      onClick={() => handleCopy(ingressUrl, 'URL')}
+                      disabled={!ingressUrl}
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="hero-input">
+                      <input value={maskedSecret} readOnly aria-label="Webhook secret" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="btn btn-secondary btn-xs px-2 py-1"
+                        aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
+                        onClick={handleRevealSecret}
+                        disabled={!secretValue}
+                      >
+                        <EyeIcon slashed={!secretVisible} />
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-xs px-2 py-1"
+                        onClick={() => handleCopy(secretValue, 'Secret')}
+                        aria-label="Copy secret"
+                        disabled={!secretValue}
+                      >
+                        <CopyIcon />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="hero-input">
+                      <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
+                        {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                      </button>
+                      <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
+                        Copy HMAC
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                  <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
+                  <span>Base domain: {baseDomain}</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
+                </p>
+              </div>
+            </div>
           </>
         ) : (
           <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-100">
