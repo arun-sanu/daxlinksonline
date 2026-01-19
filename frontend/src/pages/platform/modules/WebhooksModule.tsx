@@ -311,7 +311,11 @@ export default function WebhooksModule() {
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+            <button
+              className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
+              onClick={() => handleCopy(ingressUrl, 'URL')}
+              disabled={!ingressUrl}
+            >
               Copy URL
             </button>
             <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
@@ -328,7 +332,11 @@ export default function WebhooksModule() {
                 <div className="hero-input">
                   <input value={ingressUrl} readOnly aria-label="Webhook URL" />
                 </div>
-                <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+                <button
+                  className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
+                  onClick={() => handleCopy(ingressUrl, 'URL')}
+                  disabled={!ingressUrl}
+                >
                   Copy URL
                 </button>
               </div>
@@ -337,10 +345,14 @@ export default function WebhooksModule() {
                   <input value={maskedSecret} readOnly aria-label="Webhook secret" />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs" onClick={handleRevealSecret} disabled={!secretValue}>
+                  <button className="btn btn-secondary btn-xs px-2 py-1 text-[11px]" onClick={handleRevealSecret} disabled={!secretValue}>
                     {secretVisible ? 'Hide secret' : 'Reveal secret'}
                   </button>
-                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
+                  <button
+                    className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
+                    onClick={() => handleCopy(secretValue, 'Secret')}
+                    disabled={!secretValue}
+                  >
                     Copy secret
                   </button>
                 </div>
