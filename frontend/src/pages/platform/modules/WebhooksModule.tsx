@@ -265,14 +265,20 @@ export default function WebhooksModule() {
   }
 
   async function handleAssignWebhook() {
+    if (hasAssignedWebhook) {
+      const confirmed = window.confirm(
+        'Rotate webhook? This will generate a new secret and HMAC key. Old TradingView URLs will stop working.'
+      );
+      if (!confirmed) return;
+    }
     setAssigning(true);
     setError('');
     setSecretVisible(false);
     setHmacVisible(false);
     try {
-      await assignWebhook();
+      await assignWebhook(hasAssignedWebhook ? { rotateSecret: true, rotateHmacKey: true } : undefined);
       await refreshIngress();
-      setToast({ message: 'Webhook assigned', tone: 'success' });
+      setToast({ message: hasAssignedWebhook ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
     } catch (e: any) {
       setToast({ message: e?.message || 'Assign failed', tone: 'error' });
     } finally {

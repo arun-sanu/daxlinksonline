@@ -110,8 +110,11 @@ export async function getMyWebhook(): Promise<MyWebhookResponse> {
   return res;
 }
 
-export async function assignWebhook(): Promise<MyWebhookResponse> {
-  const res = await tryFetch<MyWebhookResponse>('/api/v1/users/assign-webhook', { method: 'POST' });
+export async function assignWebhook(options?: { rotateSecret?: boolean; rotateHmacKey?: boolean }): Promise<MyWebhookResponse> {
+  const res = await tryFetch<MyWebhookResponse>('/api/v1/users/assign-webhook', {
+    method: 'POST',
+    body: JSON.stringify(options || {})
+  });
   if (!res) {
     throw new Error('Failed to assign webhook');
   }
