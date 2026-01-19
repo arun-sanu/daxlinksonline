@@ -403,7 +403,7 @@ export default function WebhooksModule() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[10px]"
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
                         aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
                         onClick={handleRevealSecret}
                         disabled={!secretValue}
@@ -411,7 +411,7 @@ export default function WebhooksModule() {
                         <EyeIcon slashed={!secretVisible} />
                       </button>
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[10px]"
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
                         onClick={() => handleCopy(secretValue, 'Secret')}
                         aria-label="Copy secret"
                         disabled={!secretValue}
@@ -426,7 +426,7 @@ export default function WebhooksModule() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[10px]"
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
                         onClick={handleRevealHmac}
                         aria-label={hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
                         disabled={!hmacValue}
@@ -435,7 +435,7 @@ export default function WebhooksModule() {
                         <span>{hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}</span>
                       </button>
                       <button
-                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[10px]"
+                        className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
                         onClick={() => handleCopy(hmacValue, 'HMAC key')}
                         aria-label="Copy HMAC"
                         disabled={!hmacValue}
