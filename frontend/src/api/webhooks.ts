@@ -76,6 +76,19 @@ export async function toggleWebhook(webhookId: string, active: boolean): Promise
   return updated;
 }
 
+export async function toggleWebhooks(webhookIds: string[], active: boolean): Promise<{ updated: number }> {
+  const ws = getWorkspaceId();
+  const res = await tryFetch<{ updated: number }>(
+    `/api/v1/webhooks/${encodeURIComponent(ws)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ webhookIds, active })
+    }
+  );
+  if (!res) throw new Error('Bulk toggle failed');
+  return res;
+}
+
 export { authHeaders as webhookAuthHeaders };
 
 export async function fetchWebhookProfile(): Promise<WebhookProfile | null> {

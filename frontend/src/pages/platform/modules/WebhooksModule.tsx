@@ -8,7 +8,8 @@ import {
   getMyWebhook,
   listWebhooks,
   testWebhook,
-  toggleWebhook
+  toggleWebhook,
+  toggleWebhooks
 } from '../../../api/webhooks';
 
 type Toast = { message: string; tone: 'success' | 'error' };
@@ -63,6 +64,8 @@ export default function WebhooksModule() {
   const [loadingDeliveries, setLoadingDeliveries] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [bulkToggling, setBulkToggling] = useState(false);
+  const [selectedWebhookIds, setSelectedWebhookIds] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [error, setError] = useState('');
   const [secretVisible, setSecretVisible] = useState(false);
@@ -152,6 +155,10 @@ export default function WebhooksModule() {
   }, []);
 
   useEffect(() => {
+    setSelectedWebhookIds((prev) => prev.filter((id) => webhooks.some((w) => w.id === id)));
+  }, [webhooks]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 2400);
     return () => clearTimeout(timer);
@@ -185,6 +192,8 @@ export default function WebhooksModule() {
   const hasAssignedWebhook = Boolean(myWebhook?.url || profile?.url);
   const maskedSecret = secretVisible ? secretValue || '—' : '••••••••••••';
   const maskedHmac = hmacVisible ? hmacValue || '—' : '••••••••••••';
+  const allSelected = webhooks.length > 0 && selectedWebhookIds.length === webhooks.length;
+  const hasSelection = selectedWebhookIds.length > 0;
 
   const tradingViewPayload = useMemo(
     () =>
@@ -198,6 +207,16 @@ export default function WebhooksModule() {
 }`,
     [secretValue, hmacValue]
   );
+
+  async function refreshWebhooksList() {
+    setLoadingWebhooks(true);
+    try {
+      const rows = await listWebhooks();
+      setWebhooks(rows || []);
+    } finally {
+      setLoadingWebhooks(false);
+    }
+  }
 
   async function handleToggle(hook: Webhook) {
     const next = !hook.active;
@@ -223,6 +242,38 @@ export default function WebhooksModule() {
       setToast({ message: `${label} copied`, tone: 'success' });
     } catch {
       setToast({ message: 'Copy failed', tone: 'error' });
+    }
+  }
+
+  function handleSelectWebhook(id: string) {
+    setSelectedWebhookIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }
+
+  function handleSelectAll(checked: boolean) {
+    if (!checked) {
+      setSelectedWebhookIds([]);
+      return;
+    }
+    setSelectedWebhookIds(webhooks.map((w) => w.id));
+  }
+
+  async function handleBulkToggle(active: boolean) {
+    if (!selectedWebhookIds.length) return;
+    if (!active) {
+      const confirmed = window.confirm('Pause selected webhooks? They will stop sending until re-enabled.');
+      if (!confirmed) return;
+    }
+    const count = selectedWebhookIds.length;
+    setBulkToggling(true);
+    try {
+      const { updated } = await toggleWebhooks(selectedWebhookIds, active);
+      await refreshWebhooksList();
+      setSelectedWebhookIds([]);
+      setToast({ message: `${active ? 'Enabled' : 'Paused'} ${updated} webhooks`, tone: 'success' });
+    } catch (e: any) {
+      setToast({ message: e?.message || 'Bulk update failed', tone: 'error' });
+    } finally {
+      setBulkToggling(false);
     }
   }
 
@@ -586,19 +637,46 @@ export default function WebhooksModule() {
             <h3 className="text-lg font-semibold text-main">Outbound webhook configs</h3>
             <p className="text-xs muted-text">Toggle endpoints and view the last delivery code.</p>
           </div>
-          <button
-            className="btn btn-secondary btn-xs"
-            type="button"
-            onClick={() => {
-              setLoadingWebhooks(true);
-              listWebhooks()
-                .then((rows) => setWebhooks(rows || []))
-                .catch((e: any) => setToast({ message: e?.message || 'Refresh failed', tone: 'error' }))
-                .finally(() => setLoadingWebhooks(false));
-            }}
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-xs text-gray-400">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border border-white/20 bg-black/30"
+                checked={allSelected}
+                disabled={loadingWebhooks || webhooks.length === 0}
+                onChange={(e) => handleSelectAll(e.target.checked)}
+              />
+              <span>Select all</span>
+            </label>
+            <button
+              className="btn btn-secondary btn-xs"
+              type="button"
+              onClick={() => handleBulkToggle(false)}
+              disabled={!hasSelection || bulkToggling || loadingWebhooks}
+            >
+              {bulkToggling ? 'Working…' : 'Pause selected'}
+            </button>
+            <button
+              className="btn btn-secondary btn-xs"
+              type="button"
+              onClick={() => handleBulkToggle(true)}
+              disabled={!hasSelection || bulkToggling || loadingWebhooks}
+            >
+              {bulkToggling ? 'Working…' : 'Enable selected'}
+            </button>
+            <button
+              className="btn btn-secondary btn-xs"
+              type="button"
+              onClick={() => {
+                refreshWebhooksList().catch((e: any) =>
+                  setToast({ message: e?.message || 'Refresh failed', tone: 'error' })
+                );
+              }}
+              disabled={loadingWebhooks || bulkToggling}
+            >
+              Refresh
+            </button>
+          </div>
         </div>
         {loadingWebhooks && <p className="text-sm muted-text">Loading webhooks…</p>}
         {!loadingWebhooks && webhooks.length === 0 && <p className="text-sm muted-text">No outbound webhooks configured yet.</p>}
@@ -607,10 +685,20 @@ export default function WebhooksModule() {
             {webhooks.map((hook) => (
               <article key={hook.id} className="card-shell border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.28em] muted-text">{hook.method}</p>
-                    <p className="text-lg font-semibold text-main">{hook.name}</p>
-                    <p className="text-xs text-gray-500 break-all">{hook.url}</p>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-[2px] h-4 w-4 rounded border border-white/20 bg-black/30"
+                      checked={selectedWebhookIds.includes(hook.id)}
+                      onChange={() => handleSelectWebhook(hook.id)}
+                      disabled={bulkToggling}
+                      aria-label={`Select ${hook.name}`}
+                    />
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.28em] muted-text">{hook.method}</p>
+                      <p className="text-lg font-semibold text-main">{hook.name}</p>
+                      <p className="text-xs text-gray-500 break-all">{hook.url}</p>
+                    </div>
                   </div>
                   <button
                     className="rounded-full px-3 py-1 text-xs font-semibold"
@@ -620,7 +708,7 @@ export default function WebhooksModule() {
                         : { background: 'rgba(250,204,21,0.18)', color: '#FACC15' }
                     }
                     onClick={() => handleToggle(hook)}
-                    disabled={toggling === hook.id}
+                    disabled={toggling === hook.id || bulkToggling}
                   >
                     {hook.active ? 'Active' : 'Paused'}
                   </button>
