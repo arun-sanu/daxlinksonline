@@ -1,11 +1,295 @@
+import { ref, computed, onMounted } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js';
+import { getConfig } from '../services/config.js';
+
+const STATUS_OPTIONS = ['received', 'validated', 'executed', 'failed', 'rejected'];
+
+function resolveBaseUrl() {
+  const cfg = getConfig();
+  const base = (cfg.apiBaseUrl || '').replace(/\/$/, '');
+  return base || '';
+}
+
+function authHeaders() {
+  const token = (typeof window !== 'undefined' && (window.__appAuthToken__ || window.localStorage?.getItem('daxlinksToken') || window.localStorage?.getItem('authToken'))) || '';
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function normalizeAlert(row = {}) {
+  const payload = row.sanitizedPayload || row.payload || row.rawPayload || row.body || null;
+  const parsedPayload = (() => {
+    if (!payload) return null;
+    if (typeof payload === 'string') {
+      try { return JSON.parse(payload); } catch { return payload; }
+    }
+    return payload;
+  })();
+  return {
+    id: row.id || `${row.receivedAt || row.createdAt || row.ts || Date.now()}-${row.userId || row.symbol || ''}`,
+    receivedAt: row.receivedAt || row.createdAt || row.ts || row.timestamp || null,
+    status: row.status || 'received',
+    strategyName: row.strategyName || row.strategy || row.ruleName || '',
+    symbol: row.symbol || row.ticker || '',
+    side: row.side || row.direction || '',
+    orderType: row.orderType || row.type || '',
+    quantity: row.quantity ?? row.qty ?? '',
+    takeProfit: row.takeProfit ?? row.tp ?? '',
+    stopLoss: row.stopLoss ?? row.sl ?? '',
+    errorMessage: row.errorMessage || row.error || '',
+    userId: row.userId || row.user || '',
+    webhookSubdomain: row.webhookSubdomain || row.subdomain || '',
+    clientIp: row.clientIp || row.ip || '',
+    payload: parsedPayload
+  };
+}
+
 export default {
   name: 'MonitoringPage',
+  setup() {
+    const alerts = ref([]);
+    const loading = ref(false);
+    const error = ref('');
+    const status = ref('');
+    const q = ref('');
+    const userId = ref('');
+    const page = ref(1);
+    const pageSize = ref(20);
+    const total = ref(0);
+    const selectedAlert = ref(null);
+
+    const baseUrl = resolveBaseUrl();
+    const endpoint = baseUrl ? `${baseUrl}/admin/alerts` : '/api/v1/admin/alerts';
+
+    async function loadAlerts() {
+      loading.value = true;
+      error.value = '';
+      try {
+        const params = new URLSearchParams({ page: String(page.value), pageSize: String(pageSize.value) });
+        if (status.value) params.set('status', status.value);
+        if (q.value.trim()) params.set('q', q.value.trim());
+        if (userId.value.trim()) params.set('userId', userId.value.trim());
+        const res = await fetch(`${endpoint}?${params.toString()}`, {
+          headers: { ...authHeaders() },
+          credentials: 'include'
+        });
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        const data = await res.json();
+        const rows = Array.isArray(data?.rows) ? data.rows.map(normalizeAlert) : [];
+        alerts.value = rows;
+        total.value = data?.total || rows.length || 0;
+        if (data?.page) page.value = data.page;
+        if (data?.pageSize) pageSize.value = data.pageSize;
+      } catch (e) {
+        error.value = e?.message || 'Failed to load alerts.';
+        alerts.value = [];
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    function applyFilters() {
+      page.value = 1;
+      loadAlerts();
+    }
+
+    function nextPage() {
+      if (page.value * pageSize.value >= total.value) return;
+      page.value += 1;
+      loadAlerts();
+    }
+
+    function prevPage() {
+      if (page.value <= 1) return;
+      page.value -= 1;
+      loadAlerts();
+    }
+
+    function statusColor(s) {
+      const key = String(s || '').toLowerCase();
+      if (key === 'failed' || key === 'rejected') return '#f87171';
+      if (key === 'executed') return '#34d399';
+      if (key === 'validated') return '#60a5fa';
+      return '#fbbf24';
+    }
+
+    function formatTime(ts) {
+      if (!ts) return '—';
+      try {
+        return new Date(ts).toLocaleString();
+      } catch {
+        return ts;
+      }
+    }
+
+    const pageStart = computed(() => {
+      if (!total.value) return 0;
+      return (page.value - 1) * pageSize.value + 1;
+    });
+    const pageEnd = computed(() => Math.min(page.value * pageSize.value, total.value || alerts.value.length));
+
+    const selectedPayload = computed(() => {
+      if (!selectedAlert.value) return null;
+      const p = selectedAlert.value.payload;
+      if (!p) return null;
+      if (typeof p === 'string') return p;
+      try {
+        return JSON.stringify(p, null, 2);
+      } catch {
+        return String(p);
+      }
+    });
+
+    function openAlert(alert) {
+      if (!alert?.payload) return;
+      selectedAlert.value = alert;
+    }
+    function closeModal() {
+      selectedAlert.value = null;
+    }
+
+    onMounted(loadAlerts);
+
+    return {
+      alerts,
+      loading,
+      error,
+      status,
+      q,
+      userId,
+      page,
+      pageSize,
+      total,
+      STATUS_OPTIONS,
+      applyFilters,
+      nextPage,
+      prevPage,
+      formatTime,
+      statusColor,
+      pageStart,
+      pageEnd,
+      loadAlerts,
+      openAlert,
+      closeModal,
+      selectedAlert,
+      selectedPayload
+    };
+  },
   template: `
-    <main class="layout-container py-24">
-      <div class="card-shell space-y-4 text-center">
+    <main class="layout-container section-pad space-y-8">
+      <div class="card-shell space-y-3 text-center">
         <p class="text-xs uppercase tracking-[0.32em] text-primary-200">Monitoring</p>
-        <h1 class="text-3xl font-light text-main">Unified observability is coming soon.</h1>
-        <p class="text-sm text-gray-400">Credential events, webhook analytics, and alert routing will surface here when the module launches.</p>
+        <h1 class="text-3xl font-light text-main">Telemetry + TradingView alert intake</h1>
+        <p class="text-sm text-gray-400">Credential events, webhook analytics, and alert routing surface here with live TradingView signal visibility.</p>
+      </div>
+
+      <section class="card-shell space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">TradingView Alerts</p>
+            <p class="text-sm muted-text">Incoming webhook alerts with validation, routing outcomes, and execution feedback.</p>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-gray-400">
+            <span v-if="!loading && total">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</span>
+            <button class="btn btn-secondary btn-small" type="button" :disabled="loading" @click="loadAlerts">
+              {{ loading ? 'Loading…' : 'Refresh' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="grid gap-2 md:grid-cols-4">
+          <select v-model="status" class="field">
+            <option value="">All statuses</option>
+            <option v-for="opt in STATUS_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
+          <input v-model="q" class="field md:col-span-2" placeholder="Search strategy, symbol, side, or error" />
+          <input v-model="userId" class="field" placeholder="User ID (optional)" />
+          <div class="md:col-span-4 flex items-center justify-end gap-2">
+            <button class="btn btn-secondary btn-small" type="button" :disabled="loading" @click="applyFilters">Apply filters</button>
+          </div>
+        </div>
+
+        <p v-if="error" class="text-sm text-rose-400">{{ error }}</p>
+
+        <div class="overflow-x-auto rounded-xl border border-white/10">
+          <table class="min-w-full text-sm">
+            <thead class="bg-white/5 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+              <tr>
+                <th class="px-3 py-2 text-left">Time</th>
+                <th class="px-3 py-2 text-left">User</th>
+                <th class="px-3 py-2 text-left">Strategy</th>
+                <th class="px-3 py-2 text-left">Symbol</th>
+                <th class="px-3 py-2 text-left">Side</th>
+                <th class="px-3 py-2 text-left">Type</th>
+                <th class="px-3 py-2 text-left">Qty</th>
+                <th class="px-3 py-2 text-left">TP</th>
+                <th class="px-3 py-2 text-left">SL</th>
+                <th class="px-3 py-2 text-left">Status</th>
+                <th class="px-3 py-2 text-left">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="alert in alerts"
+                :key="alert.id"
+                class="border-t border-white/5 transition"
+                :class="alert.payload ? 'hover:bg-white/5 cursor-pointer' : ''"
+                @click="openAlert(alert)"
+              >
+                <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-300">{{ formatTime(alert.receivedAt) }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.userId || '—' }}</td>
+                <td class="px-3 py-2 text-xs text-main">{{ alert.strategyName || '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.symbol || '—' }}</td>
+                <td class="px-3 py-2 text-xs uppercase text-gray-200">{{ alert.side || '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.orderType || '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.quantity !== undefined && alert.quantity !== null && alert.quantity !== '' ? alert.quantity : '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.takeProfit !== undefined && alert.takeProfit !== null && alert.takeProfit !== '' ? alert.takeProfit : '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ alert.stopLoss !== undefined && alert.stopLoss !== null && alert.stopLoss !== '' ? alert.stopLoss : '—' }}</td>
+                <td class="px-3 py-2 text-xs">
+                  <span class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-main" :style="{ background: statusColor(alert.status) + '20' }">
+                    <span class="h-2 w-2 rounded-full" :style="{ background: statusColor(alert.status) }"></span>
+                    {{ alert.status }}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-xs text-rose-200">{{ alert.errorMessage || '—' }}</td>
+              </tr>
+              <tr v-if="loading">
+                <td colspan="11" class="px-3 py-6 text-center text-sm text-gray-400">Loading alerts…</td>
+              </tr>
+              <tr v-else-if="alerts.length === 0">
+                <td colspan="11" class="px-3 py-6 text-center text-sm text-gray-400">No alerts yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-400">
+          <span>Page {{ page }} · Page size {{ pageSize }} · Total {{ total }}</span>
+          <div class="flex items-center gap-2">
+            <button class="btn btn-secondary btn-small" type="button" :disabled="page<=1 || loading" @click="prevPage">Prev</button>
+            <button class="btn btn-secondary btn-small" type="button" :disabled="page*pageSize>=total || loading" @click="nextPage">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <div
+        v-if="selectedAlert"
+        class="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0b1022] p-4 shadow-xl">
+          <header class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-xs uppercase tracking-[0.28em] text-gray-500">Payload</p>
+              <p class="text-sm text-main">TradingView alert · {{ selectedAlert.strategyName || selectedAlert.symbol || 'Signal' }}</p>
+            </div>
+            <button class="btn btn-secondary btn-small" type="button" @click="closeModal">Close</button>
+          </header>
+          <div class="mt-3 rounded-xl bg-black/40 p-3 text-left text-xs text-gray-100 overflow-auto max-h-[60vh]">
+            <pre class="whitespace-pre-wrap leading-relaxed">{{ selectedPayload || 'No payload available.' }}</pre>
+          </div>
+        </div>
       </div>
     </main>
   `
