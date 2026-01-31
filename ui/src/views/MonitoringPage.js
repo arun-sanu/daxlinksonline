@@ -1,12 +1,24 @@
-import { ref, computed, onMounted } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js';
+import { ref, computed, onMounted, onBeforeUnmount } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js';
 import { getConfig } from '../services/config.js';
 
 const STATUS_OPTIONS = ['received', 'validated', 'executed', 'failed', 'rejected'];
+const WEBHOOK_POLL_MS = 10000;
 
 function resolveBaseUrl() {
   const cfg = getConfig();
   const base = (cfg.apiBaseUrl || '').replace(/\/$/, '');
   return base || '';
+}
+
+function resolveWorkspaceId(cfg = getConfig()) {
+  if (cfg.workspaceId) return String(cfg.workspaceId);
+  try {
+    const runtime = typeof window !== 'undefined' ? (window.__DAXLINKS_CONFIG__ || {}).workspaceId : null;
+    if (runtime) return String(runtime);
+    const stored = typeof window !== 'undefined' ? window.localStorage?.getItem('workspaceId') : null;
+    if (stored) return String(stored);
+  } catch {}
+  return '';
 }
 
 function authHeaders() {
@@ -42,6 +54,17 @@ function normalizeAlert(row = {}) {
   };
 }
 
+function normalizeWebhook(row = {}) {
+  return {
+    id: row.id || row.webhookId || row._id || '',
+    name: row.name || row.label || row.description || row.url || 'Webhook',
+    url: row.url || '',
+    events: row.events || row.event || [],
+    active: row.active ?? row.enabled ?? true,
+    createdAt: row.createdAt || row.ts || null
+  };
+}
+
 export default {
   name: 'MonitoringPage',
   setup() {
@@ -55,9 +78,20 @@ export default {
     const pageSize = ref(20);
     const total = ref(0);
     const selectedAlert = ref(null);
+    const webhooks = ref([]);
+    const webhooksLoading = ref(false);
+    const webhooksError = ref('');
+    const webhookDeliveries = ref([]);
+    const webhookDeliveriesLoading = ref(false);
+    const webhookDeliveriesError = ref('');
 
+    const config = getConfig();
     const baseUrl = resolveBaseUrl();
-    const endpoint = baseUrl ? `${baseUrl}/admin/alerts` : '/api/v1/admin/alerts';
+    const apiPrefix = baseUrl || '/api/v1';
+    const workspaceId = resolveWorkspaceId(config);
+    const alertsEndpoint = `${apiPrefix}/admin/alerts`;
+    const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : `${apiPrefix}/webhooks`;
+    const deliveriesEndpoint = `${apiPrefix}/admin/deliveries`;
 
     async function loadAlerts() {
       loading.value = true;
@@ -67,7 +101,7 @@ export default {
         if (status.value) params.set('status', status.value);
         if (q.value.trim()) params.set('q', q.value.trim());
         if (userId.value.trim()) params.set('userId', userId.value.trim());
-        const res = await fetch(`${endpoint}?${params.toString()}`, {
+        const res = await fetch(`${alertsEndpoint}?${params.toString()}`, {
           headers: { ...authHeaders() },
           credentials: 'include'
         });
@@ -86,6 +120,50 @@ export default {
       } finally {
         loading.value = false;
       }
+    }
+
+    async function loadWebhooks() {
+      webhooksLoading.value = true;
+      webhooksError.value = '';
+      try {
+        const res = await fetch(webhooksEndpoint, {
+          headers: { ...authHeaders() },
+          credentials: 'include'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        webhooks.value = Array.isArray(data) ? data.map(normalizeWebhook) : [];
+      } catch (e) {
+        webhooksError.value = e?.message || 'Failed to load webhooks.';
+        webhooks.value = [];
+      } finally {
+        webhooksLoading.value = false;
+      }
+    }
+
+    async function loadWebhookDeliveries() {
+      webhookDeliveriesLoading.value = true;
+      webhookDeliveriesError.value = '';
+      try {
+        const params = new URLSearchParams({ page: '1', pageSize: '50', sortKey: 'createdAt', sortDir: 'desc' });
+        if (workspaceId) params.set('workspaceId', workspaceId);
+        const res = await fetch(`${deliveriesEndpoint}?${params.toString()}`, {
+          headers: { ...authHeaders() },
+          credentials: 'include'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        webhookDeliveries.value = Array.isArray(data?.rows) ? data.rows : [];
+      } catch (e) {
+        webhookDeliveriesError.value = e?.message || 'Failed to load webhook deliveries.';
+        webhookDeliveries.value = [];
+      } finally {
+        webhookDeliveriesLoading.value = false;
+      }
+    }
+
+    async function refreshWebhooks() {
+      await Promise.all([loadWebhooks(), loadWebhookDeliveries()]);
     }
 
     function applyFilters() {
@@ -122,6 +200,14 @@ export default {
       }
     }
 
+    function statusBadgeColor(statusValue) {
+      const key = String(statusValue || '').toLowerCase();
+      if (key === 'failed' || key === 'rejected' || key === 'error') return '#f87171';
+      if (key === 'executed' || key === 'sent' || key === 'success') return '#34d399';
+      if (key === 'validated') return '#60a5fa';
+      return '#fbbf24';
+    }
+
     const pageStart = computed(() => {
       if (!total.value) return 0;
       return (page.value - 1) * pageSize.value + 1;
@@ -148,7 +234,31 @@ export default {
       selectedAlert.value = null;
     }
 
-    onMounted(loadAlerts);
+    const latestDeliveryByWebhook = computed(() => {
+      const map = {};
+      for (const d of webhookDeliveries.value) {
+        const id = d.webhookId || d.webhook_id || d.id || d.webhook?.id;
+        if (!id) continue;
+        if (!map[id]) map[id] = d;
+      }
+      return map;
+    });
+
+    let pollHandle = null;
+
+    async function refreshAll() {
+      await Promise.all([loadAlerts(), refreshWebhooks()]);
+    }
+
+    onMounted(() => {
+      refreshAll();
+      pollHandle = setInterval(refreshAll, WEBHOOK_POLL_MS);
+    });
+    onBeforeUnmount(() => {
+      if (pollHandle) clearInterval(pollHandle);
+    });
+
+    const pollIntervalMs = WEBHOOK_POLL_MS;
 
     return {
       alerts,
@@ -172,7 +282,17 @@ export default {
       openAlert,
       closeModal,
       selectedAlert,
-      selectedPayload
+      selectedPayload,
+      webhooks,
+      webhooksLoading,
+      webhooksError,
+      webhookDeliveries,
+      webhookDeliveriesLoading,
+      webhookDeliveriesError,
+      latestDeliveryByWebhook,
+      refreshWebhooks,
+      statusBadgeColor,
+      pollIntervalMs
     };
   },
   template: `
@@ -268,6 +388,124 @@ export default {
           <div class="flex items-center gap-2">
             <button class="btn btn-secondary btn-small" type="button" :disabled="page<=1 || loading" @click="prevPage">Prev</button>
             <button class="btn btn-secondary btn-small" type="button" :disabled="page*pageSize>=total || loading" @click="nextPage">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card-shell space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Webhook Connectivity</p>
+            <p class="text-sm muted-text">Active webhook endpoints with latest delivery health and response codes.</p>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-gray-400">
+            <span>Auto-refresh every {{ pollIntervalMs / 1000 }}s</span>
+            <button class="btn btn-secondary btn-small" type="button" :disabled="webhooksLoading || webhookDeliveriesLoading" @click="refreshWebhooks">
+              {{ webhooksLoading || webhookDeliveriesLoading ? 'Refreshing…' : 'Refresh now' }}
+            </button>
+          </div>
+        </div>
+
+        <p v-if="webhooksError" class="text-sm text-rose-400">{{ webhooksError }}</p>
+
+        <div class="overflow-x-auto rounded-xl border border-white/10">
+          <table class="min-w-full text-sm">
+            <thead class="bg-white/5 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+              <tr>
+                <th class="px-3 py-2 text-left">Webhook</th>
+                <th class="px-3 py-2 text-left">Status</th>
+                <th class="px-3 py-2 text-left">Events</th>
+                <th class="px-3 py-2 text-left">Last code</th>
+                <th class="px-3 py-2 text-left">Latency</th>
+                <th class="px-3 py-2 text-left">Last attempt</th>
+                <th class="px-3 py-2 text-left">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="webhooksLoading">
+                <td colspan="7" class="px-3 py-4 text-center text-sm text-gray-400">Loading webhooks…</td>
+              </tr>
+              <tr v-else-if="webhooks.length === 0">
+                <td colspan="7" class="px-3 py-4 text-center text-sm text-gray-400">No webhooks configured.</td>
+              </tr>
+              <tr v-for="wh in webhooks" :key="wh.id" class="border-t border-white/5">
+                <td class="px-3 py-2">
+                  <p class="text-sm text-main">{{ wh.name }}</p>
+                  <p class="text-[11px] text-gray-400 break-all">{{ wh.url }}</p>
+                </td>
+                <td class="px-3 py-2 text-xs">
+                  <span class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-main" :style="{ background: statusBadgeColor(wh.active ? 'executed' : 'rejected') + '20' }">
+                    <span class="h-2 w-2 rounded-full" :style="{ background: statusBadgeColor(wh.active ? 'executed' : 'rejected') }"></span>
+                    {{ wh.active ? 'Active' : 'Paused' }}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-xs text-gray-200">{{ Array.isArray(wh.events) && wh.events.length ? wh.events.join(', ') : '—' }}</td>
+                <td class="px-3 py-2 text-xs text-gray-200">
+                  <template v-if="latestDeliveryByWebhook[wh.id]">
+                    {{ latestDeliveryByWebhook[wh.id].responseCode || '—' }}
+                  </template>
+                  <template v-else>—</template>
+                </td>
+                <td class="px-3 py-2 text-xs text-gray-200">
+                  <template v-if="latestDeliveryByWebhook[wh.id]">
+                    {{ latestDeliveryByWebhook[wh.id].responseTimeMs ?? '—' }} ms
+                  </template>
+                  <template v-else>—</template>
+                </td>
+                <td class="px-3 py-2 text-xs text-gray-200">
+                  <template v-if="latestDeliveryByWebhook[wh.id]">
+                    {{ formatTime(latestDeliveryByWebhook[wh.id].createdAt) }}
+                  </template>
+                  <template v-else>—</template>
+                </td>
+                <td class="px-3 py-2 text-xs text-rose-200 truncate max-w-[260px]" :title="latestDeliveryByWebhook[wh.id]?.lastError">
+                  <template v-if="latestDeliveryByWebhook[wh.id]">
+                    {{ latestDeliveryByWebhook[wh.id].lastError || '—' }}
+                  </template>
+                  <template v-else>—</template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="space-y-2">
+          <p class="text-xs uppercase tracking-[0.28em] text-gray-500">Recent Deliveries</p>
+          <p v-if="webhookDeliveriesError" class="text-sm text-rose-400">{{ webhookDeliveriesError }}</p>
+          <div class="overflow-x-auto rounded-xl border border-white/10">
+            <table class="min-w-full text-sm">
+              <thead class="bg-white/5 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+                <tr>
+                  <th class="px-3 py-2 text-left">When</th>
+                  <th class="px-3 py-2 text-left">Webhook</th>
+                  <th class="px-3 py-2 text-left">Status</th>
+                  <th class="px-3 py-2 text-left">Code</th>
+                  <th class="px-3 py-2 text-left">Time (ms)</th>
+                  <th class="px-3 py-2 text-left">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="webhookDeliveriesLoading">
+                  <td colspan="6" class="px-3 py-4 text-center text-sm text-gray-400">Loading deliveries…</td>
+                </tr>
+                <tr v-else-if="webhookDeliveries.length === 0">
+                  <td colspan="6" class="px-3 py-4 text-center text-sm text-gray-400">No webhook deliveries yet.</td>
+                </tr>
+                <tr v-for="d in webhookDeliveries" :key="d.id" class="border-t border-white/5">
+                  <td class="px-3 py-2 text-xs text-gray-200 whitespace-nowrap">{{ formatTime(d.createdAt) }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-200">{{ d.webhookName || d.webhook?.name || d.webhookId || 'Webhook' }}</td>
+                  <td class="px-3 py-2 text-xs">
+                    <span class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-main" :style="{ background: statusBadgeColor(d.status) + '20' }">
+                      <span class="h-2 w-2 rounded-full" :style="{ background: statusBadgeColor(d.status) }"></span>
+                      {{ d.status }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-200">{{ d.responseCode || '—' }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-200">{{ d.responseTimeMs ?? '—' }}</td>
+                  <td class="px-3 py-2 text-xs text-rose-200 truncate max-w-[320px]" :title="d.lastError">{{ d.lastError || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
