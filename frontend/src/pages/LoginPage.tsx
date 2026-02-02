@@ -107,7 +107,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleMfaSubmit = (event: React.FormEvent) => {
+  const handleMfaSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!mfaCode.trim()) {
       setError('Enter the 6-digit MFA code.');
@@ -141,6 +141,38 @@ export default function LoginPage() {
       } catch {
         // ignore storage errors
       }
+
+      if (!loginPayload.workspace?.id) {
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${loginPayload.token}` },
+            credentials: 'include'
+          });
+          if (res.ok) {
+            const body = await res.json().catch(() => null);
+            if (body?.workspace?.id) {
+              localStorage.setItem('workspaceId', body.workspace.id);
+            }
+          }
+        } catch {
+          // ignore fetch errors
+        }
+      }
+    }
+
+    const workspaceId = (() => {
+      try {
+        return localStorage.getItem('workspaceId');
+      } catch {
+        return null;
+      }
+    })();
+
+    if (!workspaceId) {
+      setError('Workspace not found for this account. Please contact support.');
+      setSuccess(false);
+      return;
     }
 
     setError('');

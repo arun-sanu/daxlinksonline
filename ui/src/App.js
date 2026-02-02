@@ -153,6 +153,21 @@ export default {
       apiClient.setAuthToken(token);
       if (workspace?.id) {
         apiClient.setWorkspaceId(workspace.id);
+      } else if (token) {
+        apiClient.fetchCurrentUser()
+          .then((profile) => {
+            if (!profile) return;
+            store.auth.user = profile;
+            if (profile.webhook) {
+              store.auth.webhook = profile.webhook;
+            }
+            if (profile?.workspace?.id) {
+              apiClient.setWorkspaceId(profile.workspace.id);
+            }
+          })
+          .catch((error) => {
+            console.warn('[Auth] Unable to fetch workspace', error);
+          });
       }
       if (typeof window !== 'undefined') {
         window.__appAuthToken__ = token;

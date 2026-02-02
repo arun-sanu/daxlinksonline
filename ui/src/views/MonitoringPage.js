@@ -18,7 +18,7 @@ function resolveWorkspaceId(cfg = getConfig()) {
     const stored = typeof window !== 'undefined' ? window.localStorage?.getItem('workspaceId') : null;
     if (stored) return String(stored);
   } catch {}
-  return '';
+  throw new Error('Workspace ID missing. Please sign in again.');
 }
 
 function authHeaders() {
@@ -88,16 +88,22 @@ export default {
     const config = getConfig();
     const baseUrl = resolveBaseUrl();
     const apiPrefix = baseUrl || '/api/v1';
-    const workspaceId = resolveWorkspaceId(config);
-    const alertsEndpoint = `${apiPrefix}/admin/alerts`;
-    const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : `${apiPrefix}/webhooks`;
+    let workspaceId = '';
+    let workspaceError = '';
+    try {
+      workspaceId = resolveWorkspaceId(config);
+    } catch (err) {
+      workspaceError = err?.message || 'Workspace ID missing.';
+    }
+    const alertsEndpoint = `${apiPrefix}/users/alerts`;
+    const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : '';
     const deliveriesEndpoint = `${apiPrefix}/admin/deliveries`;
 
     async function loadAlerts() {
       loading.value = true;
       error.value = '';
       try {
-        const params = new URLSearchParams({ page: String(page.value), pageSize: String(pageSize.value) });
+        const params = new URLSearchParams({ limit: String(pageSize.value) });
         if (status.value) params.set('status', status.value);
         if (q.value.trim()) params.set('q', q.value.trim());
         if (userId.value.trim()) params.set('userId', userId.value.trim());
@@ -109,7 +115,7 @@ export default {
           throw new Error(await res.text());
         }
         const data = await res.json();
-        const rows = Array.isArray(data?.rows) ? data.rows.map(normalizeAlert) : [];
+        const rows = Array.isArray(data?.items) ? data.items.map(normalizeAlert) : [];
         alerts.value = rows;
         total.value = data?.total || rows.length || 0;
         if (data?.page) page.value = data.page;
@@ -126,6 +132,9 @@ export default {
       webhooksLoading.value = true;
       webhooksError.value = '';
       try {
+        if (!webhooksEndpoint) {
+          throw new Error(workspaceError || 'Workspace ID missing.');
+        }
         const res = await fetch(webhooksEndpoint, {
           headers: { ...authHeaders() },
           credentials: 'include'
@@ -145,6 +154,9 @@ export default {
       webhookDeliveriesLoading.value = true;
       webhookDeliveriesError.value = '';
       try {
+        if (!workspaceId) {
+          throw new Error(workspaceError || 'Workspace ID missing.');
+        }
         const params = new URLSearchParams({ page: '1', pageSize: '50', sortKey: 'createdAt', sortDir: 'desc' });
         if (workspaceId) params.set('workspaceId', workspaceId);
         const res = await fetch(`${deliveriesEndpoint}?${params.toString()}`, {

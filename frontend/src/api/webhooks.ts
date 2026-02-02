@@ -11,11 +11,17 @@ type CreateWebhookPayload = {
   active?: boolean;
 };
 
+const EMPTY_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000';
+
 function getWorkspaceId() {
   try {
-    return localStorage.getItem('workspaceId') || '00000000-0000-0000-0000-000000000000';
+    const stored = localStorage.getItem('workspaceId');
+    if (!stored || stored === EMPTY_WORKSPACE_ID) {
+      throw new Error('Workspace ID missing. Please sign in again.');
+    }
+    return stored;
   } catch {
-    return '00000000-0000-0000-0000-000000000000';
+    throw new Error('Workspace ID missing. Please sign in again.');
   }
 }
 
@@ -92,7 +98,17 @@ export async function toggleWebhooks(webhookIds: string[], active: boolean): Pro
 export { authHeaders as webhookAuthHeaders };
 
 export async function fetchWebhookProfile(): Promise<WebhookProfile | null> {
-  const profile = await tryFetch<{ webhook?: WebhookProfile }>('/api/v1/auth/profile', { method: 'GET' });
+  const profile = await tryFetch<{ webhook?: WebhookProfile; workspace?: { id?: string | null } }>(
+    '/api/v1/auth/me',
+    { method: 'GET' }
+  );
+  if (profile?.workspace?.id) {
+    try {
+      localStorage.setItem('workspaceId', profile.workspace.id);
+    } catch {
+      // ignore storage errors
+    }
+  }
   if (profile && profile.webhook) return profile.webhook;
   return null;
 }
