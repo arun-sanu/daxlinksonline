@@ -16,11 +16,38 @@ export async function createServer() {
   const app = express();
   app.set('trust proxy', 1);
 
+  const monitoringLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => {
+      if (req.method !== 'GET') return true;
+      const path = req.path || '';
+      return !(
+        path.startsWith('/v1/metrics/monitoring') ||
+        path.startsWith('/v1/users/webhook-alerts') ||
+        path.startsWith('/v1/dns/mine') ||
+        path.startsWith('/v1/webhooks/')
+      );
+    }
+  });
+
   const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 100,
     standardHeaders: true,
-    legacyHeaders: false
+    legacyHeaders: false,
+    skip: (req) => {
+      if (req.method !== 'GET') return false;
+      const path = req.path || '';
+      return (
+        path.startsWith('/v1/metrics/monitoring') ||
+        path.startsWith('/v1/users/webhook-alerts') ||
+        path.startsWith('/v1/dns/mine') ||
+        path.startsWith('/v1/webhooks/')
+      );
+    }
   });
 
   app.use(
@@ -110,6 +137,7 @@ export async function createServer() {
   app.use(attachSubdomain());
   app.use(correlationId());
   app.use(tradingviewIngressRouter);
+  app.use(monitoringLimiter);
   app.use(globalLimiter);
   app.use(
     express.json({
