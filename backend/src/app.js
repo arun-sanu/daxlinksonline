@@ -16,6 +16,16 @@ export async function createServer() {
   const app = express();
   app.set('trust proxy', 1);
 
+  const isMonitoringPath = (req) => {
+    const url = req.originalUrl || req.url || '';
+    return (
+      url.startsWith('/v1/metrics/monitoring') ||
+      url.startsWith('/v1/users/webhook-alerts') ||
+      url.startsWith('/v1/dns/mine') ||
+      url.startsWith('/v1/webhooks/')
+    );
+  };
+
   const monitoringLimiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 120,
@@ -23,13 +33,7 @@ export async function createServer() {
     legacyHeaders: false,
     skip: (req) => {
       if (req.method !== 'GET') return true;
-      const path = req.path || '';
-      return !(
-        path.startsWith('/v1/metrics/monitoring') ||
-        path.startsWith('/v1/users/webhook-alerts') ||
-        path.startsWith('/v1/dns/mine') ||
-        path.startsWith('/v1/webhooks/')
-      );
+      return !isMonitoringPath(req);
     }
   });
 
@@ -40,13 +44,7 @@ export async function createServer() {
     legacyHeaders: false,
     skip: (req) => {
       if (req.method !== 'GET') return false;
-      const path = req.path || '';
-      return (
-        path.startsWith('/v1/metrics/monitoring') ||
-        path.startsWith('/v1/users/webhook-alerts') ||
-        path.startsWith('/v1/dns/mine') ||
-        path.startsWith('/v1/webhooks/')
-      );
+      return isMonitoringPath(req);
     }
   });
 
