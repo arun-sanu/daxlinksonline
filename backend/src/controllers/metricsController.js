@@ -106,3 +106,123 @@ export async function handleMonitoringMetrics(req, res, next) {
     next(err);
   }
 }
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(value, max));
+}
+
+function integrationTone(status) {
+  const key = String(status || '').toLowerCase();
+  if (['active', 'healthy', 'ok'].includes(key)) return 'ok';
+  if (['degraded', 'warning'].includes(key)) return 'degraded';
+  if (['error', 'failed', 'disabled', 'down'].includes(key)) return 'down';
+  return 'unknown';
+}
+
+function deliveryTone(status) {
+  const key = String(status || '').toLowerCase();
+  if (key === 'failed') return 'down';
+  if (key === 'queued') return 'degraded';
+  if (key === 'sent') return 'ok';
+  return 'unknown';
+}
+
+export async function handleConnectivityMetrics(req, res, next) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+
+    const windowMinutesRaw = Number(req.query.windowMinutes || 15);
+    const windowMinutes = clamp(Number.isFinite(windowMinutesRaw) ? windowMinutesRaw : 15, 5, 120);
+    const since = new Date(Date.now() - windowMinutes * 60 * 1000);
+
+    const workspaces = await prisma.workspace.findMany({
+      where: { ownerId: req.user.id },
+      select: { id: true, name: true }
+    });
+    const workspaceIds = workspaces.map((w) => w.id);
+
+    const [webhooks, integrations, deliveries] = await Promise.all([
+      prisma.webhook.findMany({ where: { workspaceId: workspaceIds.length ? { in: workspaceIds } : undefined } }),
+      prisma.integration.findMany({ where: { workspaceId: workspaceIds.length ? { in: workspaceIds } : undefined } }),
+      prisma.webhookDelivery.findMany({
+        where: {
+          workspaceId: workspaceIds.length ? { in: workspaceIds } : undefined,
+          createdAt: { gte: since }
+        },
+        select: { webhookId: true, status: true, createdAt: true }
+      })
+    ]);
+
+    const latestByWebhook = new Map();
+    const countByWebhook = new Map();
+    for (const d of deliveries) {
+      const prev = latestByWebhook.get(d.webhookId);
+      if (!prev || prev.createdAt < d.createdAt) {
+        latestByWebhook.set(d.webhookId, d);
+      }
+      countByWebhook.set(d.webhookId, (countByWebhook.get(d.webhookId) || 0) + 1);
+    }
+
+    const nodes = [
+      { id: 'ingress', label: 'TradingView', type: 'source', status: 'ok' },
+      { id: 'router', label: 'Signal Router', type: 'router', status: 'ok' }
+    ];
+
+    for (const wh of webhooks) {
+      const latest = latestByWebhook.get(wh.id);
+      const status = latest ? deliveryTone(latest.status) : wh.active ? 'ok' : 'down';
+      nodes.push({
+        id: `wh:${wh.id}`,
+        label: wh.name || 'Webhook',
+        type: 'webhook',
+        status
+      });
+    }
+
+    for (const integ of integrations) {
+      nodes.push({
+        id: `int:${integ.id}`,
+        label: integ.label || integ.exchange || 'Integration',
+        type: 'integration',
+        status: integrationTone(integ.status)
+      });
+    }
+
+    const links = [];
+    for (const wh of webhooks) {
+      const latest = latestByWebhook.get(wh.id);
+      const status = latest ? deliveryTone(latest.status) : wh.active ? 'ok' : 'down';
+      links.push({
+        id: `ingress-${wh.id}`,
+        from: 'ingress',
+        to: `wh:${wh.id}`,
+        status,
+        alertsLastWindow: countByWebhook.get(wh.id) || 0
+      });
+      links.push({
+        id: `router-${wh.id}`,
+        from: `wh:${wh.id}`,
+        to: 'router',
+        status
+      });
+    }
+
+    for (const integ of integrations) {
+      links.push({
+        id: `router-${integ.id}`,
+        from: 'router',
+        to: `int:${integ.id}`,
+        status: integrationTone(integ.status)
+      });
+    }
+
+    res.json({
+      ok: true,
+      windowMinutes,
+      nodes,
+      links
+    });
+  } catch (err) {
+    next(err);
+  }
+}
