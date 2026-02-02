@@ -3,6 +3,7 @@ import { getConfig } from '../services/config.js';
 
 const STATUS_OPTIONS = ['received', 'validated', 'executed', 'failed', 'rejected'];
 const WEBHOOK_POLL_MS = 10000;
+const CONNECTIVITY_POLL_MS = 15000;
 
 function resolveBaseUrl() {
   const cfg = getConfig();
@@ -87,6 +88,10 @@ export default {
     const metrics = ref(null);
     const metricsLoading = ref(false);
     const metricsError = ref('');
+    const connectivity = ref(null);
+    const connectivityLoading = ref(false);
+    const connectivityError = ref('');
+    const connectivityUpdatedAt = ref(null);
 
     const config = getConfig();
     const baseUrl = resolveBaseUrl();
@@ -102,6 +107,14 @@ export default {
     const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : '';
     const deliveriesEndpoint = `${apiPrefix}/admin/deliveries`;
     const metricsEndpoint = `${apiPrefix}/metrics/monitoring`;
+    const connectivityEndpoint = `${apiPrefix}/metrics/connectivity?windowMinutes=15`;
+
+    const statusPalette = {
+      ok: '#34d399',
+      degraded: '#fbbf24',
+      down: '#f87171',
+      unknown: '#9ca3af'
+    };
 
     async function loadAlerts() {
       loading.value = true;
@@ -200,6 +213,27 @@ export default {
       }
     }
 
+    async function loadConnectivity() {
+      connectivityLoading.value = true;
+      connectivityError.value = '';
+      try {
+        const res = await fetch(connectivityEndpoint, {
+          headers: { ...authHeaders() },
+          credentials: 'include'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!data?.ok) throw new Error('Connectivity unavailable');
+        connectivity.value = data;
+        connectivityUpdatedAt.value = new Date();
+      } catch (e) {
+        connectivityError.value = e?.message || 'Connectivity unavailable.';
+        connectivity.value = null;
+      } finally {
+        connectivityLoading.value = false;
+      }
+    }
+
     function applyFilters() {
       page.value = 1;
       loadAlerts();
@@ -242,6 +276,51 @@ export default {
       return '#fbbf24';
     }
 
+    function connectivityTone(statusValue) {
+      const key = String(statusValue || 'unknown').toLowerCase();
+      return statusPalette[key] || statusPalette.unknown;
+    }
+
+    const nodeLayout = computed(() => {
+      const nodes = connectivity.value?.nodes || [];
+      const cols = 4;
+      const gapX = 220;
+      const gapY = 120;
+      const startX = 80;
+      const startY = 80;
+      const mapped = nodes.map((node, index) => {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        return {
+          ...node,
+          x: startX + col * gapX,
+          y: startY + row * gapY
+        };
+      });
+      const map = new Map(mapped.map((node) => [node.id, node]));
+      return { nodes: mapped, map };
+    });
+
+    const linkLayout = computed(() => {
+      const links = connectivity.value?.links || [];
+      const { map } = nodeLayout.value;
+      return links
+        .map((link) => {
+          const from = map.get(link.from);
+          const to = map.get(link.to);
+          if (!from || !to) return null;
+          const path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+          return {
+            ...link,
+            from,
+            to,
+            path,
+            tone: connectivityTone(link.status)
+          };
+        })
+        .filter(Boolean);
+    });
+
     const pageStart = computed(() => {
       if (!total.value) return 0;
       return (page.value - 1) * pageSize.value + 1;
@@ -278,7 +357,7 @@ export default {
       return map;
     });
 
-    let pollHandle = null;
+    let pollHandle = { main: null, connectivity: null };
 
     async function refreshAll() {
       await Promise.all([loadAlerts(), refreshWebhooks(), loadMetrics()]);
@@ -286,10 +365,13 @@ export default {
 
     onMounted(() => {
       refreshAll();
-      pollHandle = setInterval(refreshAll, WEBHOOK_POLL_MS);
+      pollHandle.main = setInterval(refreshAll, WEBHOOK_POLL_MS);
+      loadConnectivity();
+      pollHandle.connectivity = setInterval(loadConnectivity, CONNECTIVITY_POLL_MS);
     });
     onBeforeUnmount(() => {
-      if (pollHandle) clearInterval(pollHandle);
+      if (pollHandle.main) clearInterval(pollHandle.main);
+      if (pollHandle.connectivity) clearInterval(pollHandle.connectivity);
     });
 
     const pollIntervalMs = WEBHOOK_POLL_MS;
@@ -315,6 +397,7 @@ export default {
       loadAlerts,
       loadWebhooks,
       loadMetrics,
+      loadConnectivity,
       openAlert,
       closeModal,
       selectedAlert,
@@ -331,7 +414,14 @@ export default {
       pollIntervalMs,
       metrics,
       metricsLoading,
-      metricsError
+      metricsError,
+      connectivity,
+      connectivityLoading,
+      connectivityError,
+      connectivityUpdatedAt,
+      nodeLayout,
+      linkLayout,
+      connectivityTone
     };
   },
   template: `
@@ -399,6 +489,68 @@ export default {
             <p class="text-xs uppercase tracking-[0.24em] text-gray-400">Queue depth</p>
             <p class="text-2xl text-main">{{ metrics ? metrics.queueDepth : '—' }}</p>
           </div>
+        </div>
+      </section>
+
+      <section class="card-shell space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Connectivity Map</p>
+            <p class="text-sm muted-text">Live metro view of signal flow and link health.</p>
+          </div>
+          <button class="btn btn-secondary btn-small" type="button" :disabled="connectivityLoading" @click="loadConnectivity">
+            {{ connectivityLoading ? 'Loading…' : 'Refresh' }}
+          </button>
+        </div>
+        <p v-if="connectivityError" class="text-sm text-rose-400">{{ connectivityError }}</p>
+        <div v-if="!connectivity && !connectivityLoading" class="text-sm text-gray-400">Connectivity unavailable.</div>
+        <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+          <div class="connectivity-shell">
+            <svg v-if="connectivity" class="connectivity-svg" viewBox="0 0 900 520" aria-label="Connectivity diagram">
+              <g v-for="(link, idx) in linkLayout" :key="link.id || idx">
+                <path
+                  class="connectivity-link"
+                  :d="link.path"
+                  :stroke="link.tone"
+                  stroke-width="5"
+                  fill="none"
+                />
+                <circle class="connectivity-pulse" r="6" :fill="link.tone">
+                  <animateMotion :dur="'2.4s'" :begin="(idx * 0.4) + 's'" repeatCount="indefinite" :path="link.path" />
+                </circle>
+              </g>
+              <g v-for="node in nodeLayout.nodes" :key="node.id">
+                <circle
+                  class="connectivity-node"
+                  :cx="node.x"
+                  :cy="node.y"
+                  r="16"
+                  :fill="connectivityTone(node.status)"
+                />
+                <text class="connectivity-label" :x="node.x + 26" :y="node.y + 4">{{ node.label || node.id }}</text>
+              </g>
+            </svg>
+          </div>
+          <aside class="connectivity-panel">
+            <p class="text-xs uppercase tracking-[0.28em] text-gray-500">Link details</p>
+            <p class="text-xs text-gray-400">Last update: {{ connectivityUpdatedAt ? connectivityUpdatedAt.toLocaleTimeString() : '—' }}</p>
+            <div class="mt-3 space-y-3">
+              <div
+                v-for="(link, idx) in linkLayout"
+                :key="'panel-' + (link.id || idx)"
+                class="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-200"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <span>{{ link.from?.label || link.from?.id }} → {{ link.to?.label || link.to?.id }}</span>
+                  <span class="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em]" :style="{ color: link.tone }">
+                    <span class="h-2 w-2 rounded-full" :style="{ background: link.tone }"></span>
+                    {{ link.status || 'unknown' }}
+                  </span>
+                </div>
+                <p v-if="link.alertsLastWindow != null" class="text-xs text-gray-400">Alerts (window): {{ link.alertsLastWindow }}</p>
+              </div>
+            </div>
+          </aside>
         </div>
       </section>
 
