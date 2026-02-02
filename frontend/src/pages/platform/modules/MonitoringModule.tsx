@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { withApiBase } from '../../../api/client';
 import { listMyDnsRecords } from '../../../api/dns';
 import type { DnsRecord } from '../../../api/types';
@@ -29,10 +30,10 @@ type AlertRow = {
   payload?: any;
 };
 
-const POLL_MS = 5000;
+const POLL_MS = 20000;
 const DNS_POLL_MS = 30000;
 const WEBHOOK_POLL_MS = 15000;
-const METRICS_POLL_MS = 5000;
+const METRICS_POLL_MS = 45000;
 
 function authHeaders() {
   try {
@@ -72,19 +73,40 @@ export default function MonitoringModule() {
   const [metrics, setMetrics] = useState<MonitoringMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState('');
+  const [metricsUnavailable, setMetricsUnavailable] = useState(false);
+  const navigate = useNavigate();
 
   const fetchAlerts = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(withApiBase('/api/v1/users/webhook-alerts?limit=50'), {
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() }
-      });
-      if (!res.ok) {
-        throw new Error(`Request failed (${res.status})`);
+      const fetchAlertsFrom = async (path: string) => {
+        const res = await fetch(withApiBase(path), {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() }
+        });
+        if (res.status === 401) {
+          navigate('/login');
+          throw new Error('Unauthorized');
+        }
+        if (!res.ok) {
+          const error = new Error(`Request failed (${res.status})`) as Error & { status?: number };
+          error.status = res.status;
+          throw error;
+        }
+        return res.json();
+      };
+
+      let data: any;
+      try {
+        data = await fetchAlertsFrom('/api/v1/users/alerts?limit=50');
+      } catch (err: any) {
+        if (err?.status === 404) {
+          data = await fetchAlertsFrom('/api/v1/users/webhook-alerts?limit=50');
+        } else {
+          throw err;
+        }
       }
-      const data = await res.json();
       const items = Array.isArray(data?.items) ? data.items : [];
       setAlerts(items);
       setLastUpdated(new Date());
@@ -93,7 +115,7 @@ export default function MonitoringModule() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     fetchAlerts();
@@ -145,18 +167,29 @@ export default function MonitoringModule() {
     try {
       const data = await fetchMonitoringMetrics();
       setMetrics(data);
+      setMetricsUnavailable(false);
     } catch (err: any) {
+      if (err?.status === 401) {
+        navigate('/login');
+        return;
+      }
+      if (err?.status === 404) {
+        setMetricsUnavailable(true);
+        setMetricsError('Monitoring data unavailable.');
+        return;
+      }
       setMetricsError(err?.message || 'Failed to load metrics.');
     } finally {
       setMetricsLoading(false);
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
+    if (metricsUnavailable) return;
     fetchMetrics();
     const handle = setInterval(fetchMetrics, METRICS_POLL_MS);
     return () => clearInterval(handle);
-  }, [fetchMetrics]);
+  }, [fetchMetrics, metricsUnavailable]);
 
   const selectedPayload = useMemo(() => {
     if (!selected?.payload) return 'No payload available.';
