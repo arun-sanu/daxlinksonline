@@ -84,6 +84,9 @@ export default {
     const webhookDeliveries = ref([]);
     const webhookDeliveriesLoading = ref(false);
     const webhookDeliveriesError = ref('');
+    const metrics = ref(null);
+    const metricsLoading = ref(false);
+    const metricsError = ref('');
 
     const config = getConfig();
     const baseUrl = resolveBaseUrl();
@@ -98,6 +101,7 @@ export default {
     const alertsEndpoint = `${apiPrefix}/users/alerts`;
     const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : '';
     const deliveriesEndpoint = `${apiPrefix}/admin/deliveries`;
+    const metricsEndpoint = `${apiPrefix}/metrics/monitoring`;
 
     async function loadAlerts() {
       loading.value = true;
@@ -176,6 +180,24 @@ export default {
 
     async function refreshWebhooks() {
       await Promise.all([loadWebhooks(), loadWebhookDeliveries()]);
+    }
+
+    async function loadMetrics() {
+      metricsLoading.value = true;
+      metricsError.value = '';
+      try {
+        const res = await fetch(metricsEndpoint, {
+          headers: { ...authHeaders() },
+          credentials: 'include'
+        });
+        if (!res.ok) throw new Error(await res.text());
+        metrics.value = await res.json();
+      } catch (e) {
+        metricsError.value = e?.message || 'Failed to load monitoring metrics.';
+        metrics.value = null;
+      } finally {
+        metricsLoading.value = false;
+      }
     }
 
     function applyFilters() {
@@ -259,7 +281,7 @@ export default {
     let pollHandle = null;
 
     async function refreshAll() {
-      await Promise.all([loadAlerts(), refreshWebhooks()]);
+      await Promise.all([loadAlerts(), refreshWebhooks(), loadMetrics()]);
     }
 
     onMounted(() => {
@@ -291,6 +313,8 @@ export default {
       pageStart,
       pageEnd,
       loadAlerts,
+      loadWebhooks,
+      loadMetrics,
       openAlert,
       closeModal,
       selectedAlert,
@@ -304,7 +328,10 @@ export default {
       latestDeliveryByWebhook,
       refreshWebhooks,
       statusBadgeColor,
-      pollIntervalMs
+      pollIntervalMs,
+      metrics,
+      metricsLoading,
+      metricsError
     };
   },
   template: `
@@ -318,7 +345,67 @@ export default {
       <section class="card-shell space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">TradingView Alerts</p>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Ingress URLs</p>
+            <p class="text-sm muted-text">Active webhook endpoints configured for this workspace.</p>
+          </div>
+          <button class="btn btn-secondary btn-small" type="button" :disabled="webhooksLoading" @click="loadWebhooks">
+            {{ webhooksLoading ? 'Loading…' : 'Refresh' }}
+          </button>
+        </div>
+        <p v-if="webhooksError" class="text-sm text-rose-400">{{ webhooksError }}</p>
+        <div class="space-y-2">
+          <div
+            v-for="wh in webhooks"
+            :key="wh.id"
+            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3"
+          >
+            <div class="min-w-0">
+              <p class="text-xs uppercase tracking-[0.24em] text-gray-400">{{ wh.name || 'Webhook' }}</p>
+              <p class="text-sm text-main break-all">{{ wh.url || '—' }}</p>
+            </div>
+            <span
+              class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.18em]"
+              :style="{ color: wh.active ? '#34d399' : '#f87171', background: (wh.active ? '#34d399' : '#f87171') + '20' }"
+            >
+              <span class="h-2 w-2 rounded-full" :style="{ background: wh.active ? '#34d399' : '#f87171' }"></span>
+              {{ wh.active ? 'Active' : 'Inactive' }}
+            </span>
+          </div>
+          <div v-if="!webhooksLoading && webhooks.length === 0" class="text-sm text-gray-400">No ingress URLs configured yet.</div>
+        </div>
+      </section>
+
+      <section class="card-shell space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Webhook Traffic</p>
+            <p class="text-sm muted-text">Live throughput and delivery volume.</p>
+          </div>
+          <button class="btn btn-secondary btn-small" type="button" :disabled="metricsLoading" @click="loadMetrics">
+            {{ metricsLoading ? 'Loading…' : 'Refresh' }}
+          </button>
+        </div>
+        <p v-if="metricsError" class="text-sm text-rose-400">{{ metricsError }}</p>
+        <div class="grid gap-4 md:grid-cols-3">
+          <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p class="text-xs uppercase tracking-[0.24em] text-gray-400">Alerts / hour</p>
+            <p class="text-2xl text-main">{{ metrics ? Math.round((metrics.throughputPerMin || 0) * 60) : '—' }}</p>
+          </div>
+          <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p class="text-xs uppercase tracking-[0.24em] text-gray-400">Webhook deliveries</p>
+            <p class="text-2xl text-main">{{ webhookDeliveries.length }}</p>
+          </div>
+          <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p class="text-xs uppercase tracking-[0.24em] text-gray-400">Queue depth</p>
+            <p class="text-2xl text-main">{{ metrics ? metrics.queueDepth : '—' }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card-shell space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Recent Alerts</p>
             <p class="text-sm muted-text">Incoming webhook alerts with validation, routing outcomes, and execution feedback.</p>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-400">
