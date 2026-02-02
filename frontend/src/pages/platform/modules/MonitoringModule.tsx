@@ -30,10 +30,33 @@ type AlertRow = {
   payload?: any;
 };
 
+type ConnectivityNode = {
+  id: string;
+  label?: string;
+  type?: string;
+  status?: string;
+};
+
+type ConnectivityLink = {
+  id?: string;
+  from: string;
+  to: string;
+  status?: string;
+  alertsLastWindow?: number;
+};
+
+type ConnectivityPayload = {
+  ok: boolean;
+  windowMinutes: number;
+  nodes: ConnectivityNode[];
+  links: ConnectivityLink[];
+};
+
 const POLL_MS = 20000;
 const DNS_POLL_MS = 30000;
 const WEBHOOK_POLL_MS = 15000;
 const METRICS_POLL_MS = 45000;
+const CONNECTIVITY_POLL_MS = 15000;
 
 function authHeaders() {
   try {
@@ -74,6 +97,10 @@ export default function MonitoringModule() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState('');
   const [metricsUnavailable, setMetricsUnavailable] = useState(false);
+  const [connectivity, setConnectivity] = useState<ConnectivityPayload | null>(null);
+  const [connectivityLoading, setConnectivityLoading] = useState(false);
+  const [connectivityError, setConnectivityError] = useState('');
+  const [connectivityUpdatedAt, setConnectivityUpdatedAt] = useState<Date | null>(null);
   const navigate = useNavigate();
 
   const fetchAlerts = useCallback(async () => {
@@ -191,6 +218,39 @@ export default function MonitoringModule() {
     return () => clearInterval(handle);
   }, [fetchMetrics, metricsUnavailable]);
 
+  const fetchConnectivity = useCallback(async () => {
+    setConnectivityLoading(true);
+    setConnectivityError('');
+    try {
+      const res = await fetch(withApiBase('/api/v1/metrics/connectivity?windowMinutes=15'), {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() }
+      });
+      if (res.status === 401) {
+        navigate('/login');
+        throw new Error('Unauthorized');
+      }
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status})`);
+      }
+      const data = await res.json();
+      if (!data?.ok) throw new Error('Connectivity unavailable');
+      setConnectivity(data);
+      setConnectivityUpdatedAt(new Date());
+    } catch (err: any) {
+      setConnectivityError(err?.message || 'Connectivity unavailable.');
+      setConnectivity(null);
+    } finally {
+      setConnectivityLoading(false);
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    fetchConnectivity();
+    const handle = setInterval(fetchConnectivity, CONNECTIVITY_POLL_MS);
+    return () => clearInterval(handle);
+  }, [fetchConnectivity]);
+
   const selectedPayload = useMemo(() => {
     if (!selected?.payload) return 'No payload available.';
     if (typeof selected.payload === 'string') return selected.payload;
@@ -214,6 +274,54 @@ export default function MonitoringModule() {
     }
     return { label: status || 'Unknown', className: 'inline-flex rounded-full bg-gray-500/15 px-3 py-1 text-xs uppercase tracking-[0.2em] text-gray-300' };
   }, []);
+
+  const connectivityTone = useCallback((status?: string | null) => {
+    const key = String(status || 'unknown').toLowerCase();
+    if (key === 'ok') return '#34d399';
+    if (key === 'degraded') return '#fbbf24';
+    if (key === 'down') return '#f87171';
+    return '#9ca3af';
+  }, []);
+
+  const nodeLayout = useMemo(() => {
+    const nodes = connectivity?.nodes || [];
+    const cols = 4;
+    const gapX = 220;
+    const gapY = 120;
+    const startX = 80;
+    const startY = 80;
+    const mapped = nodes.map((node, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      return {
+        ...node,
+        x: startX + col * gapX,
+        y: startY + row * gapY
+      };
+    });
+    const map = new Map(mapped.map((node) => [node.id, node]));
+    return { nodes: mapped, map };
+  }, [connectivity]);
+
+  const linkLayout = useMemo(() => {
+    const links = connectivity?.links || [];
+    const { map } = nodeLayout;
+    return links
+      .map((link) => {
+        const from = map.get(link.from);
+        const to = map.get(link.to);
+        if (!from || !to) return null;
+        const path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+        return {
+          ...link,
+          from,
+          to,
+          path,
+          tone: connectivityTone(link.status)
+        };
+      })
+      .filter(Boolean) as Array<ConnectivityLink & { from: any; to: any; path: string; tone: string }>;
+  }, [connectivity, nodeLayout, connectivityTone]);
 
   return (
     <div className="monitoring-page space-y-6">
@@ -417,7 +525,72 @@ export default function MonitoringModule() {
             </tbody>
           </table>
         </div>
-      </article>
+          </article>
+
+          <article className="card-shell space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Connectivity Map</p>
+                <p className="text-sm muted-text">Live metro view of signal flow and link health.</p>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                <span>Auto-refresh every {CONNECTIVITY_POLL_MS / 1000}s</span>
+                <button className="btn btn-secondary btn-small" type="button" onClick={fetchConnectivity} disabled={connectivityLoading}>
+                  {connectivityLoading ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+
+            {connectivityError && <p className="text-sm text-rose-400">{connectivityError}</p>}
+            {!connectivity && !connectivityLoading && (
+              <p className="text-sm text-gray-400">Connectivity unavailable.</p>
+            )}
+
+            {connectivity && (
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+                <div className="connectivity-shell">
+                  <svg className="connectivity-svg" viewBox="0 0 900 520" aria-label="Connectivity diagram">
+                    {linkLayout.map((link, idx) => (
+                      <g key={link.id || idx}>
+                        <path className="connectivity-link" d={link.path} stroke={link.tone} strokeWidth="5" fill="none" />
+                        <circle className="connectivity-pulse" r="6" fill={link.tone}>
+                          <animateMotion dur="2.4s" begin={`${idx * 0.4}s`} repeatCount="indefinite" path={link.path} />
+                        </circle>
+                      </g>
+                    ))}
+                    {nodeLayout.nodes.map((node) => (
+                      <g key={node.id}>
+                        <circle className="connectivity-node" cx={node.x} cy={node.y} r="16" fill={connectivityTone(node.status)} />
+                        <text className="connectivity-label" x={node.x + 26} y={node.y + 4}>
+                          {node.label || node.id}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+                <aside className="connectivity-panel">
+                  <p className="text-xs uppercase tracking-[0.28em] text-gray-500">Link details</p>
+                  <p className="text-xs text-gray-400">Last update: {connectivityUpdatedAt ? connectivityUpdatedAt.toLocaleTimeString() : '—'}</p>
+                  <div className="mt-3 space-y-3">
+                    {linkLayout.map((link, idx) => (
+                      <div key={`panel-${link.id || idx}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-200">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{link.from?.label || link.from?.id} → {link.to?.label || link.to?.id}</span>
+                          <span className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em]" style={{ color: link.tone }}>
+                            <span className="h-2 w-2 rounded-full" style={{ background: link.tone }}></span>
+                            {link.status || 'unknown'}
+                          </span>
+                        </div>
+                        {link.alertsLastWindow != null && (
+                          <p className="text-xs text-gray-400">Alerts (window): {link.alertsLastWindow}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </aside>
+              </div>
+            )}
+          </article>
 
         </div>
 
