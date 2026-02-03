@@ -209,6 +209,7 @@ model User {
   createdDatabases DatabaseInstance[]
   dnsRecords       DnsRecord[]
   devices          Device[]
+  dnsOrder         String[]             @default([])
 
   @@index([trialEndsAt])
 }

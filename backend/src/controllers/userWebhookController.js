@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { assignUserWebhook, forward } from '../services/tradingviewService.js';
 import { buildTradingviewWebhookUrl, getWebhookBaseDomain } from '../lib/webhookDomains.js';
 import { prisma } from '../utils/prisma.js';
+import { listMyDns } from '../services/dnsService.js';
 
 const assignSchema = z
   .object({
@@ -24,6 +25,10 @@ const testWebhookSchema = z
   })
   .optional();
 
+const dnsOrderSchema = z.object({
+  order: z.array(z.string().min(1)).max(200)
+});
+
 function formatWebhookResponse(user) {
   if (!user) return null;
   const prefix = user.subdomainPrefix || user.webhookSubdomain || null;
@@ -36,7 +41,8 @@ function formatWebhookResponse(user) {
     secret,
     hmacKey: user.webhookHmacKey || null,
     enforceHmac: Boolean(user.enforceHmac),
-    baseDomain: getWebhookBaseDomain()
+    baseDomain: getWebhookBaseDomain(),
+    dnsOrder: user.dnsOrder || []
   };
 }
 
@@ -76,14 +82,38 @@ export async function handleGetWebhook(req, res, next) {
         webhookSubdomain: true,
         webhookSecret: true,
         webhookHmacKey: true,
-        enforceHmac: true
+        enforceHmac: true,
+        dnsOrder: true
       }
     });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json(formatWebhookResponse(user));
+    const dnsRecords = await listMyDns({ userId: req.user.id });
+    res.json({ ...formatWebhookResponse(user), dnsRecords });
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleUpdateDnsOrder(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const payload = dnsOrderSchema.parse(req.body || {});
+    const records = await listMyDns({ userId: req.user.id });
+    const allowed = new Set(records.map((rec) => rec.subdomain));
+    const filtered = payload.order.filter((name) => allowed.has(name));
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { dnsOrder: filtered }
+    });
+    res.json({ ok: true, dnsOrder: updated.dnsOrder || [] });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+    }
     next(error);
   }
 }

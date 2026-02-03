@@ -8,7 +8,8 @@ import {
   getMyWebhook,
   listWebhooks,
   testWebhook,
-  toggleWebhook
+  toggleWebhook,
+  updateDnsOrder
 } from '../../../api/webhooks';
 
 type Toast = { message: string; tone: 'success' | 'error' };
@@ -62,6 +63,7 @@ export default function WebhooksModule() {
   const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
   const [dnsSort, setDnsSort] = useState<'custom' | 'subdomain' | 'host' | 'url'>('custom');
   const [dnsOrder, setDnsOrder] = useState<string[]>([]);
+  const [dnsOrderDirty, setDnsOrderDirty] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -73,6 +75,10 @@ export default function WebhooksModule() {
         const payload = await getMyWebhook();
         if (mounted) {
           setMyWebhook(payload);
+          if (payload?.dnsOrder && Array.isArray(payload.dnsOrder)) {
+            setDnsOrder(payload.dnsOrder);
+            setDnsOrderDirty(false);
+          }
           hasMyWebhook = true;
         }
       } catch (e: any) {
@@ -155,9 +161,9 @@ export default function WebhooksModule() {
       return;
     }
     setDnsOrder((prev) => {
-      const next = prev.filter((url) => dnsRecords.some((rec) => rec.url === url));
+      const next = prev.filter((subdomain) => dnsRecords.some((rec) => rec.subdomain === subdomain));
       dnsRecords.forEach((rec) => {
-        if (!next.includes(rec.url)) next.push(rec.url);
+        if (!next.includes(rec.subdomain)) next.push(rec.subdomain);
       });
       return next;
     });
@@ -167,18 +173,18 @@ export default function WebhooksModule() {
     if (!dnsRecords.length) return [];
     if (dnsSort === 'custom') {
       if (!dnsOrder.length) return dnsRecords;
-      const map = new Map(dnsRecords.map((rec) => [rec.url, rec]));
-      const ordered = dnsOrder.map((url) => map.get(url)).filter(Boolean) as typeof dnsRecords;
-      const rest = dnsRecords.filter((rec) => !dnsOrder.includes(rec.url));
+      const map = new Map(dnsRecords.map((rec) => [rec.subdomain, rec]));
+      const ordered = dnsOrder.map((subdomain) => map.get(subdomain)).filter(Boolean) as typeof dnsRecords;
+      const rest = dnsRecords.filter((rec) => !dnsOrder.includes(rec.subdomain));
       return [...ordered, ...rest];
     }
     const key = dnsSort;
     return [...dnsRecords].sort((a, b) => String((a as any)[key] || '').localeCompare(String((b as any)[key] || '')));
   }, [dnsRecords, dnsOrder, dnsSort]);
 
-  function moveDnsRecord(url: string, direction: 'up' | 'down') {
+  function moveDnsRecord(subdomain: string, direction: 'up' | 'down') {
     setDnsOrder((prev) => {
-      const idx = prev.indexOf(url);
+      const idx = prev.indexOf(subdomain);
       if (idx === -1) return prev;
       const next = [...prev];
       const swapWith = direction === 'up' ? idx - 1 : idx + 1;
@@ -186,7 +192,20 @@ export default function WebhooksModule() {
       [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
       return next;
     });
+    setDnsOrderDirty(true);
   }
+
+  useEffect(() => {
+    if (!dnsOrderDirty || dnsSort !== 'custom' || !dnsOrder.length) return;
+    const handle = setTimeout(() => {
+      updateDnsOrder(dnsOrder)
+        .then(() => setDnsOrderDirty(false))
+        .catch(() => {
+          // keep dirty so user can retry via another move
+        });
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [dnsOrder, dnsOrderDirty, dnsSort]);
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const hmacValue = myWebhook?.hmacKey || '';
@@ -205,6 +224,7 @@ export default function WebhooksModule() {
     if (webhooks[0]?.url) return webhooks[0].url;
     return 'https://<sub>.daxlinksonline.link/webhook/tradingview';
   }, [activeDnsUrl, myWebhook, profile, webhooks, secretValue]);
+  const hasSelectedDns = Boolean(activeDnsUrl);
   const maskedSecret = secretVisible ? secretValue || '—' : '••••••••••••';
   const maskedHmac = hmacVisible ? hmacValue || '—' : '••••••••••••';
 
@@ -272,6 +292,10 @@ export default function WebhooksModule() {
     try {
       const payload = await getMyWebhook();
       setMyWebhook(payload);
+      if (payload?.dnsOrder && Array.isArray(payload.dnsOrder)) {
+        setDnsOrder(payload.dnsOrder);
+        setDnsOrderDirty(false);
+      }
     } catch (e: any) {
       setMyWebhook(null);
       if (e?.message) setError(e.message);
@@ -374,38 +398,56 @@ export default function WebhooksModule() {
           <>
             <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
               <div className="space-y-2">
-                <div className="hero-input hero-input--long">
-                  <input value={ingressUrl} readOnly aria-label="Webhook URL" />
-                </div>
-                <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
-                  🔗 Copy URL
-                </button>
+                {hasSelectedDns ? (
+                  <>
+                    <div className="hero-input hero-input--long">
+                      <input value={ingressUrl} readOnly aria-label="Webhook URL" />
+                    </div>
+                    <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+                      🔗 Copy URL
+                    </button>
+                  </>
+                ) : (
+                  <div className="text-xs text-gray-500">Select a DNS URL to view the webhook endpoint.</div>
+                )}
               </div>
               <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={maskedSecret} readOnly aria-label="Webhook secret" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!secretValue}>
-                    {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
-                  </button>
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
-                    🔐 Copy secret
-                  </button>
-                </div>
+                {hasSelectedDns ? (
+                  <>
+                    <div className="hero-input">
+                      <input value={maskedSecret} readOnly aria-label="Webhook secret" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!secretValue}>
+                        {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
+                      </button>
+                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
+                        🔐 Copy secret
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-gray-500">Secrets appear after selecting a DNS URL.</div>
+                )}
               </div>
               <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hmacValue}>
-                    {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
-                  </button>
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
-                    🧾 Copy HMAC
-                  </button>
-                </div>
+                {hasSelectedDns ? (
+                  <>
+                    <div className="hero-input">
+                      <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hmacValue}>
+                        {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
+                      </button>
+                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
+                        🧾 Copy HMAC
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-gray-500">HMAC keys appear after selecting a DNS URL.</div>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
@@ -460,20 +502,20 @@ export default function WebhooksModule() {
                               <button
                                 type="button"
                                 className="btn btn-secondary btn-xs btn-minimal btn-arrow"
-                                onClick={() => moveDnsRecord(rec.url, 'up')}
-                                disabled={dnsSort !== 'custom' || idx === 0}
-                                title="Move up"
-                              >
-                                ↑
-                              </button>
-                              <button
+                            onClick={() => moveDnsRecord(rec.subdomain, 'up')}
+                            disabled={dnsSort !== 'custom' || idx === 0}
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
                                 type="button"
                                 className="btn btn-secondary btn-xs btn-minimal btn-arrow"
-                                onClick={() => moveDnsRecord(rec.url, 'down')}
-                                disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
-                                title="Move down"
-                              >
-                                ↓
+                            onClick={() => moveDnsRecord(rec.subdomain, 'down')}
+                            disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
+                            title="Move down"
+                          >
+                            ↓
                               </button>
                             </div>
                           </div>

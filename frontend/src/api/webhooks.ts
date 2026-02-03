@@ -129,6 +129,7 @@ type MyWebhookResponse = {
   enforceHmac?: boolean;
   baseDomain?: string | null;
   dnsRecords?: { subdomain: string; host: string; url: string }[];
+  dnsOrder?: string[];
 };
 
 export async function getMyWebhook(): Promise<MyWebhookResponse> {
@@ -146,6 +147,17 @@ export async function assignWebhook(options?: { rotateSecret?: boolean; rotateHm
   });
   if (!res) {
     throw new Error('Failed to assign webhook');
+  }
+  return res;
+}
+
+export async function updateDnsOrder(order: string[]): Promise<{ ok: boolean; dnsOrder: string[] }> {
+  const res = await tryFetch<{ ok: boolean; dnsOrder: string[] }>('/api/v1/users/dns-order', {
+    method: 'PUT',
+    body: JSON.stringify({ order })
+  });
+  if (!res) {
+    throw new Error('Failed to update DNS order');
   }
   return res;
 }
