@@ -364,17 +364,8 @@ export default function WebhooksModule() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
-            {hasAssignedWebhook && (
-              <p className="mt-2 text-xs font-mono text-primary-100 break-all">{ingressUrl}</p>
-            )}
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
-              Copy URL
-            </button>
-            <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
-              {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
-            </button>
           </div>
         </div>
         {loadingProfile ? (
@@ -431,7 +422,7 @@ export default function WebhooksModule() {
                   <div className="flex items-center gap-2 text-[11px] text-gray-400">
                     <span>Sort</span>
                     <select
-                      className="rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-gray-200"
+                      className="dns-sort-select rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-[11px]"
                       value={dnsSort}
                       onChange={(e) => setDnsSort(e.target.value as typeof dnsSort)}
                     >
@@ -443,52 +434,59 @@ export default function WebhooksModule() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  {sortedDnsRecords.map((rec, idx) => {
-                    const isActive = activeDnsUrl === rec.url;
-                    return (
-                      <div
-                        key={rec.url}
-                        className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
-                          isActive
-                            ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
-                            : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDnsUrl(rec.url)}
-                          className="flex-1 text-left"
-                        >
-                          <span className="font-semibold text-main">
-                            {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                          </span>
-                          <span className="block text-[11px] text-gray-500 break-all">{rec.url}</span>
-                        </button>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] text-gray-500">#{idx + 1}</span>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-xs"
-                            onClick={() => moveDnsRecord(rec.url, 'up')}
-                            disabled={dnsSort !== 'custom' || idx === 0}
-                            title="Move up"
+                      {sortedDnsRecords.map((rec, idx) => {
+                        const isActive = activeDnsUrl === rec.url;
+                        return (
+                          <div
+                            key={rec.url}
+                            className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                              isActive
+                                ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
+                                : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
+                            }`}
                           >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-xs"
-                            onClick={() => moveDnsRecord(rec.url, 'down')}
-                            disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
-                            title="Move down"
-                          >
-                            ↓
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedDnsUrl(rec.url)}
+                              className="flex-1 text-left"
+                            >
+                              <span className="font-semibold text-main">
+                                {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                              </span>
+                              <span className="block text-[11px] text-gray-500 break-all">{rec.url}</span>
+                            </button>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-gray-500">#{idx + 1}</span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-xs btn-minimal btn-arrow"
+                                onClick={() => moveDnsRecord(rec.url, 'up')}
+                                disabled={dnsSort !== 'custom' || idx === 0}
+                                title="Move up"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-xs btn-minimal btn-arrow"
+                                onClick={() => moveDnsRecord(rec.url, 'down')}
+                                disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
+                                title="Move down"
+                              >
+                                ↓
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                 </div>
+              </div>
+            )}
+            {hasAssignedWebhook && (
+              <div className="flex justify-end">
+                <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
+                  {assigning ? 'Updating…' : 'Rotate Webhook'}
+                </button>
               </div>
             )}
             <p className="text-xs text-gray-500">

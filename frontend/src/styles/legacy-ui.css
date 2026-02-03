@@ -386,6 +386,16 @@ a {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
+.btn-arrow {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+}
+
+.dns-sort-select {
+  color: rgba(125, 211, 252, 0.95);
+}
+
 .tilt-root {
   transform-style: preserve-3d;
   perspective: 1000px;
