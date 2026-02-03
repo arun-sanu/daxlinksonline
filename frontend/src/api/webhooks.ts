@@ -116,7 +116,7 @@ export async function fetchWebhookProfile(): Promise<WebhookProfile | null> {
 export async function fetchWebhookDeliveries(limit = 10): Promise<WebhookDelivery[]> {
   const ws = getWorkspaceId();
   const deliveries = await tryFetch<{ items?: WebhookDelivery[] } | WebhookDelivery[]>(
-    `/api/v1/admin/webhooks/deliveries?workspaceId=${encodeURIComponent(ws)}&limit=${limit}`
+    `/api/v1/admin/deliveries?workspaceId=${encodeURIComponent(ws)}&limit=${limit}`
   );
   if (Array.isArray(deliveries)) return deliveries;
   return deliveries.items || [];
