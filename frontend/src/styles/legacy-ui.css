@@ -374,6 +374,18 @@ a {
   letter-spacing: 0.12em;
 }
 
+.btn-minimal {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  box-shadow: none;
+}
+
+.btn-minimal.btn-secondary {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 .tilt-root {
   transform-style: preserve-3d;
   perspective: 1000px;

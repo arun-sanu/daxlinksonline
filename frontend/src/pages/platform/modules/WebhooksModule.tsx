@@ -60,6 +60,8 @@ export default function WebhooksModule() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
+  const [dnsSort, setDnsSort] = useState<'custom' | 'subdomain' | 'host' | 'url'>('custom');
+  const [dnsOrder, setDnsOrder] = useState<string[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -146,6 +148,45 @@ export default function WebhooksModule() {
       setSelectedDnsUrl(null);
     }
   }, [selectedDnsUrlValid, selectedDnsUrl]);
+
+  useEffect(() => {
+    if (!dnsRecords.length) {
+      setDnsOrder([]);
+      return;
+    }
+    setDnsOrder((prev) => {
+      const next = prev.filter((url) => dnsRecords.some((rec) => rec.url === url));
+      dnsRecords.forEach((rec) => {
+        if (!next.includes(rec.url)) next.push(rec.url);
+      });
+      return next;
+    });
+  }, [dnsRecords]);
+
+  const sortedDnsRecords = useMemo(() => {
+    if (!dnsRecords.length) return [];
+    if (dnsSort === 'custom') {
+      if (!dnsOrder.length) return dnsRecords;
+      const map = new Map(dnsRecords.map((rec) => [rec.url, rec]));
+      const ordered = dnsOrder.map((url) => map.get(url)).filter(Boolean) as typeof dnsRecords;
+      const rest = dnsRecords.filter((rec) => !dnsOrder.includes(rec.url));
+      return [...ordered, ...rest];
+    }
+    const key = dnsSort;
+    return [...dnsRecords].sort((a, b) => String((a as any)[key] || '').localeCompare(String((b as any)[key] || '')));
+  }, [dnsRecords, dnsOrder, dnsSort]);
+
+  function moveDnsRecord(url: string, direction: 'up' | 'down') {
+    setDnsOrder((prev) => {
+      const idx = prev.indexOf(url);
+      if (idx === -1) return prev;
+      const next = [...prev];
+      const swapWith = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapWith < 0 || swapWith >= next.length) return prev;
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      return next;
+    });
+  }
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const hmacValue = myWebhook?.hmacKey || '';
@@ -323,9 +364,12 @@ export default function WebhooksModule() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
+            {hasAssignedWebhook && (
+              <p className="mt-2 text-xs font-mono text-primary-100 break-all">{ingressUrl}</p>
+            )}
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+            <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
               Copy URL
             </button>
             <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
@@ -342,7 +386,7 @@ export default function WebhooksModule() {
                 <div className="hero-input">
                   <input value={ingressUrl} readOnly aria-label="Webhook URL" />
                 </div>
-                <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+                <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
                   Copy URL
                 </button>
               </div>
@@ -351,10 +395,10 @@ export default function WebhooksModule() {
                   <input value={maskedSecret} readOnly aria-label="Webhook secret" />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs" onClick={handleRevealSecret} disabled={!secretValue}>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!secretValue}>
                     {secretVisible ? 'Hide secret' : 'Reveal secret'}
                   </button>
-                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
                     Copy secret
                   </button>
                 </div>
@@ -364,10 +408,10 @@ export default function WebhooksModule() {
                   <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hmacValue}>
                     {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
                   </button>
-                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
                     Copy HMAC
                   </button>
                 </div>
@@ -380,28 +424,68 @@ export default function WebhooksModule() {
             {dnsRecords.length > 0 && (
               <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
-                  <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
+                    <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                    <span>Sort</span>
+                    <select
+                      className="rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-gray-200"
+                      value={dnsSort}
+                      onChange={(e) => setDnsSort(e.target.value as typeof dnsSort)}
+                    >
+                      <option value="custom">Custom</option>
+                      <option value="subdomain">Subdomain</option>
+                      <option value="host">Host</option>
+                      <option value="url">URL</option>
+                    </select>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {dnsRecords.map((rec) => {
+                <div className="space-y-2">
+                  {sortedDnsRecords.map((rec, idx) => {
                     const isActive = activeDnsUrl === rec.url;
                     return (
-                      <button
+                      <div
                         key={rec.url}
-                        type="button"
-                        onClick={() => setSelectedDnsUrl(rec.url)}
-                        className={`flex min-w-[220px] flex-1 flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                        className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
                           isActive
                             ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
                             : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
                         }`}
                       >
-                        <span className="font-semibold text-main">
-                          {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                        </span>
-                        <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDnsUrl(rec.url)}
+                          className="flex-1 text-left"
+                        >
+                          <span className="font-semibold text-main">
+                            {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                          </span>
+                          <span className="block text-[11px] text-gray-500 break-all">{rec.url}</span>
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-gray-500">#{idx + 1}</span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => moveDnsRecord(rec.url, 'up')}
+                            disabled={dnsSort !== 'custom' || idx === 0}
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => moveDnsRecord(rec.url, 'down')}
+                            disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
