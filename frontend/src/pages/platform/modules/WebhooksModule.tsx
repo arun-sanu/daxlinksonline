@@ -141,7 +141,7 @@ export default function WebhooksModule() {
 
   const dnsRecords = myWebhook?.dnsRecords || [];
   const selectedDnsUrlValid = dnsRecords.some((rec) => rec.url === selectedDnsUrl) ? selectedDnsUrl : null;
-  const activeDnsUrl = selectedDnsUrlValid || dnsRecords[0]?.url || null;
+  const activeDnsUrl = selectedDnsUrlValid || null;
 
   useEffect(() => {
     if (!selectedDnsUrlValid && selectedDnsUrl) {
@@ -374,11 +374,11 @@ export default function WebhooksModule() {
           <>
             <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
               <div className="space-y-2">
-                <div className="hero-input">
+                <div className="hero-input hero-input--long">
                   <input value={ingressUrl} readOnly aria-label="Webhook URL" />
                 </div>
                 <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
-                  Copy URL
+                  🔗 Copy URL
                 </button>
               </div>
               <div className="space-y-2">
@@ -387,10 +387,10 @@ export default function WebhooksModule() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!secretValue}>
-                    {secretVisible ? 'Hide secret' : 'Reveal secret'}
+                    {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
                   </button>
                   <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
-                    Copy secret
+                    🔐 Copy secret
                   </button>
                 </div>
               </div>
@@ -400,10 +400,10 @@ export default function WebhooksModule() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hmacValue}>
-                    {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                    {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
                   </button>
                   <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
-                    Copy HMAC
+                    🧾 Copy HMAC
                   </button>
                 </div>
               </div>
@@ -417,7 +417,7 @@ export default function WebhooksModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
-                    <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
+                    <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Select a DNS URL'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-gray-400">
                     <span>Sort</span>
