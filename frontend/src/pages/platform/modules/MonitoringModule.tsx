@@ -283,45 +283,147 @@ export default function MonitoringModule() {
     return '#9ca3af';
   }, []);
 
-  const nodeLayout = useMemo(() => {
+  const aggregateStatus = useCallback((nodes: ConnectivityNode[] = []) => {
+    const states = nodes.map((node) => String(node.status || 'unknown').toLowerCase());
+    if (states.includes('down')) return 'down';
+    if (states.includes('degraded')) return 'degraded';
+    if (states.includes('ok')) return 'ok';
+    return 'unknown';
+  }, []);
+
+  const treeLayout = useMemo(() => {
     const nodes = connectivity?.nodes || [];
-    const cols = 4;
-    const gapX = 220;
-    const gapY = 120;
-    const startX = 80;
-    const startY = 80;
-    const mapped = nodes.map((node, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      return {
-        ...node,
-        x: startX + col * gapX,
-        y: startY + row * gapY
+    const ingress = nodes.find((node) => node.type === 'source' || node.id === 'ingress');
+    const webhooksGroup = nodes.filter((node) => node.type === 'webhook');
+    const integrationsGroup = nodes.filter((node) => node.type === 'integration');
+    const dnsGroup = nodes.filter((node) => node.type === 'dns' || node.type === 'dnsRecord');
+
+    const rootLabel = 'DAX Links Server';
+    const rootStatus = aggregateStatus(nodes);
+    const rootWidth = Math.max(180, rootLabel.length * 7.2 + 40);
+    const rootHeight = 34;
+    const root = {
+      id: 'root',
+      label: rootLabel,
+      status: rootStatus,
+      x: 60,
+      y: 260,
+      width: rootWidth,
+      height: rootHeight,
+      anchorX: 60 + rootWidth,
+      anchorY: 260
+    };
+
+    const groups = [
+      {
+        id: 'group:tradingview',
+        label: ingress?.label || 'TradingView',
+        status: ingress?.status || 'ok',
+        items: []
+      },
+      {
+        id: 'group:webhooks',
+        label: 'Webhooks',
+        status: aggregateStatus(webhooksGroup),
+        items: webhooksGroup
+      },
+      {
+        id: 'group:integrations',
+        label: integrationsGroup.length ? 'Banking' : 'Integrations',
+        status: aggregateStatus(integrationsGroup),
+        items: integrationsGroup
+      },
+      {
+        id: 'group:dns',
+        label: 'DNS Addresses',
+        status: aggregateStatus(dnsGroup),
+        items: dnsGroup
+      }
+    ].filter((group) => group.items.length > 0 || group.id === 'group:tradingview');
+
+    const startY = 100;
+    const endY = 420;
+    const gapY = groups.length > 1 ? (endY - startY) / (groups.length - 1) : 0;
+    const groupX = 320;
+    const bracketX = 520;
+    const itemX = 545;
+    const itemGap = 26;
+
+    const branches = [];
+    const stems = [];
+    const brackets = [];
+    const items = [];
+    const groupLabels = [];
+
+    groups.forEach((group, idx) => {
+      const y = startY + idx * gapY;
+      const labelWidth = Math.max(80, group.label.length * 7);
+      const label = {
+        ...group,
+        x: groupX,
+        y,
+        width: labelWidth,
+        tone: connectivityTone(group.status)
       };
+      groupLabels.push(label);
+
+      const branchPath = `M ${root.anchorX} ${root.anchorY} C ${root.anchorX + 90} ${root.anchorY} ${groupX - 120} ${y} ${groupX - 16} ${y}`;
+      branches.push({ id: `${root.id}-${group.id}`, path: branchPath, tone: label.tone });
+
+      if (group.items.length) {
+        const maxListHeight = 180;
+        const spacing = group.items.length > 1
+          ? Math.min(itemGap, maxListHeight / (group.items.length - 1))
+          : 0;
+        const listTop = y - ((group.items.length - 1) * spacing) / 2;
+        const listItems = group.items.map((item, itemIdx) => ({
+          id: item.id,
+          label: `[${item.label || item.id}]`,
+          x: itemX,
+          y: listTop + itemIdx * spacing,
+          tone: connectivityTone(item.status)
+        }));
+        items.push(...listItems);
+
+        const bracketTop = listItems[0].y - 10;
+        const bracketBottom = listItems[listItems.length - 1].y + 10;
+        const bracketPath = `M ${bracketX + 10} ${bracketTop} L ${bracketX} ${bracketTop} L ${bracketX} ${bracketBottom} L ${bracketX + 10} ${bracketBottom}`;
+        brackets.push({ id: `${group.id}-bracket`, path: bracketPath, tone: label.tone });
+
+        const stemStartX = groupX + labelWidth + 14;
+        const midY = (bracketTop + bracketBottom) / 2;
+        const stemPath = `M ${stemStartX} ${y} C ${stemStartX + 40} ${y} ${bracketX - 40} ${midY} ${bracketX} ${midY}`;
+        stems.push({ id: `${group.id}-stem`, path: stemPath, tone: label.tone });
+      }
     });
-    const map = new Map(mapped.map((node) => [node.id, node]));
-    return { nodes: mapped, map };
-  }, [connectivity]);
+
+    return {
+      root,
+      groupLabels,
+      branches,
+      stems,
+      brackets,
+      items
+    };
+  }, [connectivity, connectivityTone, aggregateStatus]);
 
   const linkLayout = useMemo(() => {
     const links = connectivity?.links || [];
-    const { map } = nodeLayout;
+    const nodes = connectivity?.nodes || [];
+    const map = new Map(nodes.map((node) => [node.id, node]));
     return links
       .map((link) => {
         const from = map.get(link.from);
         const to = map.get(link.to);
-        if (!from || !to) return null;
-        const path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
         return {
           ...link,
           from,
           to,
-          path,
           tone: connectivityTone(link.status)
         };
       })
-      .filter(Boolean) as Array<ConnectivityLink & { from: any; to: any; path: string; tone: string }>;
-  }, [connectivity, nodeLayout, connectivityTone]);
+      .filter(Boolean) as Array<ConnectivityLink & { from: ConnectivityNode | undefined; to: ConnectivityNode | undefined; tone: string }>;
+  }, [connectivity, connectivityTone]);
 
   return (
     <div className="monitoring-page space-y-6">
@@ -549,23 +651,86 @@ export default function MonitoringModule() {
             {connectivity && (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
                 <div className="connectivity-shell">
-                  <svg className="connectivity-svg" viewBox="0 0 900 520" aria-label="Connectivity diagram">
-                    {linkLayout.map((link, idx) => (
-                      <g key={link.id || idx}>
-                        <path className="connectivity-link" d={link.path} stroke={link.tone} strokeWidth="5" fill="none" />
-                        <circle className="connectivity-pulse" r="6" fill={link.tone}>
-                          <animateMotion dur="2.4s" begin={`${idx * 0.4}s`} repeatCount="indefinite" path={link.path} />
-                        </circle>
-                      </g>
-                    ))}
-                    {nodeLayout.nodes.map((node) => (
-                      <g key={node.id}>
-                        <circle className="connectivity-node" cx={node.x} cy={node.y} r="16" fill={connectivityTone(node.status)} />
-                        <text className="connectivity-label" x={node.x + 26} y={node.y + 4}>
-                          {node.label || node.id}
+                  <svg className="connectivity-svg connectivity-tree" viewBox="0 0 900 520" aria-label="Connectivity diagram">
+                    <g className="connectivity-branches">
+                      {treeLayout.branches.map((branch) => (
+                        <path
+                          key={branch.id}
+                          className="connectivity-branch"
+                          d={branch.path}
+                          stroke={branch.tone}
+                          strokeWidth={3}
+                          fill="none"
+                        />
+                      ))}
+                    </g>
+                    <g className="connectivity-stems">
+                      {treeLayout.stems.map((stem) => (
+                        <path
+                          key={stem.id}
+                          className="connectivity-stem"
+                          d={stem.path}
+                          stroke={stem.tone}
+                          strokeWidth={2}
+                          fill="none"
+                        />
+                      ))}
+                    </g>
+                    <g className="connectivity-brackets">
+                      {treeLayout.brackets.map((bracket) => (
+                        <path
+                          key={bracket.id}
+                          className="connectivity-bracket"
+                          d={bracket.path}
+                          stroke={bracket.tone}
+                          strokeWidth={2}
+                          fill="none"
+                        />
+                      ))}
+                    </g>
+                    <g className="connectivity-root">
+                      <rect
+                        className="connectivity-root-box"
+                        x={treeLayout.root.x}
+                        y={treeLayout.root.y - treeLayout.root.height / 2}
+                        width={treeLayout.root.width}
+                        height={treeLayout.root.height}
+                        rx={10}
+                      />
+                      <text
+                        className="connectivity-root-label"
+                        x={treeLayout.root.x + 14}
+                        y={treeLayout.root.y + 5}
+                      >
+                        {treeLayout.root.label}
+                      </text>
+                    </g>
+                    <g className="connectivity-groups">
+                      {treeLayout.groupLabels.map((group) => (
+                        <text
+                          key={group.id}
+                          className="connectivity-group-label"
+                          x={group.x}
+                          y={group.y + 4}
+                          fill={group.tone}
+                        >
+                          {group.label}
                         </text>
-                      </g>
-                    ))}
+                      ))}
+                    </g>
+                    <g className="connectivity-items">
+                      {treeLayout.items.map((item) => (
+                        <text
+                          key={item.id}
+                          className="connectivity-item-label"
+                          x={item.x}
+                          y={item.y + 4}
+                          fill={item.tone}
+                        >
+                          {item.label}
+                        </text>
+                      ))}
+                    </g>
                   </svg>
                 </div>
                 <aside className="connectivity-panel">
