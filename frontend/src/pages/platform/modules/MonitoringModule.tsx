@@ -367,7 +367,8 @@ export default function MonitoringModule() {
       };
       groupLabels.push(label);
 
-      const branchPath = `M ${root.anchorX} ${root.anchorY} C ${root.anchorX + 90} ${root.anchorY} ${groupX - 120} ${y} ${groupX - 16} ${y}`;
+      const branchMidX = root.anchorX + 90;
+      const branchPath = `M ${root.anchorX} ${root.anchorY} L ${branchMidX} ${root.anchorY} L ${branchMidX} ${y} L ${groupX - 16} ${y}`;
       branches.push({ id: `${root.id}-${group.id}`, path: branchPath, tone: label.tone });
 
       if (group.items.length) {
@@ -392,7 +393,8 @@ export default function MonitoringModule() {
 
         const stemStartX = groupX + labelWidth + 14;
         const midY = (bracketTop + bracketBottom) / 2;
-        const stemPath = `M ${stemStartX} ${y} C ${stemStartX + 40} ${y} ${bracketX - 40} ${midY} ${bracketX} ${midY}`;
+        const stemMidX = stemStartX + 40;
+        const stemPath = `M ${stemStartX} ${y} L ${stemMidX} ${y} L ${stemMidX} ${midY} L ${bracketX} ${midY}`;
         stems.push({ id: `${group.id}-stem`, path: stemPath, tone: label.tone });
       }
     });
