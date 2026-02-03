@@ -369,9 +369,16 @@ export default function MonitoringModule() {
       };
       groupLabels.push(label);
 
+      const branchStart = { x: root.anchorX, y: root.anchorY };
       const branchEndX = groupX - 16;
       const branchPath = `M ${root.anchorX} ${root.anchorY} L ${branchEndX} ${y}`;
-      branches.push({ id: `${root.id}-${group.id}`, path: branchPath, tone: label.tone });
+      branches.push({
+        id: `${root.id}-${group.id}`,
+        path: branchPath,
+        tone: label.tone,
+        start: branchStart,
+        end: { x: branchEndX, y }
+      });
 
       if (group.items.length) {
         const maxListHeight = 180;
@@ -396,7 +403,13 @@ export default function MonitoringModule() {
         const stemStartX = groupX + labelWidth + 14;
         const midY = (bracketTop + bracketBottom) / 2;
         const stemPath = `M ${stemStartX} ${y} L ${bracketX} ${midY}`;
-        stems.push({ id: `${group.id}-stem`, path: stemPath, tone: label.tone });
+        stems.push({
+          id: `${group.id}-stem`,
+          path: stemPath,
+          tone: label.tone,
+          start: { x: stemStartX, y },
+          end: { x: bracketX, y: midY }
+        });
       }
     });
 
@@ -657,26 +670,32 @@ export default function MonitoringModule() {
                   <svg className="connectivity-svg connectivity-tree" viewBox="0 0 900 520" aria-label="Connectivity diagram">
                     <g className="connectivity-branches">
                       {treeLayout.branches.map((branch) => (
-                        <path
-                          key={branch.id}
-                          className="connectivity-branch"
-                          d={branch.path}
-                          stroke={branch.tone}
-                          strokeWidth={3}
-                          fill="none"
-                        />
+                        <g key={branch.id}>
+                          <path
+                            className="connectivity-branch"
+                            d={branch.path}
+                            stroke={branch.tone}
+                            strokeWidth={3}
+                            fill="none"
+                          />
+                          <circle className="connectivity-endpoint" cx={branch.start.x} cy={branch.start.y} r={4} fill={branch.tone} />
+                          <circle className="connectivity-endpoint" cx={branch.end.x} cy={branch.end.y} r={4} fill={branch.tone} />
+                        </g>
                       ))}
                     </g>
                     <g className="connectivity-stems">
                       {treeLayout.stems.map((stem) => (
-                        <path
-                          key={stem.id}
-                          className="connectivity-stem"
-                          d={stem.path}
-                          stroke={stem.tone}
-                          strokeWidth={2}
-                          fill="none"
-                        />
+                        <g key={stem.id}>
+                          <path
+                            className="connectivity-stem"
+                            d={stem.path}
+                            stroke={stem.tone}
+                            strokeWidth={2}
+                            fill="none"
+                          />
+                          <circle className="connectivity-endpoint" cx={stem.start.x} cy={stem.start.y} r={3} fill={stem.tone} />
+                          <circle className="connectivity-endpoint" cx={stem.end.x} cy={stem.end.y} r={3} fill={stem.tone} />
+                        </g>
                       ))}
                     </g>
                     <g className="connectivity-brackets">
@@ -700,6 +719,14 @@ export default function MonitoringModule() {
                         height={treeLayout.root.height}
                         rx={10}
                       />
+                      <rect
+                        className="connectivity-root-tab"
+                        x={treeLayout.root.x}
+                        y={treeLayout.root.y + treeLayout.root.height / 2 + 6}
+                        width={treeLayout.root.width}
+                        height={24}
+                        rx={8}
+                      />
                       <circle
                         className="connectivity-led"
                         cx={treeLayout.root.x + 12}
@@ -721,7 +748,7 @@ export default function MonitoringModule() {
                       </text>
                       <g
                         className="connectivity-root-icons"
-                        transform={`translate(${treeLayout.root.x + treeLayout.root.width - 26}, ${treeLayout.root.y + treeLayout.root.height / 2 - 18})`}
+                        transform={`translate(${treeLayout.root.x + treeLayout.root.width - 32}, ${treeLayout.root.y + treeLayout.root.height / 2 + 10})`}
                       >
                         <g transform="scale(0.42)">
                           <path

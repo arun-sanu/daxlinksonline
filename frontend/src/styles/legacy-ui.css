@@ -179,6 +179,12 @@ a {
   stroke-width: 1.2;
 }
 
+.connectivity-root-tab {
+  fill: rgba(15, 23, 42, 0.7);
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1;
+}
+
 .connectivity-root-label {
   fill: #f8fafc;
   font-size: 10px;
@@ -202,6 +208,10 @@ a {
 
 .connectivity-dot {
   filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.4));
+}
+
+.connectivity-endpoint {
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.45));
 }
 
 .connectivity-led {
