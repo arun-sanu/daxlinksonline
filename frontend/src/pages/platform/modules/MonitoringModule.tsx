@@ -367,8 +367,8 @@ export default function MonitoringModule() {
       };
       groupLabels.push(label);
 
-      const branchMidX = root.anchorX + 90;
-      const branchPath = `M ${root.anchorX} ${root.anchorY} L ${branchMidX} ${root.anchorY} L ${branchMidX} ${y} L ${groupX - 16} ${y}`;
+      const branchEndX = groupX - 16;
+      const branchPath = `M ${root.anchorX} ${root.anchorY} L ${branchEndX} ${y}`;
       branches.push({ id: `${root.id}-${group.id}`, path: branchPath, tone: label.tone });
 
       if (group.items.length) {
@@ -393,8 +393,7 @@ export default function MonitoringModule() {
 
         const stemStartX = groupX + labelWidth + 14;
         const midY = (bracketTop + bracketBottom) / 2;
-        const stemMidX = stemStartX + 40;
-        const stemPath = `M ${stemStartX} ${y} L ${stemMidX} ${y} L ${stemMidX} ${midY} L ${bracketX} ${midY}`;
+        const stemPath = `M ${stemStartX} ${y} L ${bracketX} ${midY}`;
         stems.push({ id: `${group.id}-stem`, path: stemPath, tone: label.tone });
       }
     });
@@ -709,28 +708,44 @@ export default function MonitoringModule() {
                     </g>
                     <g className="connectivity-groups">
                       {treeLayout.groupLabels.map((group) => (
-                        <text
-                          key={group.id}
-                          className="connectivity-group-label"
-                          x={group.x}
-                          y={group.y + 4}
-                          fill={group.tone}
-                        >
-                          {group.label}
-                        </text>
+                        <g key={group.id}>
+                          <circle
+                            className="connectivity-dot"
+                            cx={group.x - 10}
+                            cy={group.y}
+                            r={4}
+                            fill={group.tone}
+                          />
+                          <text
+                            className="connectivity-group-label"
+                            x={group.x}
+                            y={group.y + 4}
+                            fill={group.tone}
+                          >
+                            {group.label}
+                          </text>
+                        </g>
                       ))}
                     </g>
                     <g className="connectivity-items">
                       {treeLayout.items.map((item) => (
-                        <text
-                          key={item.id}
-                          className="connectivity-item-label"
-                          x={item.x}
-                          y={item.y + 4}
-                          fill={item.tone}
-                        >
-                          {item.label}
-                        </text>
+                        <g key={item.id}>
+                          <circle
+                            className="connectivity-dot"
+                            cx={item.x - 10}
+                            cy={item.y}
+                            r={3}
+                            fill={item.tone}
+                          />
+                          <text
+                            className="connectivity-item-label"
+                            x={item.x}
+                            y={item.y + 4}
+                            fill={item.tone}
+                          >
+                            {item.label}
+                          </text>
+                        </g>
                       ))}
                     </g>
                   </svg>
