@@ -398,56 +398,42 @@ export default function WebhooksModule() {
           <>
             <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
               <div className="space-y-2">
-                {hasSelectedDns ? (
-                  <>
-                    <div className="hero-input hero-input--long">
-                      <input value={ingressUrl} readOnly aria-label="Webhook URL" />
-                    </div>
-                    <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
-                      🔗 Copy URL
-                    </button>
-                  </>
-                ) : (
-                  <div className="text-xs text-gray-500">Select a DNS URL to view the webhook endpoint.</div>
-                )}
+                <div className="hero-input hero-input--long">
+                  <input value={hasSelectedDns ? ingressUrl : ''} readOnly aria-label="Webhook URL" placeholder="Select a DNS URL" />
+                </div>
+                <button
+                  className="btn btn-secondary btn-xs btn-minimal"
+                  onClick={() => handleCopy(ingressUrl, 'URL')}
+                  disabled={!hasSelectedDns}
+                >
+                  🔗 Copy URL
+                </button>
               </div>
               <div className="space-y-2">
-                {hasSelectedDns ? (
-                  <>
-                    <div className="hero-input">
-                      <input value={maskedSecret} readOnly aria-label="Webhook secret" />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!secretValue}>
-                        {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
-                      </button>
-                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
-                        🔐 Copy secret
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-xs text-gray-500">Secrets appear after selecting a DNS URL.</div>
-                )}
+                <div className="hero-input">
+                  <input value={hasSelectedDns ? maskedSecret : ''} readOnly aria-label="Webhook secret" placeholder="Select a DNS URL" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!hasSelectedDns || !secretValue}>
+                    {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!hasSelectedDns || !secretValue}>
+                    🔐 Copy secret
+                  </button>
+                </div>
               </div>
               <div className="space-y-2">
-                {hasSelectedDns ? (
-                  <>
-                    <div className="hero-input">
-                      <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hmacValue}>
-                        {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
-                      </button>
-                      <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
-                        🧾 Copy HMAC
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-xs text-gray-500">HMAC keys appear after selecting a DNS URL.</div>
-                )}
+                <div className="hero-input">
+                  <input value={hasSelectedDns ? maskedHmac : ''} readOnly aria-label="Webhook HMAC key" placeholder="Select a DNS URL" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hasSelectedDns || !hmacValue}>
+                    {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hasSelectedDns || !hmacValue}>
+                    🧾 Copy HMAC
+                  </button>
+                </div>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
