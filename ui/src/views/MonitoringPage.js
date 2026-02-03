@@ -281,44 +281,141 @@ export default {
       return statusPalette[key] || statusPalette.unknown;
     }
 
-    const nodeLayout = computed(() => {
-      const nodes = connectivity.value?.nodes || [];
-      const cols = 4;
-      const gapX = 220;
-      const gapY = 120;
-      const startX = 80;
-      const startY = 80;
-      const mapped = nodes.map((node, index) => {
-        const col = index % cols;
-        const row = Math.floor(index / cols);
-        return {
-          ...node,
-          x: startX + col * gapX,
-          y: startY + row * gapY
-        };
-      });
-      const map = new Map(mapped.map((node) => [node.id, node]));
-      return { nodes: mapped, map };
-    });
+    function aggregateStatus(nodes = []) {
+      const states = nodes.map((node) => String(node.status || 'unknown').toLowerCase());
+      if (states.includes('down')) return 'down';
+      if (states.includes('degraded')) return 'degraded';
+      if (states.includes('ok')) return 'ok';
+      return 'unknown';
+    }
 
     const linkLayout = computed(() => {
       const links = connectivity.value?.links || [];
-      const { map } = nodeLayout.value;
+      const nodes = connectivity.value?.nodes || [];
+      const map = new Map(nodes.map((node) => [node.id, node]));
       return links
         .map((link) => {
           const from = map.get(link.from);
           const to = map.get(link.to);
           if (!from || !to) return null;
-          const path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
           return {
             ...link,
             from,
             to,
-            path,
             tone: connectivityTone(link.status)
           };
         })
         .filter(Boolean);
+    });
+
+    const treeLayout = computed(() => {
+      const nodes = connectivity.value?.nodes || [];
+      const ingress = nodes.find((node) => node.type === 'source' || node.id === 'ingress');
+      const router = nodes.find((node) => node.type === 'router' || node.id === 'router');
+      const webhooks = nodes.filter((node) => node.type === 'webhook');
+      const integrations = nodes.filter((node) => node.type === 'integration');
+
+      const rootLabel = 'DAX Links Server';
+      const rootStatus = router?.status || 'ok';
+      const rootWidth = Math.max(180, rootLabel.length * 7.2 + 40);
+      const rootHeight = 34;
+      const root = {
+        id: 'root',
+        label: rootLabel,
+        status: rootStatus,
+        x: 60,
+        y: 260,
+        width: rootWidth,
+        height: rootHeight,
+        anchorX: 60 + rootWidth,
+        anchorY: 260
+      };
+
+      const groups = [
+        {
+          id: 'group:tradingview',
+          label: ingress?.label || 'TradingView',
+          status: ingress?.status || 'ok',
+          items: []
+        },
+        {
+          id: 'group:webhooks',
+          label: 'Webhooks',
+          status: aggregateStatus(webhooks),
+          items: webhooks
+        },
+        {
+          id: 'group:integrations',
+          label: integrations.length ? 'Banking' : 'Integrations',
+          status: aggregateStatus(integrations),
+          items: integrations
+        }
+      ].filter((group) => group.items.length > 0 || group.id === 'group:tradingview');
+
+      const startY = 100;
+      const endY = 420;
+      const gapY = groups.length > 1 ? (endY - startY) / (groups.length - 1) : 0;
+      const groupX = 320;
+      const bracketX = 520;
+      const itemX = 545;
+      const itemGap = 26;
+
+      const branches = [];
+      const stems = [];
+      const brackets = [];
+      const items = [];
+      const groupLabels = [];
+
+      groups.forEach((group, idx) => {
+        const y = startY + idx * gapY;
+        const labelWidth = Math.max(80, group.label.length * 7);
+        const label = {
+          ...group,
+          x: groupX,
+          y,
+          width: labelWidth,
+          tone: connectivityTone(group.status)
+        };
+        groupLabels.push(label);
+
+        const branchPath = `M ${root.anchorX} ${root.anchorY} C ${root.anchorX + 90} ${root.anchorY} ${groupX - 120} ${y} ${groupX - 16} ${y}`;
+        branches.push({ id: `${root.id}-${group.id}`, path: branchPath, tone: label.tone });
+
+        if (group.items.length) {
+          const maxListHeight = 180;
+          const spacing = group.items.length > 1
+            ? Math.min(itemGap, maxListHeight / (group.items.length - 1))
+            : 0;
+          const listTop = y - ((group.items.length - 1) * spacing) / 2;
+          const listItems = group.items.map((item, itemIdx) => ({
+            id: item.id,
+            label: `[${item.label || item.id}]`,
+            x: itemX,
+            y: listTop + itemIdx * spacing,
+            tone: connectivityTone(item.status)
+          }));
+          items.push(...listItems);
+
+          const bracketTop = listItems[0].y - 10;
+          const bracketBottom = listItems[listItems.length - 1].y + 10;
+          const bracketPath = `M ${bracketX + 10} ${bracketTop} L ${bracketX} ${bracketTop} L ${bracketX} ${bracketBottom} L ${bracketX + 10} ${bracketBottom}`;
+          brackets.push({ id: `${group.id}-bracket`, path: bracketPath, tone: label.tone });
+
+          const stemStartX = groupX + labelWidth + 14;
+          const midY = (bracketTop + bracketBottom) / 2;
+          const stemPath = `M ${stemStartX} ${y} C ${stemStartX + 40} ${y} ${bracketX - 40} ${midY} ${bracketX} ${midY}`;
+          stems.push({ id: `${group.id}-stem`, path: stemPath, tone: label.tone });
+        }
+      });
+
+      return {
+        root,
+        groupLabels,
+        branches,
+        stems,
+        brackets,
+        items
+      };
     });
 
     const pageStart = computed(() => {
@@ -419,7 +516,7 @@ export default {
       connectivityLoading,
       connectivityError,
       connectivityUpdatedAt,
-      nodeLayout,
+      treeLayout,
       linkLayout,
       connectivityTone
     };
@@ -506,28 +603,80 @@ export default {
         <div v-if="!connectivity && !connectivityLoading" class="text-sm text-gray-400">Connectivity unavailable.</div>
         <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
           <div class="connectivity-shell">
-            <svg v-if="connectivity" class="connectivity-svg" viewBox="0 0 900 520" aria-label="Connectivity diagram">
-              <g v-for="(link, idx) in linkLayout" :key="link.id || idx">
+            <svg v-if="connectivity" class="connectivity-svg connectivity-tree" viewBox="0 0 900 520" aria-label="Connectivity diagram">
+              <g class="connectivity-branches">
                 <path
-                  class="connectivity-link"
-                  :d="link.path"
-                  :stroke="link.tone"
-                  stroke-width="5"
+                  v-for="branch in treeLayout.branches"
+                  :key="branch.id"
+                  class="connectivity-branch"
+                  :d="branch.path"
+                  :stroke="branch.tone"
+                  stroke-width="3"
                   fill="none"
                 />
-                <circle class="connectivity-pulse" r="6" :fill="link.tone">
-                  <animateMotion :dur="'2.4s'" :begin="(idx * 0.4) + 's'" repeatCount="indefinite" :path="link.path" />
-                </circle>
               </g>
-              <g v-for="node in nodeLayout.nodes" :key="node.id">
-                <circle
-                  class="connectivity-node"
-                  :cx="node.x"
-                  :cy="node.y"
-                  r="16"
-                  :fill="connectivityTone(node.status)"
+              <g class="connectivity-stems">
+                <path
+                  v-for="stem in treeLayout.stems"
+                  :key="stem.id"
+                  class="connectivity-stem"
+                  :d="stem.path"
+                  :stroke="stem.tone"
+                  stroke-width="2"
+                  fill="none"
                 />
-                <text class="connectivity-label" :x="node.x + 26" :y="node.y + 4">{{ node.label || node.id }}</text>
+              </g>
+              <g class="connectivity-brackets">
+                <path
+                  v-for="bracket in treeLayout.brackets"
+                  :key="bracket.id"
+                  class="connectivity-bracket"
+                  :d="bracket.path"
+                  :stroke="bracket.tone"
+                  stroke-width="2"
+                  fill="none"
+                />
+              </g>
+              <g class="connectivity-root">
+                <rect
+                  class="connectivity-root-box"
+                  :x="treeLayout.root.x"
+                  :y="treeLayout.root.y - treeLayout.root.height / 2"
+                  :width="treeLayout.root.width"
+                  :height="treeLayout.root.height"
+                  rx="10"
+                />
+                <text
+                  class="connectivity-root-label"
+                  :x="treeLayout.root.x + 14"
+                  :y="treeLayout.root.y + 5"
+                >
+                  {{ treeLayout.root.label }}
+                </text>
+              </g>
+              <g class="connectivity-groups">
+                <text
+                  v-for="group in treeLayout.groupLabels"
+                  :key="group.id"
+                  class="connectivity-group-label"
+                  :x="group.x"
+                  :y="group.y + 4"
+                  :fill="group.tone"
+                >
+                  {{ group.label }}
+                </text>
+              </g>
+              <g class="connectivity-items">
+                <text
+                  v-for="item in treeLayout.items"
+                  :key="item.id"
+                  class="connectivity-item-label"
+                  :x="item.x"
+                  :y="item.y + 4"
+                  :fill="item.tone"
+                >
+                  {{ item.label }}
+                </text>
               </g>
             </svg>
           </div>
