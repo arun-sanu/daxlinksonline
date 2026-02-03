@@ -6,6 +6,8 @@
 import { isAllowedIp } from '../lib/tradingviewIps.js';
 
 function extractClientIp(req) {
+  const cfIp = req.headers['cf-connecting-ip'];
+  if (typeof cfIp === 'string' && cfIp.length > 0) return cfIp;
   // Trust first X-Forwarded-For (client) when behind proxies like Cloudflare/Workers
   const firstXff = (() => {
     const xff = req.headers['x-forwarded-for'];
