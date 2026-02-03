@@ -8,30 +8,10 @@ import {
   getMyWebhook,
   listWebhooks,
   testWebhook,
-  toggleWebhook,
-  toggleWebhooks
+  toggleWebhook
 } from '../../../api/webhooks';
 
 type Toast = { message: string; tone: 'success' | 'error' };
-
-function EyeIcon({ slashed }: { slashed?: boolean }) {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M12 5c-5 0-9 7-9 7s4 7 9 7 9-7 9-7-4-7-9-7Z" />
-      <circle cx="12" cy="12" r="3" />
-      {slashed && <path d="M5 5l14 14" />}
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
 
 function formatTs(input?: string | null) {
   if (!input) return '—';
@@ -64,8 +44,6 @@ export default function WebhooksModule() {
   const [loadingDeliveries, setLoadingDeliveries] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
-  const [bulkToggling, setBulkToggling] = useState(false);
-  const [selectedWebhookIds, setSelectedWebhookIds] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [error, setError] = useState('');
   const [secretVisible, setSecretVisible] = useState(false);
@@ -82,7 +60,6 @@ export default function WebhooksModule() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
-  const [showRotateConfirm, setShowRotateConfirm] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -155,10 +132,6 @@ export default function WebhooksModule() {
   }, []);
 
   useEffect(() => {
-    setSelectedWebhookIds((prev) => prev.filter((id) => webhooks.some((w) => w.id === id)));
-  }, [webhooks]);
-
-  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 2400);
     return () => clearTimeout(timer);
@@ -166,7 +139,7 @@ export default function WebhooksModule() {
 
   const dnsRecords = myWebhook?.dnsRecords || [];
   const selectedDnsUrlValid = dnsRecords.some((rec) => rec.url === selectedDnsUrl) ? selectedDnsUrl : null;
-  const activeDnsUrl = selectedDnsUrlValid || null;
+  const activeDnsUrl = selectedDnsUrlValid || dnsRecords[0]?.url || null;
 
   useEffect(() => {
     if (!selectedDnsUrlValid && selectedDnsUrl) {
@@ -175,6 +148,11 @@ export default function WebhooksModule() {
   }, [selectedDnsUrlValid, selectedDnsUrl]);
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
+  const hmacValue = myWebhook?.hmacKey || '';
+  const enforceHmac = myWebhook?.enforceHmac || false;
+  const baseDomain = myWebhook?.baseDomain || 'daxlinksonline.link';
+  const hasAssignedWebhook = Boolean(myWebhook?.url || profile?.url);
+
   const ingressUrl = useMemo(() => {
     if (activeDnsUrl) {
       const base = activeDnsUrl.replace(/\/+$/, '');
@@ -186,14 +164,8 @@ export default function WebhooksModule() {
     if (webhooks[0]?.url) return webhooks[0].url;
     return 'https://<sub>.daxlinksonline.link/webhook/tradingview';
   }, [activeDnsUrl, myWebhook, profile, webhooks, secretValue]);
-  const hmacValue = myWebhook?.hmacKey || '';
-  const enforceHmac = myWebhook?.enforceHmac || false;
-  const baseDomain = myWebhook?.baseDomain || 'daxlinksonline.link';
-  const hasAssignedWebhook = Boolean(myWebhook?.url || profile?.url);
   const maskedSecret = secretVisible ? secretValue || '—' : '••••••••••••';
   const maskedHmac = hmacVisible ? hmacValue || '—' : '••••••••••••';
-  const allSelected = webhooks.length > 0 && selectedWebhookIds.length === webhooks.length;
-  const hasSelection = selectedWebhookIds.length > 0;
 
   const tradingViewPayload = useMemo(
     () =>
@@ -207,16 +179,6 @@ export default function WebhooksModule() {
 }`,
     [secretValue, hmacValue]
   );
-
-  async function refreshWebhooksList() {
-    setLoadingWebhooks(true);
-    try {
-      const rows = await listWebhooks();
-      setWebhooks(rows || []);
-    } finally {
-      setLoadingWebhooks(false);
-    }
-  }
 
   async function handleToggle(hook: Webhook) {
     const next = !hook.active;
@@ -242,38 +204,6 @@ export default function WebhooksModule() {
       setToast({ message: `${label} copied`, tone: 'success' });
     } catch {
       setToast({ message: 'Copy failed', tone: 'error' });
-    }
-  }
-
-  function handleSelectWebhook(id: string) {
-    setSelectedWebhookIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
-  }
-
-  function handleSelectAll(checked: boolean) {
-    if (!checked) {
-      setSelectedWebhookIds([]);
-      return;
-    }
-    setSelectedWebhookIds(webhooks.map((w) => w.id));
-  }
-
-  async function handleBulkToggle(active: boolean) {
-    if (!selectedWebhookIds.length) return;
-    if (!active) {
-      const confirmed = window.confirm('Pause selected webhooks? They will stop sending until re-enabled.');
-      if (!confirmed) return;
-    }
-    const count = selectedWebhookIds.length;
-    setBulkToggling(true);
-    try {
-      const { updated } = await toggleWebhooks(selectedWebhookIds, active);
-      await refreshWebhooksList();
-      setSelectedWebhookIds([]);
-      setToast({ message: `${active ? 'Enabled' : 'Paused'} ${updated} webhooks`, tone: 'success' });
-    } catch (e: any) {
-      setToast({ message: e?.message || 'Bulk update failed', tone: 'error' });
-    } finally {
-      setBulkToggling(false);
     }
   }
 
@@ -316,28 +246,33 @@ export default function WebhooksModule() {
     }
   }
 
-  async function performAssign(rotation: boolean) {
+  async function handleAssignWebhook() {
+    if (hasAssignedWebhook) {
+      const confirmed = window.confirm(
+        'Rotate webhook? This will generate a new secret and HMAC key. Old TradingView URLs will stop working.'
+      );
+      if (!confirmed) return;
+    }
     setAssigning(true);
     setError('');
     setSecretVisible(false);
     setHmacVisible(false);
     try {
-      await assignWebhook(rotation ? { rotateSecret: true, rotateHmacKey: true } : undefined);
+      await assignWebhook(
+        hasAssignedWebhook
+          ? {
+              rotateSecret: true,
+              rotateHmacKey: true
+            }
+          : undefined
+      );
       await refreshIngress();
-      setToast({ message: rotation ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
+      setToast({ message: hasAssignedWebhook ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
     } catch (e: any) {
       setToast({ message: e?.message || 'Assign failed', tone: 'error' });
     } finally {
       setAssigning(false);
     }
-  }
-
-  async function handleAssignWebhook() {
-    if (hasAssignedWebhook) {
-      setShowRotateConfirm(true);
-      return;
-    }
-    await performAssign(false);
   }
 
   async function handleTestWebhook() {
@@ -389,123 +324,92 @@ export default function WebhooksModule() {
             <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
             <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
           </div>
+          <div className="flex gap-2">
+            <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+              Copy URL
+            </button>
+            <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
+              {assigning ? 'Updating…' : hasAssignedWebhook ? 'Rotate Webhook' : 'Assign Webhook'}
+            </button>
+          </div>
         </div>
         {loadingProfile ? (
           <p className="text-sm muted-text">Loading webhook profile…</p>
         ) : hasAssignedWebhook ? (
           <>
-            <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+            <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={ingressUrl} readOnly aria-label="Webhook URL" />
+                </div>
+                <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(ingressUrl, 'URL')} disabled={!ingressUrl}>
+                  Copy URL
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={maskedSecret} readOnly aria-label="Webhook secret" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs" onClick={handleRevealSecret} disabled={!secretValue}>
+                    {secretVisible ? 'Hide secret' : 'Reveal secret'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!secretValue}>
+                    Copy secret
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="hero-input">
+                  <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-secondary btn-xs" onClick={handleRevealHmac} disabled={!hmacValue}>
+                    {hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
+                  </button>
+                  <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hmacValue}>
+                    Copy HMAC
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+              <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
+              <span>Base domain: {baseDomain}</span>
+            </div>
+            {dnsRecords.length > 0 && (
               <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
-                  <span className="text-[11px] text-gray-500">
-                    {activeDnsUrl ? 'Click to switch URL' : 'Select a DNS record to use its URL'}
-                  </span>
+                  <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Using default URL'}</span>
                 </div>
-                {dnsRecords.length > 0 ? (
-                  <ul className="space-y-2">
-                    {dnsRecords.map((rec) => {
-                      const isActive = activeDnsUrl === rec.url;
-                      return (
-                        <li key={rec.url}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedDnsUrl(rec.url)}
-                            className={`flex w-full flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm ${
-                              isActive
-                                ? 'border-primary-300 bg-primary-500/10 text-main'
-                                : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
-                            }`}
-                          >
-                            <span className="font-semibold text-main">
-                              {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                            </span>
-                            <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-gray-400">No DNS records saved yet.</p>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
-                  <div className="space-y-2">
-                    <div className="hero-input">
-                      <input value={ingressUrl} readOnly aria-label="Webhook URL" />
-                    </div>
-                    <button
-                      className="btn btn-secondary btn-xs px-2 py-1 text-[11px]"
-                      onClick={() => handleCopy(ingressUrl, 'URL')}
-                      disabled={!ingressUrl}
-                    >
-                      Copy URL
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="hero-input">
-                      <input value={maskedSecret} readOnly aria-label="Webhook secret" />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {dnsRecords.map((rec) => {
+                    const isActive = activeDnsUrl === rec.url;
+                    return (
                       <button
-                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                    aria-label={secretVisible ? 'Hide secret' : 'Reveal secret'}
-                    onClick={handleRevealSecret}
-                    disabled={!secretValue}
-                  >
-                    <EyeIcon slashed={!secretVisible} />
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                    onClick={() => handleCopy(secretValue, 'Secret')}
-                    aria-label="Copy secret"
-                    disabled={!secretValue}
-                  >
-                    <CopyIcon />
-                  </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="hero-input">
-                      <input value={maskedHmac} readOnly aria-label="Webhook HMAC key" />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                    onClick={handleRevealHmac}
-                    aria-label={hmacVisible ? 'Hide HMAC' : 'Reveal HMAC'}
-                    disabled={!hmacValue}
-                  >
-                    <EyeIcon slashed={!hmacVisible} />
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-xs flex flex-col items-center px-2 py-1 text-[9px]"
-                    onClick={() => handleCopy(hmacValue, 'HMAC key')}
-                    aria-label="Copy HMAC"
-                    disabled={!hmacValue}
-                  >
-                    <CopyIcon />
-                  </button>
-                    </div>
-                  </div>
+                        key={rec.url}
+                        type="button"
+                        onClick={() => setSelectedDnsUrl(rec.url)}
+                        className={`flex min-w-[220px] flex-1 flex-col items-start gap-1 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                          isActive
+                            ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
+                            : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
+                        }`}
+                      >
+                        <span className="font-semibold text-main">
+                          {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
+                        </span>
+                        <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
-                  <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
-                  <span>Base domain: {baseDomain}</span>
-                </div>
-                <p className="text-xs text-gray-500">
-                  POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
-                </p>
               </div>
-            </div>
-            <div className="flex justify-end">
-              <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
-                {assigning ? 'Updating…' : 'Rotate Webhook'}
-              </button>
-            </div>
+            )}
+            <p className="text-xs text-gray-500">
+              POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
+            </p>
           </>
         ) : (
           <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-100">
@@ -637,46 +541,19 @@ export default function WebhooksModule() {
             <h3 className="text-lg font-semibold text-main">Outbound webhook configs</h3>
             <p className="text-xs muted-text">Toggle endpoints and view the last delivery code.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-xs text-gray-400">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border border-white/20 bg-black/30"
-                checked={allSelected}
-                disabled={loadingWebhooks || webhooks.length === 0}
-                onChange={(e) => handleSelectAll(e.target.checked)}
-              />
-              <span>Select all</span>
-            </label>
-            <button
-              className="btn btn-secondary btn-xs"
-              type="button"
-              onClick={() => handleBulkToggle(false)}
-              disabled={!hasSelection || bulkToggling || loadingWebhooks}
-            >
-              {bulkToggling ? 'Working…' : 'Pause selected'}
-            </button>
-            <button
-              className="btn btn-secondary btn-xs"
-              type="button"
-              onClick={() => handleBulkToggle(true)}
-              disabled={!hasSelection || bulkToggling || loadingWebhooks}
-            >
-              {bulkToggling ? 'Working…' : 'Enable selected'}
-            </button>
-            <button
-              className="btn btn-secondary btn-xs"
-              type="button"
-              onClick={() => {
-                refreshWebhooksList().catch((e: any) =>
-                  setToast({ message: e?.message || 'Refresh failed', tone: 'error' })
-                );
-              }}
-              disabled={loadingWebhooks || bulkToggling}
-            >
-              Refresh
-            </button>
-          </div>
+          <button
+            className="btn btn-secondary btn-xs"
+            type="button"
+            onClick={() => {
+              setLoadingWebhooks(true);
+              listWebhooks()
+                .then((rows) => setWebhooks(rows || []))
+                .catch((e: any) => setToast({ message: e?.message || 'Refresh failed', tone: 'error' }))
+                .finally(() => setLoadingWebhooks(false));
+            }}
+          >
+            Refresh
+          </button>
         </div>
         {loadingWebhooks && <p className="text-sm muted-text">Loading webhooks…</p>}
         {!loadingWebhooks && webhooks.length === 0 && <p className="text-sm muted-text">No outbound webhooks configured yet.</p>}
@@ -685,20 +562,10 @@ export default function WebhooksModule() {
             {webhooks.map((hook) => (
               <article key={hook.id} className="card-shell border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      className="mt-[2px] h-4 w-4 rounded border border-white/20 bg-black/30"
-                      checked={selectedWebhookIds.includes(hook.id)}
-                      onChange={() => handleSelectWebhook(hook.id)}
-                      disabled={bulkToggling}
-                      aria-label={`Select ${hook.name}`}
-                    />
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.28em] muted-text">{hook.method}</p>
-                      <p className="text-lg font-semibold text-main">{hook.name}</p>
-                      <p className="text-xs text-gray-500 break-all">{hook.url}</p>
-                    </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.28em] muted-text">{hook.method}</p>
+                    <p className="text-lg font-semibold text-main">{hook.name}</p>
+                    <p className="text-xs text-gray-500 break-all">{hook.url}</p>
                   </div>
                   <button
                     className="rounded-full px-3 py-1 text-xs font-semibold"
@@ -708,7 +575,7 @@ export default function WebhooksModule() {
                         : { background: 'rgba(250,204,21,0.18)', color: '#FACC15' }
                     }
                     onClick={() => handleToggle(hook)}
-                    disabled={toggling === hook.id || bulkToggling}
+                    disabled={toggling === hook.id}
                   >
                     {hook.active ? 'Active' : 'Paused'}
                   </button>
@@ -792,50 +659,6 @@ export default function WebhooksModule() {
           </div>
         )}
       </section>
-
-      {showRotateConfirm && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-lg space-y-4 rounded-2xl border border-white/10 bg-black/50 p-6 backdrop-blur">
-            <p className="text-lg font-semibold text-main">Rotate webhook?</p>
-            <p className="text-sm text-gray-200">
-              Rotating will generate a new secret and HMAC key. Old TradingView URLs and signatures will stop working until you update them.
-            </p>
-            <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Saved DNS addresses</p>
-              {dnsRecords.length > 0 ? (
-                <ul className="space-y-1 text-sm text-gray-200">
-                  {dnsRecords.map((rec) => (
-                    <li key={rec.url} className="flex flex-col">
-                      <span className="font-semibold text-main">
-                        {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                      </span>
-                      <span className="text-[11px] text-gray-500 break-all">{rec.url}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-gray-400">No DNS records saved.</p>
-              )}
-            </div>
-            <div className="flex justify-end gap-3 text-sm">
-              <button className="btn btn-secondary" type="button" onClick={() => setShowRotateConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={() => {
-                  setShowRotateConfirm(false);
-                  void performAssign(true);
-                }}
-                disabled={assigning}
-              >
-                {assigning ? 'Rotating…' : 'Confirm rotate'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showRevealConfirm && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
