@@ -181,7 +181,7 @@ a {
 
 .connectivity-root-label {
   fill: #f8fafc;
-  font-size: 12px;
+  font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
@@ -202,6 +202,21 @@ a {
 
 .connectivity-dot {
   filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.4));
+}
+
+.connectivity-led {
+  filter: drop-shadow(0 0 8px rgba(0, 0, 0, 0.5));
+  animation: led-pulse 1.4s ease-in-out infinite;
+}
+
+.connectivity-root-icons {
+  color: rgba(226, 232, 240, 0.8);
+}
+
+@keyframes led-pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
 }
 
 .connectivity-panel {

@@ -299,12 +299,14 @@ export default function MonitoringModule() {
     const dnsGroup = nodes.filter((node) => node.type === 'dns' || node.type === 'dnsRecord');
 
     const rootLabel = 'DAX Links Server';
+    const rootLabelLines = ['DAX', 'Links', 'Server'];
     const rootStatus = aggregateStatus(nodes);
-    const rootWidth = Math.max(180, rootLabel.length * 7.2 + 40);
-    const rootHeight = 34;
+    const rootWidth = 90;
+    const rootHeight = 90;
     const root = {
       id: 'root',
       label: rootLabel,
+      labelLines: rootLabelLines,
       status: rootStatus,
       x: 60,
       y: 260,
@@ -698,13 +700,58 @@ export default function MonitoringModule() {
                         height={treeLayout.root.height}
                         rx={10}
                       />
+                      <circle
+                        className="connectivity-led"
+                        cx={treeLayout.root.x + 12}
+                        cy={treeLayout.root.y - treeLayout.root.height / 2 + 12}
+                        r={4}
+                        fill={connectivityTone(treeLayout.root.status)}
+                      />
                       <text
                         className="connectivity-root-label"
-                        x={treeLayout.root.x + 14}
-                        y={treeLayout.root.y + 5}
+                        x={treeLayout.root.x + treeLayout.root.width / 2}
+                        y={treeLayout.root.y - 8}
+                        textAnchor="middle"
                       >
-                        {treeLayout.root.label}
+                        {(treeLayout.root.labelLines || [treeLayout.root.label]).map((line: string, idx: number) => (
+                          <tspan key={line} x={treeLayout.root.x + treeLayout.root.width / 2} dy={idx === 0 ? 0 : 14}>
+                            {line}
+                          </tspan>
+                        ))}
                       </text>
+                      <g
+                        className="connectivity-root-icons"
+                        transform={`translate(${treeLayout.root.x + treeLayout.root.width - 26}, ${treeLayout.root.y + treeLayout.root.height / 2 - 18})`}
+                      >
+                        <g transform="scale(0.42)">
+                          <path
+                            d="M12 2l7 3v6c0 5-3.5 9-7 11-3.5-2-7-6-7-11V5l7-3z"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinejoin="round"
+                          />
+                        </g>
+                        <g transform="translate(12, 0) scale(0.42)">
+                          <path
+                            d="M7 11V8a5 5 0 0110 0v3"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                          />
+                          <rect
+                            x="6"
+                            y="11"
+                            width="12"
+                            height="9"
+                            rx="2"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                          />
+                        </g>
+                      </g>
                     </g>
                     <g className="connectivity-groups">
                       {treeLayout.groupLabels.map((group) => (
