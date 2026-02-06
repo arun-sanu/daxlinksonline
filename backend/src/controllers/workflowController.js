@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { listWorkflowEvents, getWorkspaceWorkflowConfig, saveWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
 import { prisma } from '../utils/prisma.js';
 import crypto from 'crypto';
+import { buildWebhookHostname } from '../lib/webhookDomains.js';
 
 const querySchema = z.object({
   workspaceId: z.string().uuid(),
@@ -38,7 +39,7 @@ const ruleSchema = z.object({
   id: z.string().min(1).optional(),
   source: z.object({
     type: z.literal('webhook'),
-    id: z.string().uuid()
+    id: z.string().min(1)
   }),
   destination: z.object({
     type: z.literal('integration'),
@@ -126,17 +127,56 @@ export async function handleListNodes(req, res, next) {
     }
     const { workspaceId } = configQuerySchema.parse(req.query || {});
     await assertWorkspaceAccess(workspaceId, req.user.id);
-    const [webhooks, integrations, workflowConfig] = await Promise.all([
+    const [webhooks, integrations, workflowConfig, userProfile, dnsRecords] = await Promise.all([
       prisma.webhook.findMany({ where: { workspaceId } }),
       prisma.integration.findMany({ where: { workspaceId } }),
-      getWorkspaceWorkflowConfig(workspaceId)
+      getWorkspaceWorkflowConfig(workspaceId),
+      prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { webhookSubdomain: true, subdomainPrefix: true }
+      }),
+      prisma.dnsRecord.findMany({
+        where: { userId: req.user.id, status: 'active' },
+        orderBy: { createdAt: 'desc' }
+      })
     ]);
+    const ingressRecords = (dnsRecords || []).map((record) => ({
+      id: record.id,
+      subdomain: record.subdomain,
+      status: record.status,
+      url: `https://${buildWebhookHostname(record.subdomain)}/webhook/tradingview`
+    }));
+    const prefix = userProfile?.subdomainPrefix || userProfile?.webhookSubdomain || ingressRecords[0]?.subdomain || null;
+    const ingressUrl = prefix ? `https://${buildWebhookHostname(prefix)}/webhook/tradingview` : null;
+    const tradingviewIngress = {
+      id: 'tradingview',
+      name: 'TradingView Ingress',
+      type: 'webhook',
+      description: ingressUrl ? `Ingress: ${ingressUrl}` : 'Inbound TradingView alerts',
+      url: ingressUrl,
+      subdomain: prefix,
+      dnsRecords: ingressRecords
+    };
+    const webhookNodes = [tradingviewIngress, ...webhooks];
+    const normalizedIntegrations = (integrations || []).map((integration) => {
+      const exchange = integration.exchange ? String(integration.exchange).toUpperCase() : 'EXCHANGE';
+      const label = integration.label || exchange;
+      const apiLabel = integration.apiKeyMasked ? `API ${integration.apiKeyMasked}` : '';
+      return {
+        ...integration,
+        name: label,
+        type: integration.exchange || 'exchange',
+        exchange: integration.exchange || null,
+        apiKeyMasked: integration.apiKeyMasked || null,
+        description: apiLabel || integration.description || integration.environment || ''
+      };
+    });
     const customNodes = workflowConfig.customNodes || [];
     const bots = customNodes.filter((n) => n.side === 'source').map((n) => ({ id: n.id, name: n.label, type: n.nodeType, description: n.description }));
     const extraIntegrations = customNodes
       .filter((n) => n.side === 'destination')
       .map((n) => ({ id: n.id, name: n.label, type: n.nodeType, description: n.description }));
-    res.json({ webhooks, integrations: [...integrations, ...extraIntegrations], bots });
+    res.json({ webhooks: webhookNodes, integrations: [...normalizedIntegrations, ...extraIntegrations], bots });
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
@@ -185,6 +225,7 @@ export async function applyWorkflow(req, res, next) {
     const workflowCfg = await getWorkspaceWorkflowConfig(payload.workspaceId);
     const customNodes = Array.isArray(workflowCfg.customNodes) ? workflowCfg.customNodes : [];
     const customDestinationIds = customNodes.filter((n) => n.side === 'destination').map((n) => n.id);
+    const customSourceIds = new Set(customNodes.filter((n) => n.side === 'source').map((n) => n.id));
     customDestinationIds.forEach((id) => integrationIds.add(id));
 
     const sanitizedRules = payload.rules.map((rule, idx) => {
@@ -208,7 +249,7 @@ export async function applyWorkflow(req, res, next) {
       if (rule.destination.type !== 'integration') {
         errors.push(`Rule ${idx}: destination.type must be integration`);
       }
-      if (!webhookIds.has(rule.source.id)) {
+      if (!webhookIds.has(rule.source.id) && rule.source.id !== 'tradingview' && !customSourceIds.has(rule.source.id)) {
         errors.push(`Rule ${idx}: webhook not found in workspace`);
       }
       if (!integrationIds.has(rule.destination.id)) {

@@ -193,6 +193,9 @@ export function createTradingviewWebhookHandler(
       }
 
       const candidatePayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
+      if (!candidatePayload.source && !candidatePayload.sourceId && !candidatePayload.webhookId) {
+        candidatePayload.source = 'tradingview';
+      }
       try {
         alertRecord = await createTradingviewAlert({
           userId: user.id,
