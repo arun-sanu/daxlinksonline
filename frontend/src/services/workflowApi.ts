@@ -1,3 +1,5 @@
+import { withApiBase } from '../api/client';
+
 const defaultHeaders = { 'Content-Type': 'application/json' };
 
 function generateRuleId() {
@@ -47,7 +49,8 @@ async function extractErrorMessage(res: Response, fallbackMessage: string) {
 
 async function safeFetch<T>(input: RequestInfo, init?: RequestInit, fallback: T | null = null): Promise<T | null> {
   try {
-    const res = await fetch(input, {
+    const target = typeof input === 'string' || input instanceof URL ? withApiBase(input) : input;
+    const res = await fetch(target, {
       credentials: 'include',
       headers: { ...defaultHeaders, ...authHeaders(), ...(init?.headers || {}) },
       ...init
@@ -107,7 +110,7 @@ export async function fetchWorkflowNodes(workspaceId?: string) {
     throw new Error('Workspace ID is required to load workflow nodes.');
   }
 
-  const res = await fetch(`/api/v1/workflow/nodes?workspaceId=${encodeURIComponent(ws)}`, {
+  const res = await fetch(withApiBase(`/api/v1/workflow/nodes?workspaceId=${encodeURIComponent(ws)}`), {
     credentials: 'include',
     headers: { ...defaultHeaders, ...authHeaders() }
   });
@@ -145,7 +148,7 @@ export async function fetchExecutionHistory(workspaceId: string) {
 export async function applyRoutingConfig(workspaceId: string, rules: any[]) {
   const ws = workspaceId || getWorkspaceId();
   const payload = { workspaceId: ws, rules: rules.map(mapRuleToServer) };
-  const res = await fetch('/api/v1/workflow/apply', {
+  const res = await fetch(withApiBase('/api/v1/workflow/apply'), {
     method: 'POST',
     headers: { ...defaultHeaders, ...authHeaders() },
     credentials: 'include',
@@ -165,7 +168,7 @@ export async function createNode(workspaceId: string, payload: { label: string; 
   if (!ws) {
     throw new Error('Workspace ID is required to create a node.');
   }
-  const res = await fetch('/api/v1/workflow/nodes', {
+  const res = await fetch(withApiBase('/api/v1/workflow/nodes'), {
     method: 'POST',
     credentials: 'include',
     headers: { ...defaultHeaders, ...authHeaders() },
@@ -179,7 +182,7 @@ export async function createNode(workspaceId: string, payload: { label: string; 
 
 export async function simulateRouting(workspaceId: string, sourceId: string, destinationId: string) {
   const ws = workspaceId || getWorkspaceId();
-  const res = await fetch('/api/v1/workflow/simulate', {
+  const res = await fetch(withApiBase('/api/v1/workflow/simulate'), {
     method: 'POST',
     credentials: 'include',
     headers: { ...defaultHeaders, ...authHeaders() },
