@@ -1214,7 +1214,7 @@ export default function WorkflowModule() {
                     <span>{n.label}</span>
                     <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
                   </div>
-                  {n.type === 'webhook' ? (
+                  {n.id === 'tradingview' ? (
                     n.dnsRecords && n.dnsRecords.length > 0 ? (
                       <div className="space-y-1 text-[11px] text-gray-400">
                         {n.dnsRecords.map((record, idx) => (
