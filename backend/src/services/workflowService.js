@@ -164,7 +164,14 @@ export async function simulateRules({ workspaceId, rules, source, signal }) {
       skippedRules.push({ ruleId: rule.id || 'unknown', reason: 'disabled' });
       continue;
     }
-    if (!rule?.source || rule.source.id !== source.id) {
+    if (!rule?.source) {
+      skippedRules.push({ ruleId: rule.id || 'unknown', reason: 'source mismatch' });
+      continue;
+    }
+    const sourceId = String(source?.id || '');
+    const ruleSourceId = String(rule.source.id || '');
+    const isTradingviewWildcard = ruleSourceId === 'tradingview' && sourceId.startsWith('tv:');
+    if (ruleSourceId !== sourceId && !isTradingviewWildcard) {
       skippedRules.push({ ruleId: rule.id || 'unknown', reason: 'source mismatch' });
       continue;
     }

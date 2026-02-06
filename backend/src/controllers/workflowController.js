@@ -147,17 +147,37 @@ export async function handleListNodes(req, res, next) {
       url: `https://${buildWebhookHostname(record.subdomain)}/webhook/tradingview`
     }));
     const prefix = userProfile?.subdomainPrefix || userProfile?.webhookSubdomain || ingressRecords[0]?.subdomain || null;
-    const ingressUrl = prefix ? `https://${buildWebhookHostname(prefix)}/webhook/tradingview` : null;
+    const fallbackIngressUrl = prefix ? `https://${buildWebhookHostname(prefix)}/webhook/tradingview` : null;
+    const ingressNodes = ingressRecords.map((record) => ({
+      id: `tv:${record.subdomain}`,
+      name: `TradingView (${record.subdomain})`,
+      type: 'webhook',
+      description: `Ingress: ${record.url}`,
+      url: record.url,
+      subdomain: record.subdomain,
+      dnsRecords: [record]
+    }));
+    if (!ingressNodes.length && fallbackIngressUrl && prefix) {
+      ingressNodes.push({
+        id: `tv:${prefix}`,
+        name: `TradingView (${prefix})`,
+        type: 'webhook',
+        description: `Ingress: ${fallbackIngressUrl}`,
+        url: fallbackIngressUrl,
+        subdomain: prefix,
+        dnsRecords: [{ subdomain: prefix, url: fallbackIngressUrl }]
+      });
+    }
     const tradingviewIngress = {
       id: 'tradingview',
-      name: 'TradingView Ingress',
+      name: 'TradingView (All)',
       type: 'webhook',
-      description: ingressUrl ? `Ingress: ${ingressUrl}` : 'Inbound TradingView alerts',
-      url: ingressUrl,
+      description: fallbackIngressUrl ? `Ingress: ${fallbackIngressUrl}` : 'Inbound TradingView alerts',
+      url: fallbackIngressUrl,
       subdomain: prefix,
       dnsRecords: ingressRecords
     };
-    const webhookNodes = [tradingviewIngress, ...webhooks];
+    const webhookNodes = [tradingviewIngress, ...ingressNodes, ...webhooks];
     const normalizedIntegrations = (integrations || []).map((integration) => {
       const exchange = integration.exchange ? String(integration.exchange).toUpperCase() : 'EXCHANGE';
       const label = integration.label || exchange;
@@ -227,6 +247,11 @@ export async function applyWorkflow(req, res, next) {
     const customDestinationIds = customNodes.filter((n) => n.side === 'destination').map((n) => n.id);
     const customSourceIds = new Set(customNodes.filter((n) => n.side === 'source').map((n) => n.id));
     customDestinationIds.forEach((id) => integrationIds.add(id));
+    const dnsSourceIds = new Set();
+    if (req.user?.id) {
+      const dns = await prisma.dnsRecord.findMany({ where: { userId: req.user.id, status: 'active' } });
+      dns.forEach((row) => dnsSourceIds.add(`tv:${row.subdomain}`));
+    }
 
     const sanitizedRules = payload.rules.map((rule, idx) => {
       const ruleId = rule.id || rule.ruleId || rule._id || undefined;
@@ -249,7 +274,7 @@ export async function applyWorkflow(req, res, next) {
       if (rule.destination.type !== 'integration') {
         errors.push(`Rule ${idx}: destination.type must be integration`);
       }
-      if (!webhookIds.has(rule.source.id) && rule.source.id !== 'tradingview' && !customSourceIds.has(rule.source.id)) {
+      if (!webhookIds.has(rule.source.id) && rule.source.id !== 'tradingview' && !customSourceIds.has(rule.source.id) && !dnsSourceIds.has(rule.source.id)) {
         errors.push(`Rule ${idx}: webhook not found in workspace`);
       }
       if (!integrationIds.has(rule.destination.id)) {
