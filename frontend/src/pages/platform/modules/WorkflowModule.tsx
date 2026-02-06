@@ -25,6 +25,8 @@ type WorkflowNode = {
   lastEventAt?: number;
   description?: string;
   url?: string;
+  subdomain?: string;
+  dnsRecords?: { subdomain?: string; url?: string; status?: string }[];
   exchange?: string;
   apiKeyMasked?: string;
 };
@@ -801,7 +803,9 @@ export default function WorkflowModule() {
         status: 'green',
         position: { x: 0, y: 0 },
         description: w.description || '',
-        url: w.url || ''
+        url: w.url || '',
+        subdomain: w.subdomain || '',
+        dnsRecords: Array.isArray(w.dnsRecords) ? w.dnsRecords : []
       })),
       ...bots.map((b) => ({ id: b.id, label: b.name || 'Bot', type: 'bot', role: 'source', status: 'green', position: { x: 0, y: 0 } }))
     ];
@@ -1210,8 +1214,27 @@ export default function WorkflowModule() {
                     <span>{n.label}</span>
                     <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
                   </div>
-                  {(n.description || n.url) && (
-                    <p className="text-[11px] text-gray-400 break-all">{n.description || n.url}</p>
+                  {n.type === 'webhook' ? (
+                    n.dnsRecords && n.dnsRecords.length > 0 ? (
+                      <div className="space-y-1 text-[11px] text-gray-400">
+                        {n.dnsRecords.map((record, idx) => (
+                          <div key={`${record.subdomain || 'dns'}-${idx}`} className="space-y-0.5">
+                            <span className="block text-gray-300">
+                              {record.subdomain || n.subdomain || 'DNS record'}
+                            </span>
+                            <span className="block font-mono text-gray-400 break-all">
+                              {record.url || n.url || 'Ingress not provisioned'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : n.url ? (
+                      <p className="text-[11px] font-mono text-gray-400 break-all">{n.url}</p>
+                    ) : (
+                      <p className="text-[11px] text-gray-500">Ingress not provisioned</p>
+                    )
+                  ) : (
+                    n.description && <p className="text-[11px] text-gray-400 break-all">{n.description}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
@@ -1273,7 +1296,9 @@ export default function WorkflowModule() {
                   </div>
                   {(n.exchange || n.apiKeyMasked) && (
                     <p className="text-[11px] text-gray-400">
-                      {[n.exchange, n.apiKeyMasked].filter(Boolean).join(' · ')}
+                      {[n.exchange ? n.exchange.toUpperCase() : null, n.apiKeyMasked ? `API ${n.apiKeyMasked}` : null]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </p>
                   )}
                 </div>
