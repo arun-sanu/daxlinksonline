@@ -5,6 +5,16 @@ export default {
   setup() {
     const flags = ref([]);
     const error = ref('');
+    const WEBHOOK_FLAGS = {
+      global: 'webhook_hmac_global',
+      tradingviewDisable: 'webhook_hmac_disable_tradingview'
+    };
+    function getFlag(key) {
+      return flags.value.find(f => f.key === key);
+    }
+    function flagOn(key) {
+      return Boolean(getFlag(key)?.on);
+    }
     async function load() {
       try {
         const base = (window.__DAXLINKS_CONFIG__ || {}).apiBaseUrl || '';
@@ -13,6 +23,32 @@ export default {
         const rows = await res.json();
         flags.value = rows.map(r => ({ key: r.key, on: r.enabled, description: r.description, rolloutPercent: r.rolloutPercent || 0, audience: r.audience || null, rules: r.rules || null }));
       } catch (e) { error.value = e?.message || String(e); }
+    }
+    async function setFlagEnabled(key, enabled, description) {
+      try {
+        const base = (window.__DAXLINKS_CONFIG__ || {}).apiBaseUrl || '';
+        const body = { enabled: Boolean(enabled) };
+        if (description) body.description = description;
+        const res = await fetch(`${base}/admin/flags/${encodeURIComponent(key)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: window.__appAuthToken__ ? `Bearer ${window.__appAuthToken__}` : undefined },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const row = await res.json();
+        const payload = { key: row.key, on: row.enabled, description: row.description, rolloutPercent: row.rolloutPercent || 0, audience: row.audience || null, rules: row.rules || null };
+        const existing = flags.value.find(f => f.key === row.key);
+        if (existing) {
+          Object.assign(existing, payload);
+        } else {
+          flags.value = [...flags.value, payload].sort((a, b) => a.key.localeCompare(b.key));
+        }
+      } catch (e) {
+        error.value = e?.message || String(e);
+      }
+    }
+    async function toggleFlag(key, description) {
+      await setFlagEnabled(key, !flagOn(key), description);
     }
     async function toggle(f) {
       try {
@@ -83,10 +119,39 @@ export default {
       } catch (e) { error.value = e?.message || String(e); }
     }
     onMounted(load);
-    return { flags, toggle, error, load, saveRollout, evalKey, evalUserId, evalWorkspaceId, evalResult, evaluate, showAudience, aKey, aUserIds, aWorkspaceIds, aRules, openAudience, saveAudience };
+    return { flags, toggle, error, load, saveRollout, evalKey, evalUserId, evalWorkspaceId, evalResult, evaluate, showAudience, aKey, aUserIds, aWorkspaceIds, aRules, openAudience, saveAudience, WEBHOOK_FLAGS, flagOn, toggleFlag };
   },
   template: `
     <section class="space-y-6">
+      <article class="card-shell">
+        <header class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-main">Webhook Security</h3>
+          <span class="section-label">Global</span>
+        </header>
+        <p class="mt-2 text-sm text-gray-400">Control HMAC enforcement for all incoming webhooks.</p>
+        <div class="mt-4 grid gap-4">
+          <div class="flex items-center justify-between gap-6">
+            <div>
+              <p class="text-main">Require HMAC globally</p>
+              <p class="text-xs text-gray-400">Enforces HMAC for all inbound sources (including TradingView).</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" :checked="flagOn(WEBHOOK_FLAGS.global)" @change="toggleFlag(WEBHOOK_FLAGS.global, 'Require HMAC for all inbound webhooks')" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="flex items-center justify-between gap-6">
+            <div>
+              <p class="text-main">Disable HMAC for TradingView</p>
+              <p class="text-xs text-gray-400">Bypasses HMAC checks for TradingView alerts.</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" :checked="flagOn(WEBHOOK_FLAGS.tradingviewDisable)" @change="toggleFlag(WEBHOOK_FLAGS.tradingviewDisable, 'Disable HMAC enforcement for TradingView webhooks')" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </article>
       <article class="card-shell">
         <header class="flex items-center justify-between">
           <h3 class="text-lg font-semibold text-main">Config & Feature Flags</h3>

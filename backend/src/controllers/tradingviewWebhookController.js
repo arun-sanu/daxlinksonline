@@ -5,6 +5,8 @@ import { prisma } from '../utils/prisma.js';
 import { forward } from '../services/tradingviewService.js';
 import { extractSubdomain } from '../lib/webhookDomains.js';
 import { webhookConfig } from '../config/webhook.js';
+import { createTradingviewAlert, updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
+import { getWebhookHmacPolicy } from '../services/webhookPolicy.js';
 
 const payloadSchema = z.object({
   secret: z.string().optional()
@@ -14,11 +16,12 @@ const HMAC_FIELDS = new Set(['hmac', 'signature', 'sign']);
 
 async function findUserByPrefix(prefix) {
   if (!prefix) return null;
-  return prisma.user.findFirst({
-    where: {
-      OR: [{ subdomainPrefix: prefix }, { webhookSubdomain: prefix }]
-    }
+  const record = await prisma.dnsRecord.findFirst({
+    where: { subdomain: prefix, status: 'active' },
+    select: { userId: true }
   });
+  if (!record) return null;
+  return prisma.user.findUnique({ where: { id: record.userId } });
 }
 
 function validateUserStatus(user) {
@@ -161,6 +164,7 @@ export function createTradingviewWebhookHandler(
 ) {
   const { findUser = findUserByPrefix, forwarder = forward } = deps;
   return async function tradingviewWebhookHandler(req, res, next) {
+    let alertRecord = null;
     try {
       let prefix = req.subdomainPrefix;
       if (!prefix) {
@@ -188,20 +192,36 @@ export function createTradingviewWebhookHandler(
         return res.status(statusErr.status || 500).json({ error: statusErr.message });
       }
 
+      const candidatePayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
+      try {
+        alertRecord = await createTradingviewAlert({
+          userId: user.id,
+          payload: candidatePayload,
+          status: 'received',
+          webhookSubdomain: prefix,
+          clientIp: getClientIp(req)
+        });
+      } catch (err) {
+        console.warn('[tradingview] failed to record alert', err?.message || err);
+      }
+
       const expectedSecret = user.webhookSecret;
       if (expectedSecret) {
         try {
           const providedSecret = resolveSecret(req, { requireQuerySecret, allowBodySecret });
           if (!providedSecret) {
             logReject('secret_missing', { prefix, userId: user.id, ip: getClientIp(req) });
+            if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Secret required');
             return res.status(401).json({ error: 'Secret required' });
           }
           if (providedSecret !== expectedSecret) {
             logReject('secret_invalid', { prefix, userId: user.id, ip: getClientIp(req) });
+            if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Invalid secret');
             return res.status(401).json({ error: 'Invalid secret' });
           }
         } catch (secretErr) {
           logReject(secretErr.message || 'secret_error', { prefix, userId: user.id, ip: getClientIp(req) });
+          if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', secretErr.message || 'Secret error');
           return res.status(secretErr.status || 401).json({ error: secretErr.message });
         }
       }
@@ -210,27 +230,38 @@ export function createTradingviewWebhookHandler(
       const tsStatus = verifyTimestamp(timestamp);
       if (!tsStatus.ok) {
         logReject('timestamp_invalid', { prefix, userId: user.id, ip: getClientIp(req), skewMs: webhookConfig.maxSkewMs });
+        if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', tsStatus.message);
         return res.status(403).json({ error: tsStatus.message });
       }
 
-      const candidatePayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
       const expectedHmacKey = user.webhookHmacKey;
       const providedHmac = candidatePayload.hmac || candidatePayload.signature || candidatePayload.sign;
-      const hmacEnforced = webhookConfig.enforceHmacGlobally || user.enforceHmac;
+      const policy = await getWebhookHmacPolicy();
+      const disableTradingview = Boolean(policy.disableTradingview);
+      const hmacEnforced = Boolean(policy.enforceGlobal) && !disableTradingview;
       if (expectedHmacKey && providedHmac) {
         const payloadBuffer = resolveHmacSource(req, candidatePayload);
         const result = verifyHmac({ provided: String(providedHmac), key: expectedHmacKey, payloadBuffer });
         if (!result.ok) {
           logReject('hmac_invalid', { prefix, userId: user.id, ip: getClientIp(req) });
+          if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', result.message);
           return res.status(401).json({ error: result.message });
         }
       } else if (expectedHmacKey && hmacEnforced) {
         logReject('hmac_missing', { prefix, userId: user.id, ip: getClientIp(req) });
+        if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Missing HMAC signature');
         return res.status(401).json({ error: 'Missing HMAC signature' });
       }
 
       const payload = payloadSchema.parse(candidatePayload || {});
-      forwarder(user.id, payload).catch((err) => {
+      if (alertRecord) {
+        try {
+          await updateTradingviewAlertStatus(alertRecord.id, 'validated', null);
+        } catch (err) {
+          console.warn('[tradingview] failed to update alert status', err?.message || err);
+        }
+      }
+      forwarder(user.id, payload, { alertId: alertRecord?.id }).catch((err) => {
         console.warn('[tradingview] forward failed', err);
       });
       return res.status(200).json({ ok: true });
