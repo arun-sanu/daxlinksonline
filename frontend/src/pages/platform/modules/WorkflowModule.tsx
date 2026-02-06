@@ -23,6 +23,10 @@ type WorkflowNode = {
   status: StatusColor;
   health?: 'healthy' | 'warning' | 'critical' | 'pending' | 'inactive' | 'muted';
   lastEventAt?: number;
+  description?: string;
+  url?: string;
+  exchange?: string;
+  apiKeyMasked?: string;
 };
 
 type WorkflowEdge = {
@@ -92,7 +96,21 @@ const SERVER_ID = 'server-core';
 type Mode = 'view' | 'create';
 type PortKind = 'input' | 'output' | 'logic' | 'notify';
 
-function RuleModal({ open, draft, onClose, onSave }: { open: boolean; draft: Partial<RoutingRule> | null | undefined; onClose: () => void; onSave: (draft: Partial<RoutingRule>) => void }) {
+function RuleModal({
+  open,
+  draft,
+  sources,
+  destinations,
+  onClose,
+  onSave
+}: {
+  open: boolean;
+  draft: Partial<RoutingRule> | null | undefined;
+  sources: WorkflowNode[];
+  destinations: WorkflowNode[];
+  onClose: () => void;
+  onSave: (draft: Partial<RoutingRule>) => void;
+}) {
   const [form, setForm] = useState<Partial<RoutingRule>>(draft || {});
   useEffect(() => {
     if (!open) return;
@@ -109,6 +127,36 @@ function RuleModal({ open, draft, onClose, onSave }: { open: boolean; draft: Par
           <button className="text-xs text-gray-400" onClick={onClose}>Close</button>
         </div>
         <div className="grid grid-cols-2 gap-3 text-xs text-gray-200">
+          <label className="space-y-1">
+            <span className="text-gray-400">Source</span>
+            <select
+              className="w-full rounded border border-white/10 bg-transparent px-2 py-1"
+              value={form.sourceWebhookId || ''}
+              onChange={(e) => setForm((p) => ({ ...p, sourceWebhookId: e.target.value }))}
+            >
+              <option value="">Select source</option>
+              {sources.map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-gray-400">Destination</span>
+            <select
+              className="w-full rounded border border-white/10 bg-transparent px-2 py-1"
+              value={form.destinationIntegrationId || ''}
+              onChange={(e) => setForm((p) => ({ ...p, destinationIntegrationId: e.target.value }))}
+            >
+              <option value="">Select destination</option>
+              {destinations.map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="space-y-1">
             <span className="text-gray-400">Symbols (comma or *)</span>
             <input className="w-full rounded border border-white/10 bg-transparent px-2 py-1" value={(form.symbols || []).join(', ')} onChange={(e) => setForm((p) => ({ ...p, symbols: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) }))} />
@@ -745,16 +793,28 @@ export default function WorkflowModule() {
   function buildNodes(webhooks: any[], bots: any[], integrations: any[]): WorkflowNode[] {
     const server: WorkflowNode = { id: SERVER_ID, label: 'DaxLinks Router / SERVER', type: 'logic', role: 'server', status: 'green', position: { x: CENTER.x, y: CENTER.y } };
     const src: WorkflowNode[] = [
-      ...webhooks.map((w) => ({ id: w.id, label: w.name || 'Webhook', type: 'webhook', role: 'source', status: 'green', position: { x: 0, y: 0 } })),
+      ...webhooks.map((w) => ({
+        id: w.id,
+        label: w.name || w.label || 'Webhook',
+        type: 'webhook',
+        role: 'source',
+        status: 'green',
+        position: { x: 0, y: 0 },
+        description: w.description || '',
+        url: w.url || ''
+      })),
       ...bots.map((b) => ({ id: b.id, label: b.name || 'Bot', type: 'bot', role: 'source', status: 'green', position: { x: 0, y: 0 } }))
     ];
     const dst: WorkflowNode[] = integrations.map((i) => ({
       id: i.id,
-      label: i.name,
+      label: i.name || i.label || i.exchange || 'Integration',
       type: classifyNodeTypeFromIntegration(i.type),
       role: 'destination',
       status: 'green',
-      position: { x: 0, y: 0 }
+      position: { x: 0, y: 0 },
+      exchange: i.exchange || '',
+      apiKeyMasked: i.apiKeyMasked || '',
+      description: i.description || ''
     }));
     const finalNodes = [server, ...src, ...dst];
     console.log('[WM] Pre-layout nodes:', finalNodes);
@@ -1040,6 +1100,8 @@ export default function WorkflowModule() {
     const found = safeNodes.find((n) => n.id === id);
     return found?.label || id.slice(0, 8);
   };
+  const sourceOptions = safeNodes.filter((n) => n.role === 'source');
+  const destinationOptions = safeNodes.filter((n) => n.role === 'destination');
 
   async function handleDeleteRule(ruleId: string) {
     if (!workspaceReady) {
@@ -1071,6 +1133,8 @@ export default function WorkflowModule() {
       <RuleModal
         open={ruleModal.open}
         draft={ruleModal.draft}
+        sources={sourceOptions}
+        destinations={destinationOptions}
         onClose={() => {
           setRuleModal({ open: false, draft: null });
           setMode('view');
@@ -1141,9 +1205,14 @@ export default function WorkflowModule() {
             .filter((n) => n.role === 'source')
             .map((n) => (
               <li key={n.id} className={`flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5 ${mode === 'create' && selectedSource === n.id ? 'ring-2 ring-sky-300' : ''}`}>
-                <div className="flex items-center gap-2">
-                  <span>{n.label}</span>
-                  <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span>{n.label}</span>
+                    <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                  </div>
+                  {(n.description || n.url) && (
+                    <p className="text-[11px] text-gray-400 break-all">{n.description || n.url}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <button
@@ -1197,9 +1266,16 @@ export default function WorkflowModule() {
             .filter((n) => n.role === 'destination')
             .map((n) => (
               <li key={n.id} className="flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5">
-                <div className="flex items-center gap-2">
-                  <span>{n.label}</span>
-                  <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span>{n.label}</span>
+                    <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                  </div>
+                  {(n.exchange || n.apiKeyMasked) && (
+                    <p className="text-[11px] text-gray-400">
+                      {[n.exchange, n.apiKeyMasked].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <button
