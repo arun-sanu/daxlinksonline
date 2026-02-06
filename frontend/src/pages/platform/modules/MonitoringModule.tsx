@@ -280,6 +280,7 @@ export default function MonitoringModule() {
     if (key === 'ok') return '#34d399';
     if (key === 'degraded') return '#fbbf24';
     if (key === 'down') return '#f87171';
+    if (key === 'idle') return 'rgba(52, 211, 153, 0.45)';
     return '#9ca3af';
   }, []);
 
@@ -288,6 +289,7 @@ export default function MonitoringModule() {
     if (states.includes('down')) return 'down';
     if (states.includes('degraded')) return 'degraded';
     if (states.includes('ok')) return 'ok';
+    if (states.includes('idle')) return 'idle';
     return 'unknown';
   }, []);
 

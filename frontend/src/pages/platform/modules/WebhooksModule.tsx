@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Webhook, WebhookDelivery, WebhookProfile } from '../../../api/types';
+import { withApiBase } from '../../../api/client';
 import {
   assignWebhook,
   fetchWebhookDeliveries,
@@ -9,7 +10,8 @@ import {
   listWebhooks,
   testWebhook,
   toggleWebhook,
-  updateDnsOrder
+  updateDnsOrder,
+  webhookAuthHeaders
 } from '../../../api/webhooks';
 
 type Toast = { message: string; tone: 'success' | 'error' };
@@ -64,6 +66,14 @@ export default function WebhooksModule() {
   const [dnsSort, setDnsSort] = useState<'custom' | 'subdomain' | 'host' | 'url'>('custom');
   const [dnsOrder, setDnsOrder] = useState<string[]>([]);
   const [dnsOrderDirty, setDnsOrderDirty] = useState(false);
+  const [flagsLoading, setFlagsLoading] = useState(false);
+  const [flagsError, setFlagsError] = useState('');
+  const [flagsReadOnly, setFlagsReadOnly] = useState(false);
+  const [flagsSavingKey, setFlagsSavingKey] = useState<string | null>(null);
+  const [flags, setFlags] = useState({
+    globalHmac: false,
+    disableTradingView: false
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -206,6 +216,83 @@ export default function WebhooksModule() {
     }, 500);
     return () => clearTimeout(handle);
   }, [dnsOrder, dnsOrderDirty, dnsSort]);
+
+  const fetchFlags = useCallback(async () => {
+    setFlagsLoading(true);
+    setFlagsError('');
+    try {
+      const res = await fetch(withApiBase('/api/v1/admin/flags'), {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...webhookAuthHeaders() }
+      });
+      if (res.status === 403) {
+        setFlagsReadOnly(true);
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status})`);
+      }
+      const rows = await res.json();
+      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.items) ? rows.items : [];
+      const byKey = new Map(list.map((row: any) => [row.key, row]));
+      setFlags({
+        globalHmac: Boolean(byKey.get('webhook_hmac_global')?.enabled),
+        disableTradingView: Boolean(byKey.get('webhook_hmac_disable_tradingview')?.enabled)
+      });
+      setFlagsReadOnly(false);
+    } catch (e: any) {
+      setFlagsError(e?.message || 'Failed to load flags');
+    } finally {
+      setFlagsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchFlags();
+  }, [fetchFlags]);
+
+  async function updateFlag(
+    key: 'webhook_hmac_global' | 'webhook_hmac_disable_tradingview',
+    enabled: boolean,
+    previousValue: boolean
+  ) {
+    setFlagsSavingKey(key);
+    setFlagsError('');
+    try {
+      const res = await fetch(withApiBase(`/api/v1/admin/flags/${encodeURIComponent(key)}`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...webhookAuthHeaders() },
+        body: JSON.stringify({ enabled })
+      });
+      if (res.status === 403) {
+        setFlagsReadOnly(true);
+        setFlags((prev) => ({
+          ...prev,
+          globalHmac: key === 'webhook_hmac_global' ? previousValue : prev.globalHmac,
+          disableTradingView: key === 'webhook_hmac_disable_tradingview' ? previousValue : prev.disableTradingView
+        }));
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status})`);
+      }
+      await res.json();
+      setFlagsReadOnly(false);
+      setToast({ message: 'Webhook security updated', tone: 'success' });
+    } catch (e: any) {
+      setFlags((prev) => ({
+        ...prev,
+        globalHmac: key === 'webhook_hmac_global' ? previousValue : prev.globalHmac,
+        disableTradingView: key === 'webhook_hmac_disable_tradingview' ? previousValue : prev.disableTradingView
+      }));
+      setFlagsError(e?.message || 'Update failed');
+      setToast({ message: e?.message || 'Update failed', tone: 'error' });
+    } finally {
+      setFlagsSavingKey(null);
+    }
+  }
 
   const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
   const hmacValue = myWebhook?.hmacKey || '';
@@ -540,6 +627,81 @@ export default function WebhooksModule() {
           </div>
         )}
         {error && <p className="text-xs text-amber-300">{error}</p>}
+      </section>
+
+      <section className="card-shell space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] muted-text">Webhook security</p>
+            <p className="text-sm text-gray-400">Global controls for enforcing HMAC signatures.</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            {flagsLoading && <span>Loading…</span>}
+            <button className="btn btn-secondary btn-xs" type="button" onClick={fetchFlags} disabled={flagsLoading}>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {[
+            {
+              key: 'webhook_hmac_global' as const,
+              label: 'Require HMAC globally',
+              description: 'Enforce HMAC signatures for all webhook payloads.',
+              value: flags.globalHmac
+            },
+            {
+              key: 'webhook_hmac_disable_tradingview' as const,
+              label: 'Disable HMAC for TradingView',
+              description: 'Allow TradingView alerts without HMAC verification.',
+              value: flags.disableTradingView
+            }
+          ].map((item) => {
+            const isBusy = flagsSavingKey === item.key;
+            const isDisabled = flagsReadOnly || flagsLoading || isBusy;
+            return (
+              <div
+                key={item.key}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-main">{item.label}</p>
+                  <p className="text-xs text-gray-400">{item.description}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isBusy && <span className="text-[11px] text-gray-400">Saving…</span>}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={item.value}
+                    disabled={isDisabled}
+                    onClick={() => {
+                      const previousValue = item.value;
+                      const next = !previousValue;
+                      setFlags((prev) => ({
+                        ...prev,
+                        globalHmac: item.key === 'webhook_hmac_global' ? next : prev.globalHmac,
+                        disableTradingView: item.key === 'webhook_hmac_disable_tradingview' ? next : prev.disableTradingView
+                      }));
+                      updateFlag(item.key, next, previousValue);
+                    }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full border transition ${
+                      item.value ? 'border-emerald-300/50 bg-emerald-500/20' : 'border-white/20 bg-white/5'
+                    } ${isDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                  >
+                    <span
+                      className={`inline-block h-3 w-3 transform rounded-full transition ${
+                        item.value ? 'translate-x-4 bg-emerald-200' : 'translate-x-1 bg-gray-400'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {flagsReadOnly && <p className="text-xs text-amber-200">Read-only: admin permissions required to edit flags.</p>}
+        {flagsError && <p className="text-xs text-rose-400">{flagsError}</p>}
       </section>
 
       <section className="card-shell space-y-4">
