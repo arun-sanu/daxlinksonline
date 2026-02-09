@@ -618,7 +618,7 @@ function NodeBadge({
   }
   return (
     <div
-      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl border ${tone} bg-black/70 px-4 py-3 shadow-lg text-center flex flex-col justify-center ${highlight}`}
+      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl border ${tone} workflow-node-glass px-4 py-3 shadow-lg text-center flex flex-col justify-center ${highlight}`}
       style={{ left: node.position.x, top: node.position.y, ...sizeStyle }}
       onClick={(e) => {
         e.stopPropagation();
@@ -738,6 +738,15 @@ function EdgeLine({ edge, nodes, onSelect }: { edge: WorkflowEdge; nodes: Workfl
         onClick={() => onSelect(edge.id)}
         style={{ cursor: 'pointer', filter: isError ? 'drop-shadow(0 0 6px rgba(248,113,113,0.6))' : undefined }}
       />
+      {edge.enabled !== false && (
+        <path
+          d={`M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`}
+          stroke={stroke}
+          strokeWidth={1.4}
+          fill="none"
+          className="workflow-edge-flow"
+        />
+      )}
       {isSuccess && (
         <circle
           cx={(start.x + end.x) / 2}
@@ -788,16 +797,20 @@ export default function WorkflowModule() {
     const updateScale = () => {
       const rect = el.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      const paddedWidth = Math.max(0, rect.width - 180);
-      const paddedHeight = Math.max(0, rect.height - 140);
+      const paddedWidth = Math.max(0, rect.width - 240);
+      const paddedHeight = Math.max(0, rect.height - 200);
       const scale = Math.min(paddedWidth / CANVAS_WIDTH, paddedHeight / CANVAS_HEIGHT);
-      const clamped = Math.min(1, Math.max(0.55, scale));
+      const clamped = Math.min(0.92, Math.max(0.5, scale));
       setFitScale(Number.isFinite(clamped) && clamped > 0 ? clamped : 1);
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);
     observer.observe(el);
-    return () => observer.disconnect();
+    window.addEventListener('resize', updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateScale);
+    };
   }, []);
 
   useEffect(() => {
@@ -1493,7 +1506,7 @@ export default function WorkflowModule() {
           <>
       <div
         ref={canvasWrapRef}
-        className="relative w-full rounded-2xl border border-white/10 overflow-hidden"
+        className="relative w-full rounded-2xl border border-white/10 overflow-hidden workflow-canvas-glass"
         style={{
           height: '100vh',
           minHeight: '100vh',

@@ -60,6 +60,26 @@ body {
   animation: blink-onoff 1.2s steps(2, start) infinite;
 }
 
+.workflow-canvas-glass {
+  background-color: rgba(8, 12, 20, 0.55);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.workflow-node-glass {
+  background: linear-gradient(145deg, rgba(20, 28, 40, 0.78), rgba(10, 12, 18, 0.92));
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow: 0 18px 40px rgba(6, 10, 18, 0.55);
+}
+
+.workflow-edge-flow {
+  stroke-dasharray: 10 12;
+  opacity: 0.5;
+  animation: edge-flow 6s linear infinite;
+}
+
 @keyframes pulse-blue {
   0% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -150,4 +170,9 @@ body {
   50% { opacity: 0.15; }
   50.1% { opacity: 1; }
   100% { opacity: 1; }
+}
+
+@keyframes edge-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -80; }
 }
