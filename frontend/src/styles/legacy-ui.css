@@ -606,6 +606,10 @@ select.field:-webkit-autofill {
   box-shadow: 0 25px 60px rgba(8, 10, 19, 0.35);
 }
 
+.hero-input--long {
+  max-width: 460px;
+}
+
 .hero-input input {
   flex: 1;
   background: transparent;
