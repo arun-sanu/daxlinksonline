@@ -24,7 +24,7 @@ export function createWorkspaceRateLimiter({
   const store = buildStore();
   return rateLimit({
     windowMs,
-    limit,
+    max: limit,
     standardHeaders: true,
     legacyHeaders: false,
     store,
@@ -46,7 +46,7 @@ export function perSubdomainRateLimit({ maxPerSecond = 20, windowMs = 1000 } = {
   const limit = Math.max(1, Number(maxPerSecond) || 1);
   return rateLimit({
     windowMs,
-    limit,
+    max: limit,
     standardHeaders: true,
     legacyHeaders: false,
     store,

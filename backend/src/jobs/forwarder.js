@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { decrypt } from '../lib/kms.js';
 import { createExchange } from '../sdk/index.js';
 import { normalizePayload, computeIdempotencyKey, sanitizePayload } from '../services/forwardingMapper.js';
+import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
 import crypto from 'crypto';
 import { getWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
 import { initExecuteOrdersQueue, executeOrdersQueue } from './queue.js';
@@ -21,69 +22,89 @@ function sanitize(obj) {
 }
 
 export async function processForwardJob(job) {
-  const { userId, payload } = job.data || {};
+  const { userId, payload, alertId } = job.data || {};
   if (!userId) return;
-  const normalized = normalizePayload(payload);
-  const idemKey = computeIdempotencyKey({ userId, normalized });
-  const notional = normalized.amount && normalized.price ? normalized.amount * normalized.price : normalized.amount || 0;
+  try {
+    const normalized = normalizePayload(payload);
+    const idemKey = computeIdempotencyKey({ userId, normalized });
+    const notional = normalized.amount && normalized.price ? normalized.amount * normalized.price : normalized.amount || 0;
 
-  const workspaces = await prisma.workspace.findMany({
-    where: { ownerId: userId },
-    select: { id: true }
-  });
-  const workspaceIds = workspaces.map((w) => w.id);
-  if (workspaceIds.length === 0) return;
-
-  const executionTargets = [];
-  for (const workspaceId of workspaceIds) {
-    const config = await getWorkspaceWorkflowConfig(workspaceId);
-    const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
-    const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
-    const simulation = await simulateRules({ workspaceId, rules: config.rules || [], source, signal });
-    executionTargets.push(...simulation.matchedRules);
-  }
-
-  if (!executionTargets.length) {
-    console.log('[forwarder] No matching routing rules — signal ignored');
-    await upsertForwardedSignal({
-      userId,
-      integrationId: null,
-      idempotencyKey: idemKey,
-      normalized,
-      status: 'skipped_no_rule',
-      attempts: 1,
-      error: 'No matching routing rules'
+    const workspaces = await prisma.workspace.findMany({
+      where: { ownerId: userId },
+      select: { id: true }
     });
-    return;
-  }
-
-  for (const target of executionTargets) {
-    const augmented = {
-      ...normalized,
-      raw: {
-        ...(normalized.raw || {}),
-        mappedOrder: target.mappedOrder,
-        ruleId: target.ruleId
+    const workspaceIds = workspaces.map((w) => w.id);
+    if (workspaceIds.length === 0) {
+      if (alertId) {
+        await updateTradingviewAlertStatus(alertId, 'failed', 'No workspace configured');
       }
-    };
-    const record = await upsertForwardedSignal({
-      userId,
-      integrationId: target.destinationIntegrationId || null,
-      idempotencyKey: idemKey,
-      normalized: augmented,
-      status: 'ready_for_execution',
-      attempts: 0,
-      error: null
-    });
-    if (!executeOrdersQueue) {
-      initExecuteOrdersQueue();
+      return;
     }
-    if (executeOrdersQueue) {
-      await executeOrdersQueue.add('execute-prepared-signal', { signalId: record.id });
-    }
-  }
 
-  console.log(`[forwarder] Signal routed to ${executionTargets.length} integration(s) using workflow rules`);
+    const executionTargets = [];
+    for (const workspaceId of workspaceIds) {
+      const config = await getWorkspaceWorkflowConfig(workspaceId);
+      const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
+      const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
+      const simulation = await simulateRules({ workspaceId, rules: config.rules || [], source, signal });
+      executionTargets.push(...simulation.matchedRules);
+    }
+
+    if (!executionTargets.length) {
+      console.log('[forwarder] No matching routing rules — signal ignored');
+      await upsertForwardedSignal({
+        userId,
+        integrationId: null,
+        idempotencyKey: idemKey,
+        normalized,
+        status: 'skipped_no_rule',
+        attempts: 1,
+        error: 'No matching routing rules'
+      });
+      if (alertId) {
+        await updateTradingviewAlertStatus(alertId, 'failed', 'No matching routing rules');
+      }
+      return;
+    }
+
+    for (const target of executionTargets) {
+      const augmented = {
+        ...normalized,
+        raw: {
+          ...(normalized.raw || {}),
+          mappedOrder: target.mappedOrder,
+          ruleId: target.ruleId
+        }
+      };
+      const record = await upsertForwardedSignal({
+        userId,
+        integrationId: target.destinationIntegrationId || null,
+        idempotencyKey: idemKey,
+        normalized: augmented,
+        status: 'ready_for_execution',
+        attempts: 0,
+        error: null
+      });
+      if (!executeOrdersQueue) {
+        initExecuteOrdersQueue();
+      }
+      if (executeOrdersQueue) {
+        await executeOrdersQueue.add('execute-prepared-signal', { signalId: record.id });
+      }
+    }
+
+    if (alertId) {
+      await updateTradingviewAlertStatus(alertId, 'executed', null);
+    }
+    console.log(`[forwarder] Signal routed to ${executionTargets.length} integration(s) using workflow rules`);
+  } catch (err) {
+    if (alertId) {
+      try {
+        await updateTradingviewAlertStatus(alertId, 'failed', err?.message || 'Forwarding failed');
+      } catch {}
+    }
+    throw err;
+  }
 }
 
 async function upsertForwardedSignal({ userId, integrationId, idempotencyKey, normalized, status, attempts, error }) {

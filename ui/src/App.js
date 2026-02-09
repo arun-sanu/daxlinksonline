@@ -122,7 +122,8 @@ export default {
       return [
         { label: 'Overview', name: 'overview' },
         { label: 'Account', name: 'account' },
-        { label: 'Platform', name: 'platform' }
+        { label: 'Platform', name: 'platform' },
+        { label: 'Monitoring', name: 'monitoring' }
       ];
     });
 

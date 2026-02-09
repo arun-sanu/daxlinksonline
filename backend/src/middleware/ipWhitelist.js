@@ -6,8 +6,9 @@
 import { isAllowedIp } from '../lib/tradingviewIps.js';
 
 function extractClientIp(req) {
-  const cfIp = req.headers['cf-connecting-ip'];
-  if (typeof cfIp === 'string' && cfIp.length > 0) return cfIp;
+  // Cloudflare provides the real client IP here when orange-cloud proxied.
+  const cfIp = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'].trim() : '';
+  if (cfIp) return cfIp;
   // Trust first X-Forwarded-For (client) when behind proxies like Cloudflare/Workers
   const firstXff = (() => {
     const xff = req.headers['x-forwarded-for'];
@@ -26,6 +27,18 @@ export function tradingViewIpWhitelist() {
     if (allowAllInDev) return next();
     const ip = extractClientIp(req);
     if (isAllowedIp(ip)) return next();
+    if (process.env.TRADINGVIEW_IP_DEBUG === '1') {
+      console.warn(
+        JSON.stringify({
+          event: 'tradingview_ip_reject',
+          ip,
+          cfConnectingIp: req.headers['cf-connecting-ip'],
+          xForwardedFor: req.headers['x-forwarded-for'],
+          host: req.headers.host,
+          path: req.path
+        })
+      );
+    }
     return res.status(403).json({ error: 'Forbidden: IP not allowed' });
   };
 }

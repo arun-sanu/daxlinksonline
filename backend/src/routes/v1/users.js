@@ -7,7 +7,8 @@ import { handleListWebhookAlerts } from '../../controllers/userMonitoringControl
 export const router = Router();
 
 router.get('/my-webhook', requireAuth, handleGetWebhook);
+router.get('/alerts', requireAuth, handleListWebhookAlerts);
+router.get('/webhook-alerts', requireAuth, handleListWebhookAlerts);
 router.post('/assign-webhook', requireAuth, handleAssignWebhook);
 router.put('/dns-order', requireAuth, handleUpdateDnsOrder);
 router.post('/test-webhook', requireAuth, handleTestWebhook);
-router.get('/webhook-alerts', requireAuth, handleListWebhookAlerts);

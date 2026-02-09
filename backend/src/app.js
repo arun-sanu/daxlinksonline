@@ -19,7 +19,13 @@ export async function createServer() {
   const isMonitoringPath = (req) => {
     const url = req.originalUrl || req.url || '';
     return (
+      url.startsWith('/api/v1/metrics/monitoring') ||
+      url.startsWith('/api/v1/users/alerts') ||
+      url.startsWith('/api/v1/users/webhook-alerts') ||
+      url.startsWith('/api/v1/dns/mine') ||
+      url.startsWith('/api/v1/webhooks/') ||
       url.startsWith('/v1/metrics/monitoring') ||
+      url.startsWith('/v1/users/alerts') ||
       url.startsWith('/v1/users/webhook-alerts') ||
       url.startsWith('/v1/dns/mine') ||
       url.startsWith('/v1/webhooks/')
@@ -37,15 +43,47 @@ export async function createServer() {
     }
   });
 
+  const metricsLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: Number(process.env.METRICS_RATE_LIMIT || 1000),
+    standardHeaders: true,
+    legacyHeaders: false
+  });
+
+  const alertsLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: Number(process.env.ALERTS_RATE_LIMIT || 1000),
+    standardHeaders: true,
+    legacyHeaders: false
+  });
+
   const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 100,
+    max: 100,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => {
-      if (req.method !== 'GET') return false;
-      return isMonitoringPath(req);
-    }
+    skip: (req) =>
+      (req.method === 'GET' &&
+        (isMonitoringPath(req) ||
+          req.path.startsWith('/api/v1/dns/') ||
+          req.path === '/api/v1/users/my-webhook' ||
+          req.path === '/api/v1/users/alerts' ||
+          req.path === '/api/v1/users/webhook-alerts' ||
+          req.path.startsWith('/api/v1/notify/') ||
+          req.path.startsWith('/api/v1/webhooks/') ||
+          req.path.startsWith('/api/v1/dashboard/') ||
+          req.path === '/api/v1/admin/alerts' ||
+          req.path === '/api/v1/admin/deliveries' ||
+          req.path === '/api/v1/admin/deliveries/stats' ||
+          req.path === '/api/v1/admin/queues/summary' ||
+          req.path.startsWith('/api/v1/metrics/'))) ||
+      (req.method === 'POST' && req.path === '/api/v1/dns/register')
+  });
+
+  console.log('[rate-limit]', {
+    global: { windowSec: 15 * 60, max: 100 },
+    alerts: { windowSec: 15 * 60, max: Number(process.env.ALERTS_RATE_LIMIT || 1000) },
+    metrics: { windowSec: 15 * 60, max: Number(process.env.METRICS_RATE_LIMIT || 1000) }
   });
 
   app.use(
@@ -136,6 +174,9 @@ export async function createServer() {
   app.use(correlationId());
   app.use(tradingviewIngressRouter);
   app.use(monitoringLimiter);
+  app.use('/api/v1/metrics', metricsLimiter);
+  app.use('/api/v1/users/alerts', alertsLimiter);
+  app.use('/api/v1/users/webhook-alerts', alertsLimiter);
   app.use(globalLimiter);
   app.use(
     express.json({

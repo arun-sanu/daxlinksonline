@@ -1,18 +1,34 @@
 import { z } from 'zod';
-import { listWebhooks, createWebhook, toggleWebhook } from '../services/webhookService.js';
+import { prisma } from '../utils/prisma.js';
+import { listWebhooks, createWebhook, toggleWebhook, toggleWebhooks } from '../services/webhookService.js';
 import { recordAudit } from '../services/auditService.js';
 
-function requireDev(req, res) {
-  const role = String(req?.user?.role || '').toLowerCase();
-  if (!['admin', 'developer'].includes(role)) {
-    res.status(403).json({ error: 'Dev-only' });
+async function requireWorkspaceAccess(req, res, workspaceId) {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Authentication required' });
     return false;
   }
-  return true;
+  const role = String(req.user.role || '').toLowerCase();
+  if (req.user.isSuperAdmin || ['admin', 'developer', 'engineer', 'designer'].includes(role)) {
+    return true;
+  }
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { ownerId: true }
+  });
+  if (workspace?.ownerId && workspace.ownerId === req.user.id) {
+    return true;
+  }
+  res.status(403).json({ error: 'Forbidden' });
+  return false;
 }
 
 const workspaceIdParam = z.object({ workspaceId: z.string().uuid() });
 const webhookIdParam = z.object({ workspaceId: z.string().uuid(), webhookId: z.string().uuid() });
+const toggleManySchema = z.object({
+  webhookIds: z.array(z.string().uuid()).min(1),
+  active: z.boolean()
+});
 
 const createWebhookSchema = z.object({
   name: z.string().min(2),
@@ -26,8 +42,8 @@ const createWebhookSchema = z.object({
 
 export async function handleListWebhooks(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
     const { workspaceId } = workspaceIdParam.parse(req.params);
+    if (!(await requireWorkspaceAccess(req, res, workspaceId))) return;
     const webhooks = await listWebhooks(workspaceId);
     res.json(webhooks);
   } catch (error) {
@@ -37,8 +53,8 @@ export async function handleListWebhooks(req, res, next) {
 
 export async function handleCreateWebhook(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
     const { workspaceId } = workspaceIdParam.parse(req.params);
+    if (!(await requireWorkspaceAccess(req, res, workspaceId))) return;
     const payload = createWebhookSchema.parse(req.body);
     const webhook = await createWebhook(workspaceId, payload);
     try {
@@ -55,14 +71,35 @@ export async function handleCreateWebhook(req, res, next) {
 
 export async function handleToggleWebhook(req, res, next) {
   try {
-    if (!requireDev(req, res)) return;
     const { workspaceId, webhookId } = webhookIdParam.parse(req.params);
+    if (!(await requireWorkspaceAccess(req, res, workspaceId))) return;
     const { active } = z.object({ active: z.boolean() }).parse(req.body);
     const webhook = await toggleWebhook(workspaceId, webhookId, active);
     try {
       await recordAudit({ userId: req.user.id, action: 'webhook.toggle', entityType: 'Webhook', entityId: webhookId, summary: active ? 'enabled' : 'disabled' });
     } catch {}
     res.json(webhook);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleToggleWebhooks(req, res, next) {
+  try {
+    const { workspaceId } = workspaceIdParam.parse(req.params);
+    if (!(await requireWorkspaceAccess(req, res, workspaceId))) return;
+    const { webhookIds, active } = toggleManySchema.parse(req.body);
+    const result = await toggleWebhooks(workspaceId, webhookIds, active);
+    try {
+      await recordAudit({
+        userId: req.user.id,
+        action: 'webhook.toggle.batch',
+        entityType: 'Webhook',
+        entityId: workspaceId,
+        summary: `${active ? 'enabled' : 'disabled'} ${result.updated} webhook(s)`
+      });
+    } catch {}
+    res.json({ updated: result.updated });
   } catch (error) {
     next(error);
   }

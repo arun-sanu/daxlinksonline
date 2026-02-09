@@ -48,3 +48,14 @@ export async function toggleWebhook(workspaceId, webhookId, active) {
   }
   return prisma.webhook.update({ where: { id: webhookId }, data: { active } });
 }
+
+export async function toggleWebhooks(workspaceId, webhookIds, active) {
+  if (!Array.isArray(webhookIds) || webhookIds.length === 0) {
+    return { updated: 0 };
+  }
+  const result = await prisma.webhook.updateMany({
+    where: { workspaceId, id: { in: webhookIds } },
+    data: { active }
+  });
+  return { updated: result.count };
+}

@@ -181,10 +181,10 @@ function sanitize(obj) {
   }
 }
 
-export async function forward(userId, payload) {
+export async function forward(userId, payload, { alertId } = {}) {
   ensureQueue();
   // Enqueue job for fire-and-forget processing
-  await enqueue('forward-alert', { userId, payload: sanitize(payload) }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+  await enqueue('forward-alert', { userId, payload: sanitize(payload), alertId: alertId || null }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
   // Record receipt
   await prisma.auditLog.create({
     data: {
