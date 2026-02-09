@@ -31,7 +31,7 @@ export async function createServer() {
 
   const monitoringLimiter = rateLimit({
     windowMs: 60 * 1000,
-    limit: 120,
+    max: 120,
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => {
@@ -42,7 +42,7 @@ export async function createServer() {
 
   const portalLoginLimiter = rateLimit({
     windowMs: 5 * 60 * 1000,
-    limit: 20,
+    max: 20,
     standardHeaders: true,
     legacyHeaders: false
   });
