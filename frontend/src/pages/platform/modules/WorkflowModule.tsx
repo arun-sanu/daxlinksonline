@@ -788,8 +788,11 @@ export default function WorkflowModule() {
     const updateScale = () => {
       const rect = el.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      const scale = Math.min(rect.width / CANVAS_WIDTH, rect.height / CANVAS_HEIGHT);
-      setFitScale(Number.isFinite(scale) && scale > 0 ? scale : 1);
+      const paddedWidth = Math.max(0, rect.width - 180);
+      const paddedHeight = Math.max(0, rect.height - 140);
+      const scale = Math.min(paddedWidth / CANVAS_WIDTH, paddedHeight / CANVAS_HEIGHT);
+      const clamped = Math.min(1, Math.max(0.55, scale));
+      setFitScale(Number.isFinite(clamped) && clamped > 0 ? clamped : 1);
     };
     updateScale();
     const observer = new ResizeObserver(updateScale);
@@ -1545,7 +1548,7 @@ export default function WorkflowModule() {
               width: CANVAS_WIDTH,
               height: CANVAS_HEIGHT,
               transform: `scale(${fitScale * zoom})`,
-              transformOrigin: 'top left'
+              transformOrigin: 'center center'
             }}
           >
           <div className="absolute inset-0 z-10 flex justify-between">
