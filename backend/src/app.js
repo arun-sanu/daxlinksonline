@@ -18,18 +18,14 @@ export async function createServer() {
 
   const isMonitoringPath = (req) => {
     const url = req.originalUrl || req.url || '';
+    const normalized = url.startsWith('/api/') ? url.slice(4) : url;
     return (
-      url.startsWith('/api/v1/metrics/monitoring') ||
-      url.startsWith('/api/v1/users/alerts') ||
-      url.startsWith('/api/v1/users/webhook-alerts') ||
-      url.startsWith('/api/v1/dns/mine') ||
-      url.startsWith('/api/v1/webhooks/') ||
-      url.startsWith('/v1/metrics/monitoring') ||
-      url.startsWith('/v1/users/alerts') ||
-      url.startsWith('/v1/users/webhook-alerts') ||
-      url.startsWith('/v1/dns/mine') ||
-      url.startsWith('/v1/webhooks/') ||
-      url.startsWith('/v1/workflow/')
+      normalized.startsWith('/v1/metrics/') ||
+      normalized.startsWith('/v1/users/webhook-alerts') ||
+      normalized.startsWith('/v1/users/alerts') ||
+      normalized.startsWith('/v1/dns/mine') ||
+      normalized.startsWith('/v1/webhooks/') ||
+      normalized.startsWith('/v1/workflow/')
     );
   };
 
