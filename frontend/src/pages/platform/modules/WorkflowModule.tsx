@@ -742,7 +742,7 @@ function EdgeLine({ edge, nodes, onSelect }: { edge: WorkflowEdge; nodes: Workfl
         <path
           d={`M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`}
           stroke={stroke}
-          strokeWidth={1.4}
+          strokeWidth={1.8}
           fill="none"
           className="workflow-edge-flow"
         />

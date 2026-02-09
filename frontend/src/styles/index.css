@@ -61,23 +61,24 @@ body {
 }
 
 .workflow-canvas-glass {
-  background-color: rgba(8, 12, 20, 0.55);
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  background-color: rgba(8, 12, 20, 0.58);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.42);
 }
 
 .workflow-node-glass {
-  background: linear-gradient(145deg, rgba(20, 28, 40, 0.78), rgba(10, 12, 18, 0.92));
-  backdrop-filter: blur(12px) saturate(150%);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  box-shadow: 0 18px 40px rgba(6, 10, 18, 0.55);
+  background: linear-gradient(145deg, rgba(28, 36, 52, 0.72), rgba(10, 12, 18, 0.92));
+  backdrop-filter: blur(16px) saturate(165%);
+  -webkit-backdrop-filter: blur(16px) saturate(165%);
+  box-shadow: 0 18px 45px rgba(6, 10, 18, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .workflow-edge-flow {
-  stroke-dasharray: 10 12;
-  opacity: 0.5;
-  animation: edge-flow 6s linear infinite;
+  stroke-dasharray: 12 14;
+  opacity: 0.6;
+  stroke-linecap: round;
+  animation: edge-flow 6.5s linear infinite;
 }
 
 @keyframes pulse-blue {
@@ -174,5 +175,5 @@ body {
 
 @keyframes edge-flow {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -80; }
+  to { stroke-dashoffset: -90; }
 }
