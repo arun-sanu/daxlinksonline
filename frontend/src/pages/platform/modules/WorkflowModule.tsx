@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchWorkflowNodes,
   fetchRoutingRules,
@@ -94,6 +94,11 @@ type RoutingRule = {
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 720;
 const CENTER = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2 + 40 };
+const NODE_WIDTH = 176;
+const NODE_HEIGHT = 92;
+const SERVER_WIDTH = 208;
+const SERVER_HEIGHT = 108;
+const PORT_RADIUS = 7;
 const SERVER_ID = 'server-core';
 type Mode = 'view' | 'create';
 type PortKind = 'input' | 'output' | 'logic' | 'notify';
@@ -461,14 +466,28 @@ function layoutNodes(nodes: WorkflowNode[]): WorkflowNode[] {
   }
   const centerX = CENTER.x;
   const centerY = CENTER.y;
-  const horizontalOffset = 320;
-  const spacing = 140;
+  const horizontalOffset = 300;
+  const minY = 120;
+  const maxY = CANVAS_HEIGHT - 120;
   const left = nodesArr.filter((n) => n.role === 'source');
   const right = nodesArr.filter((n) => n.role === 'destination');
-  const midLeft = (left.length - 1) / 2;
-  const midRight = (right.length - 1) / 2;
-  const placedLeft = left.map((n, idx) => ({ ...n, position: { x: centerX - horizontalOffset, y: centerY + (idx - midLeft) * spacing } }));
-  const placedRight = right.map((n, idx) => ({ ...n, position: { x: centerX + horizontalOffset, y: centerY + (idx - midRight) * spacing } }));
+
+  function computePositions(list: WorkflowNode[], x: number) {
+    if (!list.length) return [];
+    const spacing = list.length > 1 ? Math.min(150, (maxY - minY) / (list.length - 1)) : 0;
+    let startY = centerY - (spacing * (list.length - 1)) / 2;
+    if (startY < minY) startY = minY;
+    if (startY + spacing * (list.length - 1) > maxY) {
+      startY = maxY - spacing * (list.length - 1);
+    }
+    return list.map((n, idx) => ({
+      ...n,
+      position: { x, y: startY + idx * spacing }
+    }));
+  }
+
+  const placedLeft = computePositions(left, centerX - horizontalOffset);
+  const placedRight = computePositions(right, centerX + horizontalOffset);
   try {
     const placedNodes = nodesArr.map((n) => {
       if (n.role === 'server') return { ...n, position: { x: centerX, y: centerY } };
@@ -533,7 +552,7 @@ function applyNodeHealth(nodes: WorkflowNode[], edges: WorkflowEdge[], events: W
 }
 
 function getAnchor(node: WorkflowNode, side: 'left' | 'right') {
-  const width = node.role === 'server' ? 200 : 160;
+  const width = node.role === 'server' ? SERVER_WIDTH : NODE_WIDTH;
   const halfW = width / 2;
   const x = side === 'left' ? node.position.x - halfW : node.position.x + halfW;
   return { x, y: node.position.y };
@@ -562,7 +581,9 @@ function NodeBadge({
       : node.type === 'exchange'
         ? 'border-emerald-300 text-emerald-100'
         : 'border-purple-300 text-purple-100';
-  const size = node.role === 'server' ? 'w-48 h-32' : 'w-40 h-24';
+  const width = node.role === 'server' ? SERVER_WIDTH : NODE_WIDTH;
+  const height = node.role === 'server' ? SERVER_HEIGHT : NODE_HEIGHT;
+  const sizeStyle = { width, height };
   const highlight =
     node.role === 'source' && mode === 'create'
       ? selectedSource === node.id
@@ -597,8 +618,8 @@ function NodeBadge({
   }
   return (
     <div
-      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl border ${tone} bg-black/70 px-4 py-3 shadow-lg ${size} text-center flex flex-col justify-center ${highlight}`}
-      style={{ left: node.position.x, top: node.position.y }}
+      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl border ${tone} bg-black/70 px-4 py-3 shadow-lg text-center flex flex-col justify-center ${highlight}`}
+      style={{ left: node.position.x, top: node.position.y, ...sizeStyle }}
       onClick={(e) => {
         e.stopPropagation();
         onSelect(node.id, node);
@@ -606,13 +627,15 @@ function NodeBadge({
     >
       {console.log('[WM] Rendering node:', node.id, node.label, node.position)}
       {badge && <span className={`absolute -right-2 -top-2 text-sm ${badge.cls}`}>{badge.text}</span>}
-      <p className="text-[10px] uppercase tracking-[0.18em] text-gray-400">{node.role === 'server' ? 'DaxLinks Router / SERVER' : node.type}</p>
+      <p className="text-[10px] uppercase tracking-[0.18em] text-gray-400">
+        {node.role === 'server' ? 'Core Router' : node.type}
+      </p>
       <p className="text-sm font-semibold text-white">{node.label}</p>
       {/* Ports */}
       {node.role !== 'destination' && (
         <div
           className="absolute"
-          style={{ right: -8, top: '50%', transform: 'translateY(-50%)' }}
+          style={{ right: -PORT_RADIUS, top: '50%', transform: 'translateY(-50%)' }}
           onMouseDown={(e) => {
             e.stopPropagation();
             onPortMouseDown(node, 'output');
@@ -620,13 +643,16 @@ function NodeBadge({
           onMouseEnter={() => onPortEnter(node, 'output')}
           onMouseLeave={onPortLeave}
         >
-          <span className="block h-3.5 w-3.5 rounded-full border border-sky-300 bg-sky-500/30 shadow-[0_0_12px_rgba(56,189,248,0.6)]" />
+          <span
+            className="block rounded-full border border-sky-300 bg-sky-500/30 shadow-[0_0_12px_rgba(56,189,248,0.6)]"
+            style={{ width: PORT_RADIUS * 2, height: PORT_RADIUS * 2 }}
+          />
         </div>
       )}
       {node.role !== 'source' && (
         <div
           className="absolute"
-          style={{ left: -8, top: '50%', transform: 'translateY(-50%)' }}
+          style={{ left: -PORT_RADIUS, top: '50%', transform: 'translateY(-50%)' }}
           onMouseDown={(e) => {
             e.stopPropagation();
             onPortMouseDown(node, 'input');
@@ -634,28 +660,37 @@ function NodeBadge({
           onMouseEnter={() => onPortEnter(node, 'input')}
           onMouseLeave={onPortLeave}
         >
-          <span className="block h-3.5 w-3.5 rounded-full border border-emerald-300 bg-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.6)]" />
+          <span
+            className="block rounded-full border border-emerald-300 bg-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.6)]"
+            style={{ width: PORT_RADIUS * 2, height: PORT_RADIUS * 2 }}
+          />
         </div>
       )}
       {node.role === 'server' && (
         <>
           <div
             className="absolute"
-            style={{ top: -8, left: '50%', transform: 'translateX(-50%)' }}
+            style={{ top: -PORT_RADIUS, left: '50%', transform: 'translateX(-50%)' }}
             onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown(node, 'input'); }}
             onMouseEnter={() => onPortEnter(node, 'input')}
             onMouseLeave={onPortLeave}
           >
-            <span className="block h-3.5 w-3.5 rounded-full border border-sky-300 bg-sky-500/30 shadow-[0_0_12px_rgba(56,189,248,0.6)]" />
+            <span
+              className="block rounded-full border border-sky-300 bg-sky-500/30 shadow-[0_0_12px_rgba(56,189,248,0.6)]"
+              style={{ width: PORT_RADIUS * 2, height: PORT_RADIUS * 2 }}
+            />
           </div>
           <div
             className="absolute"
-            style={{ bottom: -8, left: '50%', transform: 'translateX(-50%)' }}
+            style={{ bottom: -PORT_RADIUS, left: '50%', transform: 'translateX(-50%)' }}
             onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown(node, 'notify'); }}
             onMouseEnter={() => onPortEnter(node, 'notify')}
             onMouseLeave={onPortLeave}
           >
-            <span className="block h-3.5 w-3.5 rounded-full border border-amber-300 bg-amber-500/30 shadow-[0_0_12px_rgba(251,191,36,0.6)]" />
+            <span
+              className="block rounded-full border border-amber-300 bg-amber-500/30 shadow-[0_0_12px_rgba(251,191,36,0.6)]"
+              style={{ width: PORT_RADIUS * 2, height: PORT_RADIUS * 2 }}
+            />
           </div>
         </>
       )}
@@ -743,6 +778,24 @@ export default function WorkflowModule() {
   const [viewTab, setViewTab] = useState<'graph' | 'catalog'>('graph');
   const [savingRules, setSavingRules] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [fitScale, setFitScale] = useState(1);
+
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+    const updateScale = () => {
+      const rect = el.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const scale = Math.min(rect.width / CANVAS_WIDTH, rect.height / CANVAS_HEIGHT);
+      setFitScale(Number.isFinite(scale) && scale > 0 ? scale : 1);
+    };
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const safeNodes = toArray(nodes);
@@ -765,7 +818,7 @@ export default function WorkflowModule() {
   if (!safeNodes.length) {
     console.warn('[WM] Nothing to render — injecting fallback server node.');
     safeNodes = [
-      { id: SERVER_ID, label: 'DaxLinks Router / SERVER', role: 'server', type: 'logic', position: CENTER, status: 'green' as StatusColor }
+      { id: SERVER_ID, label: 'DaxLinks Router', role: 'server', type: 'logic', position: CENTER, status: 'green' as StatusColor }
     ];
   }
   const placedNodes = safeNodes;
@@ -793,7 +846,7 @@ export default function WorkflowModule() {
   };
 
   function buildNodes(webhooks: any[], bots: any[], integrations: any[]): WorkflowNode[] {
-    const server: WorkflowNode = { id: SERVER_ID, label: 'DaxLinks Router / SERVER', type: 'logic', role: 'server', status: 'green', position: { x: CENTER.x, y: CENTER.y } };
+    const server: WorkflowNode = { id: SERVER_ID, label: 'DaxLinks Router', type: 'logic', role: 'server', status: 'green', position: { x: CENTER.x, y: CENTER.y } };
     const src: WorkflowNode[] = [
       ...webhooks.map((w) => ({
         id: w.id,
@@ -926,7 +979,13 @@ export default function WorkflowModule() {
   useEffect(() => {
     function handleMove(e: MouseEvent) {
       if (!dragConnection) return;
-      setDragConnection((prev) => (prev ? { ...prev, current: { x: e.offsetX, y: e.offsetY } } : null));
+      const stage = stageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      const scale = fitScale * zoom;
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+      setDragConnection((prev) => (prev ? { ...prev, current: { x, y } } : null));
     }
     function handleUp() {
       if (dragConnection && hoverPort) {
@@ -1021,7 +1080,7 @@ export default function WorkflowModule() {
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [dragConnection, hoverPort, selectedSource, workspaceId]);
+  }, [dragConnection, hoverPort, selectedSource, workspaceId, fitScale, zoom]);
 
   async function handleSaveRule(draft: Partial<RoutingRule>) {
     if (!workspaceReady) {
@@ -1430,6 +1489,7 @@ export default function WorkflowModule() {
         {viewTab === 'graph' && (
           <>
       <div
+        ref={canvasWrapRef}
         className="relative w-full rounded-2xl border border-white/10 overflow-hidden"
         style={{
           height: '100vh',
@@ -1477,7 +1537,17 @@ export default function WorkflowModule() {
         <div className="absolute inset-y-0 left-0 w-1/3 bg-white/5 pointer-events-none" style={{ maskImage: 'linear-gradient(90deg, rgba(0,0,0,0.12), rgba(0,0,0,0))', zIndex: 5 }}></div>
         <div className="absolute inset-y-0 right-0 w-1/3 bg-white/5 pointer-events-none" style={{ maskImage: 'linear-gradient(270deg, rgba(0,0,0,0.12), rgba(0,0,0,0))', zIndex: 5 }}></div>
         <div className="absolute inset-y-0 left-1/3 right-1/3 bg-white/3 pointer-events-none" style={{ zIndex: 5, maskImage: 'linear-gradient(180deg, rgba(0,0,0,0.08), rgba(0,0,0,0))' }}></div>
-        <div className="absolute inset-0" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div
+            ref={stageRef}
+            className="relative"
+            style={{
+              width: CANVAS_WIDTH,
+              height: CANVAS_HEIGHT,
+              transform: `scale(${fitScale * zoom})`,
+              transformOrigin: 'top left'
+            }}
+          >
           <div className="absolute inset-0 z-10 flex justify-between">
             <div
               className="flex-1"
@@ -1595,6 +1665,7 @@ export default function WorkflowModule() {
               {simPreview.message}
             </div>
           )}
+          </div>
         </div>
 
       </div>
