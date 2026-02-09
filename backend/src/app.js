@@ -40,6 +40,13 @@ export async function createServer() {
     }
   });
 
+  const portalLoginLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false
+  });
+
   const metricsLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: Number(process.env.METRICS_RATE_LIMIT || 1000),
@@ -60,6 +67,7 @@ export async function createServer() {
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => {
+      if (req.path?.startsWith('/api/v1/portal/login')) return true;
       if (req.path?.startsWith('/api/v1/workflow/')) return true;
       if (req.method === 'GET') {
         if (
@@ -179,6 +187,7 @@ export async function createServer() {
   app.use(correlationId());
   app.use(tradingviewIngressRouter);
   app.use(monitoringLimiter);
+  app.use('/api/v1/portal/login', portalLoginLimiter);
   app.use('/api/v1/metrics', metricsLimiter);
   app.use('/api/v1/users/alerts', alertsLimiter);
   app.use('/api/v1/users/webhook-alerts', alertsLimiter);
