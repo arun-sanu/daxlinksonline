@@ -28,7 +28,8 @@ export async function createServer() {
       url.startsWith('/v1/users/alerts') ||
       url.startsWith('/v1/users/webhook-alerts') ||
       url.startsWith('/v1/dns/mine') ||
-      url.startsWith('/v1/webhooks/')
+      url.startsWith('/v1/webhooks/') ||
+      url.startsWith('/v1/workflow/')
     );
   };
 
@@ -62,9 +63,11 @@ export async function createServer() {
     max: 100,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) =>
-      (req.method === 'GET' &&
-        (isMonitoringPath(req) ||
+    skip: (req) => {
+      if (req.path?.startsWith('/api/v1/workflow/')) return true;
+      if (req.method === 'GET') {
+        if (
+          isMonitoringPath(req) ||
           req.path.startsWith('/api/v1/dns/') ||
           req.path === '/api/v1/users/my-webhook' ||
           req.path === '/api/v1/users/alerts' ||
@@ -76,8 +79,14 @@ export async function createServer() {
           req.path === '/api/v1/admin/deliveries' ||
           req.path === '/api/v1/admin/deliveries/stats' ||
           req.path === '/api/v1/admin/queues/summary' ||
-          req.path.startsWith('/api/v1/metrics/'))) ||
-      (req.method === 'POST' && req.path === '/api/v1/dns/register')
+          req.path.startsWith('/api/v1/metrics/')
+        ) {
+          return true;
+        }
+      }
+      if (req.method === 'POST' && req.path === '/api/v1/dns/register') return true;
+      return false;
+    }
   });
 
   console.log('[rate-limit]', {
