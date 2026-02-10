@@ -63,6 +63,7 @@ function mapRecord(record, baseDomain) {
   return {
     id: record.id,
     name: record.subdomain,
+    subdomain: record.subdomain,
     ip: record.ip || '',
     status: record.status || 'active',
     cloudflareId: record.cloudflareId || '',
