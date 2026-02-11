@@ -49,6 +49,15 @@ export type OrderReportQuery = {
 export type OrderReportRow = {
   key: string;
   matchType: 'alert_id' | 'heuristic' | 'unmatched' | string;
+  audit?: {
+    alertId: string;
+    signal: string;
+    sentToExchange: boolean;
+    requestTimestamp: string | null;
+    retryCount: number;
+    finalState: string;
+    daxlinksStatus: string;
+  };
   signal: {
     id: string;
     sourceId: string | null;
@@ -68,6 +77,10 @@ export type OrderReportRow = {
     quantity: number | null;
     orderId: string | null;
     errorMessage: string | null;
+    positionAfter?: {
+      estimatedBaseQty: number | null;
+      state: string;
+    };
   };
 };
 
@@ -75,6 +88,13 @@ export type OrderReportResponse = {
   ok: boolean;
   generatedAt: string;
   total: number;
+  summary?: {
+    executed: number;
+    rejected: number;
+    pending: number;
+    retried: number;
+    unmatched: number;
+  };
   items: OrderReportRow[];
 };
 

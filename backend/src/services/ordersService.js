@@ -12,6 +12,13 @@ const DEFAULT_TRADES_LIMIT =
 const MAX_BALANCES = 10;
 const DEFAULT_REPORT_LIMIT = 25;
 const MAX_REPORT_LIMIT = 100;
+const EMPTY_REPORT_SUMMARY = Object.freeze({
+  executed: 0,
+  rejected: 0,
+  pending: 0,
+  retried: 0,
+  unmatched: 0
+});
 
 function asNumber(value) {
   const n = Number(value);
@@ -318,12 +325,16 @@ function extractSourceId(signal, alert) {
 
 function mapTradeStatus(status) {
   const normalized = String(status || '').toLowerCase();
+  if (normalized === 'executed' || normalized === 'done') return 'executed';
+  if (normalized === 'rejected') return 'rejected';
+  if (normalized === 'pending') return 'pending';
+  if (normalized === 'retried') return 'retried';
   if (normalized === 'executed_success' || normalized === 'succeeded') return 'executed';
-  if (normalized === 'executed_error' || normalized === 'failed') return 'failed';
-  if (normalized === 'retrying') return 'retrying';
-  if (normalized === 'ready_for_execution' || normalized === 'queued') return 'queued';
-  if (normalized === 'skipped_no_rule') return 'skipped';
-  return normalized || 'unknown';
+  if (normalized === 'executed_error' || normalized === 'failed') return 'rejected';
+  if (normalized === 'retrying') return 'retried';
+  if (normalized === 'ready_for_execution' || normalized === 'queued') return 'pending';
+  if (normalized === 'skipped_no_rule') return 'rejected';
+  return 'pending';
 }
 
 function resolveQuantity(signal) {
@@ -336,6 +347,19 @@ function resolveQuantity(signal) {
   if (fromResult > 0) return fromResult;
   const amount = asNumber(signal?.amount);
   return amount > 0 ? amount : 0;
+}
+
+function normalizeSide(value) {
+  const side = String(value || '').trim().toUpperCase();
+  if (side === 'BUY' || side === 'LONG') return 'BUY';
+  if (side === 'SELL' || side === 'SHORT') return 'SELL';
+  return null;
+}
+
+function positionStateFromQty(qty) {
+  if (qty > 1e-12) return 'LONG';
+  if (qty < -1e-12) return 'SHORT';
+  return 'FLAT';
 }
 
 function scoreAlertMatch(signal, alert) {
@@ -358,31 +382,45 @@ function normalizeReportLimit(limit) {
   return Math.min(Math.floor(n), MAX_REPORT_LIMIT);
 }
 
-function mapReportRow(signal, alert, integrationMeta, matchType) {
+function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter) {
   const symbol = alert?.symbol || signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || null;
-  const side = alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side || null;
+  const side = normalizeSide(alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side);
   const signalTimestamp =
     toIso(alert?.receivedAt) ||
     toIso(signal?.payload?.timestamp || signal?.payload?.raw?.timestamp) ||
     toIso(signal?.createdAt);
+  const tradeStatus = mapTradeStatus(signal.status);
+  const alertId = alert?.id || extractAlertId(signal) || signal.id;
+  const sentToExchange = Boolean(signal.integrationId);
+  const requestTimestamp = toIso(signal?.createdAt);
+  const signalAction = side || '—';
 
   return {
     key: signal.id,
     matchType,
+    audit: {
+      alertId,
+      signal: signalAction,
+      sentToExchange,
+      requestTimestamp,
+      retryCount: Number(signal?.attempts || 0),
+      finalState: tradeStatus.toUpperCase(),
+      daxlinksStatus: String(signal?.status || 'unknown')
+    },
     signal: {
-      id: alert?.id || extractAlertId(signal) || signal.id,
+      id: alertId,
       sourceId: extractSourceId(signal, alert),
       timestamp: signalTimestamp,
       symbol,
-      side
+      side: signalAction
     },
     exchange: {
       integrationId: signal.integrationId || null,
       integrationLabel: integrationMeta?.label || integrationMeta?.exchange || 'Integration',
       exchange: integrationMeta?.exchange || null,
-      tradeStatus: mapTradeStatus(signal.status),
+      tradeStatus,
       executionTimestamp: toIso(signal.executedAt) || toIso(signal.createdAt),
-      side: signal.side || side || null,
+      side: normalizeSide(signal.side || side || null),
       type: signal.type || signal?.payload?.type || signal?.payload?.raw?.type || null,
       amount: signal.amount ?? null,
       quantity: resolveQuantity(signal),
@@ -391,7 +429,11 @@ function mapReportRow(signal, alert, integrationMeta, matchType) {
         signal?.payload?.executionResult?.id ||
         signal?.payload?.executionResult?.clientOrderId ||
         null,
-      errorMessage: signal.error || null
+      errorMessage: signal.error || null,
+      positionAfter: positionAfter || {
+        estimatedBaseQty: null,
+        state: 'UNKNOWN'
+      }
     }
   };
 }
@@ -415,6 +457,7 @@ export async function getWorkspaceOrderReport({
       ok: true,
       generatedAt: new Date().toISOString(),
       total: 0,
+      summary: EMPTY_REPORT_SUMMARY,
       items: []
     };
   }
@@ -431,6 +474,7 @@ export async function getWorkspaceOrderReport({
       ok: true,
       generatedAt: new Date().toISOString(),
       total: 0,
+      summary: EMPTY_REPORT_SUMMARY,
       items: []
     };
   }
@@ -454,6 +498,7 @@ export async function getWorkspaceOrderReport({
       ok: true,
       generatedAt: new Date().toISOString(),
       total: 0,
+      summary: EMPTY_REPORT_SUMMARY,
       items: []
     };
   }
@@ -499,10 +544,10 @@ export async function getWorkspaceOrderReport({
   });
 
   const usedFallbackAlertIds = new Set();
-  const items = signals.map((signal) => {
+  const matchedRows = signals.map((signal) => {
     const alertId = extractAlertId(signal);
     if (alertId && alertsById[alertId]) {
-      return mapReportRow(signal, alertsById[alertId], integrationMap[signal.integrationId], 'alert_id');
+      return { signal, alert: alertsById[alertId], matchType: 'alert_id' };
     }
 
     let bestAlert = null;
@@ -517,16 +562,63 @@ export async function getWorkspaceOrderReport({
     });
     if (bestAlert && Number.isFinite(bestScore)) {
       usedFallbackAlertIds.add(bestAlert.id);
-      return mapReportRow(signal, bestAlert, integrationMap[signal.integrationId], 'heuristic');
+      return { signal, alert: bestAlert, matchType: 'heuristic' };
     }
 
-    return mapReportRow(signal, null, integrationMap[signal.integrationId], 'unmatched');
+    return { signal, alert: null, matchType: 'unmatched' };
   });
+
+  const positionBySignalId = {};
+  let runningPositionQty = 0;
+  const matchedAsc = [...matchedRows].sort((a, b) => {
+    const at = new Date(a.signal.createdAt || 0).getTime();
+    const bt = new Date(b.signal.createdAt || 0).getTime();
+    return at - bt;
+  });
+  matchedAsc.forEach((row) => {
+    const tradeStatus = mapTradeStatus(row.signal.status);
+    const tradeSide = normalizeSide(
+      row.signal.side || row.signal?.payload?.side || row.signal?.payload?.raw?.side
+    );
+    if (tradeStatus === 'executed') {
+      const qty = resolveQuantity(row.signal);
+      if (tradeSide === 'BUY') runningPositionQty += qty;
+      if (tradeSide === 'SELL') runningPositionQty -= qty;
+    }
+    positionBySignalId[row.signal.id] = {
+      estimatedBaseQty: Number(runningPositionQty.toFixed(12)),
+      state: positionStateFromQty(runningPositionQty)
+    };
+  });
+
+  const items = matchedRows.map((row) =>
+    mapReportRow(
+      row.signal,
+      row.alert,
+      integrationMap[row.signal.integrationId],
+      row.matchType,
+      positionBySignalId[row.signal.id]
+    )
+  );
+
+  const summary = items.reduce(
+    (acc, row) => {
+      const state = String(row?.exchange?.tradeStatus || 'pending').toLowerCase();
+      if (state === 'executed') acc.executed += 1;
+      else if (state === 'rejected') acc.rejected += 1;
+      else if (state === 'retried') acc.retried += 1;
+      else acc.pending += 1;
+      if (row.matchType === 'unmatched') acc.unmatched += 1;
+      return acc;
+    },
+    { ...EMPTY_REPORT_SUMMARY }
+  );
 
   return {
     ok: true,
     generatedAt: new Date().toISOString(),
     total: items.length,
+    summary,
     items
   };
 }

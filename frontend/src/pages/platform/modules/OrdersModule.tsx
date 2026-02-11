@@ -72,10 +72,19 @@ function formatDate(input?: string | null) {
 function tradeStatusClass(status?: string | null) {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'executed') return 'text-emerald-200';
-  if (normalized === 'failed') return 'text-rose-200';
-  if (normalized === 'retrying') return 'text-amber-200';
-  if (normalized === 'queued') return 'text-sky-200';
+  if (normalized === 'rejected') return 'text-rose-200';
+  if (normalized === 'retried') return 'text-amber-200';
+  if (normalized === 'pending') return 'text-sky-200';
   return 'text-slate-200';
+}
+
+function tradeStatusBadge(status?: string | null) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'executed') return 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100';
+  if (normalized === 'rejected') return 'border-rose-300/40 bg-rose-500/20 text-rose-100';
+  if (normalized === 'retried') return 'border-amber-300/40 bg-amber-500/20 text-amber-100';
+  if (normalized === 'pending') return 'border-sky-300/40 bg-sky-500/20 text-sky-100';
+  return 'border-slate-300/30 bg-slate-500/20 text-slate-100';
 }
 
 export default function OrdersModule() {
@@ -90,6 +99,13 @@ export default function OrdersModule() {
   const [error, setError] = useState('');
   const [snapshot, setSnapshot] = useState<OrderCheckSnapshot | null>(null);
   const [reportRows, setReportRows] = useState<OrderReportRow[]>([]);
+  const [reportSummary, setReportSummary] = useState({
+    executed: 0,
+    rejected: 0,
+    pending: 0,
+    retried: 0,
+    unmatched: 0
+  });
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
   const [reportUpdatedAt, setReportUpdatedAt] = useState<string | null>(null);
@@ -126,9 +142,18 @@ export default function OrdersModule() {
         limit: 20
       });
       setReportRows(Array.isArray(data?.items) ? data.items : []);
+      setReportSummary({
+        executed: Number(data?.summary?.executed || 0),
+        rejected: Number(data?.summary?.rejected || 0),
+        pending: Number(data?.summary?.pending || 0),
+        retried: Number(data?.summary?.retried || 0),
+        unmatched: Number(data?.summary?.unmatched || 0)
+      });
       setReportUpdatedAt(data?.generatedAt || new Date().toISOString());
     } catch (err: any) {
       setReportError(err?.message || 'Failed to load signal/exchange report.');
+      setReportRows([]);
+      setReportSummary({ executed: 0, rejected: 0, pending: 0, retried: 0, unmatched: 0 });
     } finally {
       setReportLoading(false);
     }
@@ -201,6 +226,41 @@ export default function OrdersModule() {
   const selectedIntegration = useMemo(
     () => integrations.find((integration) => integration.id === integrationId) || null,
     [integrationId, integrations]
+  );
+  const reportCards = useMemo(
+    () => [
+      {
+        key: 'executed',
+        label: 'Executed',
+        value: reportSummary.executed,
+        chip: 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100'
+      },
+      {
+        key: 'rejected',
+        label: 'Rejected',
+        value: reportSummary.rejected,
+        chip: 'border-rose-300/40 bg-rose-500/20 text-rose-100'
+      },
+      {
+        key: 'pending',
+        label: 'Pending',
+        value: reportSummary.pending,
+        chip: 'border-sky-300/40 bg-sky-500/20 text-sky-100'
+      },
+      {
+        key: 'retried',
+        label: 'Retried',
+        value: reportSummary.retried,
+        chip: 'border-amber-300/40 bg-amber-500/20 text-amber-100'
+      },
+      {
+        key: 'unmatched',
+        label: 'Unmatched',
+        value: reportSummary.unmatched,
+        chip: 'border-slate-300/30 bg-slate-500/20 text-slate-100'
+      }
+    ],
+    [reportSummary]
   );
 
   return (
@@ -354,10 +414,18 @@ export default function OrdersModule() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Signal vs exchange report</p>
             <p className="text-sm text-gray-300">
-              Left table is TradingView signal data. Right table is exchange execution data for the same row.
+              1:1 execution audit ledger. Left rows are TradingView signals. Right rows are exchange outcomes for the same signal.
             </p>
           </div>
           <p className="text-xs text-gray-500">Updated: {formatDate(reportUpdatedAt)}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {reportCards.map((card) => (
+            <div key={card.key} className={`rounded-2xl border px-3 py-2 text-xs ${card.chip}`}>
+              <p className="uppercase tracking-[0.18em]">{card.label}</p>
+              <p className="mt-1 text-2xl font-semibold text-white">{card.value}</p>
+            </div>
+          ))}
         </div>
         {reportError && <p className="text-sm text-rose-300">{reportError}</p>}
         <div className="grid gap-4 xl:grid-cols-2">
@@ -369,23 +437,25 @@ export default function OrdersModule() {
               <table className="min-w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[#151a2f]">
                   <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                    <th className="px-3 py-2">Signal ID</th>
+                    <th className="px-3 py-2">Alert ID</th>
+                    <th className="px-3 py-2">Signal</th>
                     <th className="px-3 py-2">Timestamp</th>
                     <th className="px-3 py-2">Symbol</th>
                     <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Sent</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
                   {reportLoading && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={4}>
+                      <td className="px-3 py-3 text-gray-400" colSpan={6}>
                         Loading report…
                       </td>
                     </tr>
                   )}
                   {!reportLoading && reportRows.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={4}>
+                      <td className="px-3 py-3 text-gray-500" colSpan={6}>
                         No signal rows yet.
                       </td>
                     </tr>
@@ -394,9 +464,21 @@ export default function OrdersModule() {
                     reportRows.map((row) => (
                       <tr key={`signal-${row.key}`} className="border-t border-white/5">
                         <td className="px-3 py-2 font-mono text-xs text-sky-200">{row.signal.id || '—'}</td>
+                        <td className="px-3 py-2 uppercase">{row.audit?.signal || row.signal.side || '—'}</td>
                         <td className="px-3 py-2 text-xs">{formatDate(row.signal.timestamp)}</td>
                         <td className="px-3 py-2 font-semibold">{row.signal.symbol || '—'}</td>
                         <td className="px-3 py-2 uppercase">{row.signal.side || '—'}</td>
+                        <td className="px-3 py-2 text-xs">
+                          <span
+                            className={`inline-flex rounded-md border px-2 py-1 uppercase tracking-[0.14em] ${
+                              row.audit?.sentToExchange
+                                ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100'
+                                : 'border-slate-300/30 bg-slate-500/20 text-slate-200'
+                            }`}
+                          >
+                            {row.audit?.sentToExchange ? 'Yes' : 'No'}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                 </tbody>
@@ -418,19 +500,21 @@ export default function OrdersModule() {
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Amount</th>
                     <th className="px-3 py-2">Quantity</th>
+                    <th className="px-3 py-2">Order ID</th>
+                    <th className="px-3 py-2">Position after</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
                   {reportLoading && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={6}>
+                      <td className="px-3 py-3 text-gray-400" colSpan={8}>
                         Loading report…
                       </td>
                     </tr>
                   )}
                   {!reportLoading && reportRows.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={6}>
+                      <td className="px-3 py-3 text-gray-500" colSpan={8}>
                         No exchange rows yet.
                       </td>
                     </tr>
@@ -438,14 +522,23 @@ export default function OrdersModule() {
                   {!reportLoading &&
                     reportRows.map((row) => (
                       <tr key={`exchange-${row.key}`} className="border-t border-white/5">
-                        <td className={`px-3 py-2 uppercase ${tradeStatusClass(row.exchange.tradeStatus)}`}>
-                          {row.exchange.tradeStatus || '—'}
+                        <td className="px-3 py-2 uppercase">
+                          <span className={`inline-flex rounded-md border px-2 py-1 ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
+                            {row.exchange.tradeStatus || '—'}
+                          </span>
                         </td>
                         <td className="px-3 py-2 text-xs">{formatDate(row.exchange.executionTimestamp)}</td>
                         <td className="px-3 py-2 uppercase">{row.exchange.side || '—'}</td>
                         <td className="px-3 py-2 uppercase">{row.exchange.type || '—'}</td>
                         <td className="px-3 py-2">{formatNullableDecimal(row.exchange.amount, 4)}</td>
                         <td className="px-3 py-2">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
+                        <td className="px-3 py-2 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
+                        <td className="px-3 py-2 text-xs">
+                          {row.exchange.positionAfter?.state || 'UNKNOWN'}
+                          {row.exchange.positionAfter?.estimatedBaseQty !== null &&
+                            row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
+                            ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
+                        </td>
                       </tr>
                     ))}
                 </tbody>
