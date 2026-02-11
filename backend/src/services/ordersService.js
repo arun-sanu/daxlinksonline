@@ -10,10 +10,18 @@ const DEFAULT_RECV_WINDOW =
 const DEFAULT_TRADES_LIMIT =
   Number.isFinite(DEFAULT_TRADES_LIMIT_RAW) && DEFAULT_TRADES_LIMIT_RAW > 0 ? Math.min(DEFAULT_TRADES_LIMIT_RAW, 1000) : 30;
 const MAX_BALANCES = 10;
+const DEFAULT_REPORT_LIMIT = 25;
+const MAX_REPORT_LIMIT = 100;
 
 function asNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function toIso(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function normalizeSymbol(value) {
@@ -290,5 +298,235 @@ export async function getMexcSpotSnapshot({
               error: 'Open position inference requires account balances and open orders.'
             }
     }
+  };
+}
+
+function extractAlertId(signal) {
+  return signal?.payload?.alertId || signal?.payload?.raw?.alertId || null;
+}
+
+function extractSourceId(signal, alert) {
+  return (
+    alert?.payload?.sourceId ||
+    signal?.payload?.sourceId ||
+    signal?.payload?.raw?.sourceId ||
+    signal?.payload?.source ||
+    signal?.payload?.raw?.source ||
+    null
+  );
+}
+
+function mapTradeStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'executed_success' || normalized === 'succeeded') return 'executed';
+  if (normalized === 'executed_error' || normalized === 'failed') return 'failed';
+  if (normalized === 'retrying') return 'retrying';
+  if (normalized === 'ready_for_execution' || normalized === 'queued') return 'queued';
+  if (normalized === 'skipped_no_rule') return 'skipped';
+  return normalized || 'unknown';
+}
+
+function resolveQuantity(signal) {
+  const fromResult = asNumber(
+    signal?.payload?.executionResult?.qty ??
+      signal?.payload?.executionResult?.quantity ??
+      signal?.payload?.executionResult?.origQty ??
+      signal?.payload?.executionResult?.executedQty
+  );
+  if (fromResult > 0) return fromResult;
+  const amount = asNumber(signal?.amount);
+  return amount > 0 ? amount : 0;
+}
+
+function scoreAlertMatch(signal, alert) {
+  const signalSymbol = String(signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || '').toUpperCase();
+  const signalSide = String(signal?.side || signal?.payload?.side || signal?.payload?.raw?.side || '').toLowerCase();
+  const alertSymbol = String(alert?.symbol || '').toUpperCase();
+  const alertSide = String(alert?.side || '').toLowerCase();
+  if (!signalSymbol || !alertSymbol || signalSymbol !== alertSymbol) return Infinity;
+  if (!signalSide || !alertSide || signalSide !== alertSide) return Infinity;
+  const signalTs = new Date(signal.createdAt || signal.executedAt || Date.now()).getTime();
+  const alertTs = new Date(alert.receivedAt || Date.now()).getTime();
+  const diff = Math.abs(signalTs - alertTs);
+  if (diff > 10 * 60 * 1000) return Infinity;
+  return diff;
+}
+
+function normalizeReportLimit(limit) {
+  const n = Number(limit);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_REPORT_LIMIT;
+  return Math.min(Math.floor(n), MAX_REPORT_LIMIT);
+}
+
+function mapReportRow(signal, alert, integrationMeta, matchType) {
+  const symbol = alert?.symbol || signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || null;
+  const side = alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side || null;
+  const signalTimestamp =
+    toIso(alert?.receivedAt) ||
+    toIso(signal?.payload?.timestamp || signal?.payload?.raw?.timestamp) ||
+    toIso(signal?.createdAt);
+
+  return {
+    key: signal.id,
+    matchType,
+    signal: {
+      id: alert?.id || extractAlertId(signal) || signal.id,
+      sourceId: extractSourceId(signal, alert),
+      timestamp: signalTimestamp,
+      symbol,
+      side
+    },
+    exchange: {
+      integrationId: signal.integrationId || null,
+      integrationLabel: integrationMeta?.label || integrationMeta?.exchange || 'Integration',
+      exchange: integrationMeta?.exchange || null,
+      tradeStatus: mapTradeStatus(signal.status),
+      executionTimestamp: toIso(signal.executedAt) || toIso(signal.createdAt),
+      side: signal.side || side || null,
+      type: signal.type || signal?.payload?.type || signal?.payload?.raw?.type || null,
+      amount: signal.amount ?? null,
+      quantity: resolveQuantity(signal),
+      orderId:
+        signal?.payload?.executionResult?.orderId ||
+        signal?.payload?.executionResult?.id ||
+        signal?.payload?.executionResult?.clientOrderId ||
+        null,
+      errorMessage: signal.error || null
+    }
+  };
+}
+
+export async function getWorkspaceOrderReport({
+  workspaceId,
+  integrationId,
+  symbol,
+  limit = DEFAULT_REPORT_LIMIT
+}) {
+  const pageSize = normalizeReportLimit(limit);
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { ownerId: true }
+  });
+  if (!workspace) {
+    throw Object.assign(new Error('Workspace not found'), { status: 404 });
+  }
+  if (!workspace.ownerId) {
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      total: 0,
+      items: []
+    };
+  }
+
+  const integrationRows = await prisma.integration.findMany({
+    where: {
+      workspaceId,
+      ...(integrationId ? { id: integrationId } : {})
+    },
+    select: { id: true, exchange: true, label: true }
+  });
+  if (!integrationRows.length) {
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      total: 0,
+      items: []
+    };
+  }
+  const integrationIds = integrationRows.map((row) => row.id);
+  const integrationMap = integrationRows.reduce((acc, row) => {
+    acc[row.id] = row;
+    return acc;
+  }, {});
+
+  const signals = await prisma.forwardedSignal.findMany({
+    where: {
+      integrationId: { in: integrationIds },
+      ...(symbol ? { symbol: normalizeSymbol(symbol) } : {})
+    },
+    orderBy: { createdAt: 'desc' },
+    take: pageSize
+  });
+
+  if (!signals.length) {
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      total: 0,
+      items: []
+    };
+  }
+
+  const alertIds = Array.from(new Set(signals.map((signal) => extractAlertId(signal)).filter(Boolean)));
+  const alertsById = {};
+  if (alertIds.length > 0) {
+    const alerts = await prisma.tradingviewAlert.findMany({
+      where: { id: { in: alertIds } },
+      select: {
+        id: true,
+        receivedAt: true,
+        symbol: true,
+        side: true,
+        payload: true
+      }
+    });
+    alerts.forEach((alert) => {
+      alertsById[alert.id] = alert;
+    });
+  }
+
+  const oldestSignal = signals.reduce((oldest, signal) => {
+    if (!oldest) return signal;
+    return signal.createdAt < oldest.createdAt ? signal : oldest;
+  }, null);
+  const fallbackCandidates = await prisma.tradingviewAlert.findMany({
+    where: {
+      userId: workspace.ownerId,
+      receivedAt: oldestSignal?.createdAt
+        ? { gte: new Date(oldestSignal.createdAt.getTime() - 20 * 60 * 1000) }
+        : undefined
+    },
+    orderBy: { receivedAt: 'desc' },
+    take: pageSize * 4,
+    select: {
+      id: true,
+      receivedAt: true,
+      symbol: true,
+      side: true,
+      payload: true
+    }
+  });
+
+  const usedFallbackAlertIds = new Set();
+  const items = signals.map((signal) => {
+    const alertId = extractAlertId(signal);
+    if (alertId && alertsById[alertId]) {
+      return mapReportRow(signal, alertsById[alertId], integrationMap[signal.integrationId], 'alert_id');
+    }
+
+    let bestAlert = null;
+    let bestScore = Infinity;
+    fallbackCandidates.forEach((candidate) => {
+      if (usedFallbackAlertIds.has(candidate.id)) return;
+      const score = scoreAlertMatch(signal, candidate);
+      if (score < bestScore) {
+        bestScore = score;
+        bestAlert = candidate;
+      }
+    });
+    if (bestAlert && Number.isFinite(bestScore)) {
+      usedFallbackAlertIds.add(bestAlert.id);
+      return mapReportRow(signal, bestAlert, integrationMap[signal.integrationId], 'heuristic');
+    }
+
+    return mapReportRow(signal, null, integrationMap[signal.integrationId], 'unmatched');
+  });
+
+  return {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    total: items.length,
+    items
   };
 }
