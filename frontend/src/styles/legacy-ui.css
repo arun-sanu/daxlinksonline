@@ -374,6 +374,25 @@ a {
   letter-spacing: 0.12em;
 }
 
+.btn-rect {
+  border-radius: 12px;
+}
+
+.btn-danger {
+  background: rgba(248, 113, 113, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.95);
+  color: #ffffff;
+  box-shadow: 0 20px 40px rgba(248, 113, 113, 0.25);
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.98);
+  border-color: rgba(239, 68, 68, 0.98);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 24px 52px rgba(248, 113, 113, 0.35);
+}
+
 .btn-minimal {
   padding: 0.35rem 0.6rem;
   font-size: 0.65rem;

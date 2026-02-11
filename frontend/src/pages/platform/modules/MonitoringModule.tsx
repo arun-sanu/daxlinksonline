@@ -573,22 +573,16 @@ export default function MonitoringModule() {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
             <span>Last update: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</span>
-            <button className="btn btn-secondary btn-small" type="button" onClick={fetchAlerts} disabled={loading}>
+            <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchAlerts} disabled={loading}>
               {loading ? 'Refreshing…' : 'Refresh'}
             </button>
-            <button className="btn btn-secondary btn-small" type="button" onClick={handleClearAlerts} disabled={loading || alerts.length === 0}>
+            <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={handleClearAlerts} disabled={loading || alerts.length === 0}>
               Clear
             </button>
-            <button className="btn btn-secondary btn-small" type="button" onClick={handleDownloadAlerts} disabled={downloadLoading}>
+            <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={handleDownloadAlerts} disabled={downloadLoading}>
               {downloadLoading ? 'Downloading…' : 'Download'}
             </button>
-            <button
-              className="btn btn-secondary btn-small"
-              type="button"
-              onClick={handleDeleteAlerts}
-              disabled={deleteLoading}
-              style={{ borderColor: 'rgba(248, 113, 113, 0.55)', color: '#f87171' }}
-            >
+            <button className="btn btn-danger btn-small btn-rect" type="button" onClick={handleDeleteAlerts} disabled={deleteLoading}>
               {deleteLoading ? 'Deleting…' : 'Delete'}
             </button>
           </div>

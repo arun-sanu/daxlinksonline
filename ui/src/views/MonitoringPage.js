@@ -833,21 +833,20 @@ export default {
           </div>
           <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
             <span v-if="!loading && total">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</span>
-            <button class="btn btn-secondary btn-small" type="button" :disabled="loading" @click="loadAlerts">
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="loading" @click="loadAlerts">
               {{ loading ? 'Loading…' : 'Refresh' }}
             </button>
-            <button class="btn btn-secondary btn-small" type="button" :disabled="loading || alerts.length === 0" @click="clearAlerts">
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="loading || alerts.length === 0" @click="clearAlerts">
               Clear
             </button>
-            <button class="btn btn-secondary btn-small" type="button" :disabled="downloadLoading" @click="downloadAlerts">
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="downloadLoading" @click="downloadAlerts">
               {{ downloadLoading ? 'Downloading…' : 'Download' }}
             </button>
             <button
-              class="btn btn-secondary btn-small"
+              class="btn btn-danger btn-small btn-rect"
               type="button"
               :disabled="deleteLoading"
               @click="deleteAlerts"
-              :style="{ borderColor: 'rgba(248, 113, 113, 0.55)', color: '#f87171' }"
             >
               {{ deleteLoading ? 'Deleting…' : 'Delete' }}
             </button>
@@ -862,7 +861,7 @@ export default {
           <input v-model="q" class="field md:col-span-2" placeholder="Search strategy, symbol, side, or error" />
           <input v-model="userId" class="field" placeholder="User ID (optional)" />
           <div class="md:col-span-4 flex items-center justify-end gap-2">
-            <button class="btn btn-secondary btn-small" type="button" :disabled="loading" @click="applyFilters">Apply filters</button>
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="loading" @click="applyFilters">Apply filters</button>
           </div>
         </div>
 
@@ -923,8 +922,8 @@ export default {
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-400">
           <span>Page {{ page }} · Page size {{ pageSize }} · Total {{ total }}</span>
           <div class="flex items-center gap-2">
-            <button class="btn btn-secondary btn-small" type="button" :disabled="page<=1 || loading" @click="prevPage">Prev</button>
-            <button class="btn btn-secondary btn-small" type="button" :disabled="page*pageSize>=total || loading" @click="nextPage">Next</button>
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="page<=1 || loading" @click="prevPage">Prev</button>
+            <button class="btn btn-secondary btn-small btn-rect" type="button" :disabled="page*pageSize>=total || loading" @click="nextPage">Next</button>
           </div>
         </div>
       </section>
