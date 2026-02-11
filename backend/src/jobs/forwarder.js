@@ -72,6 +72,7 @@ export async function processForwardJob(job) {
         ...normalized,
         raw: {
           ...(normalized.raw || {}),
+          alertId: alertId || null,
           mappedOrder: target.mappedOrder,
           ruleId: target.ruleId
         }
@@ -93,9 +94,6 @@ export async function processForwardJob(job) {
       }
     }
 
-    if (alertId) {
-      await updateTradingviewAlertStatus(alertId, 'executed', null);
-    }
     console.log(`[forwarder] Signal routed to ${executionTargets.length} integration(s) using workflow rules`);
   } catch (err) {
     if (alertId) {

@@ -51,7 +51,20 @@ export function initExecuteOrdersQueue({ processor } = {}) {
     }
     return { mode: 'redis', queue: executeOrdersQueue, worker: executeOrdersWorker };
   }
-  // in-memory fallback: reuse memoryHandlers
-  if (processor) memoryHandlers.push(processor);
-  return { mode: 'memory' };
+  // In-memory fallback
+  const runner = processor ? (job) => processor(job) : null;
+  if (runner && !memoryHandlers.includes(runner)) {
+    memoryHandlers.push(runner);
+  }
+  executeOrdersQueue = {
+    async add(name, data) {
+      const handler = runner || memoryHandlers[memoryHandlers.length - 1];
+      if (handler) {
+        setTimeout(() => handler({ name, data }), 0);
+      }
+      return { id: `mem_${Date.now()}` };
+    }
+  };
+  executeOrdersWorker = runner || null;
+  return { mode: 'memory', queue: executeOrdersQueue, worker: executeOrdersWorker };
 }
