@@ -42,9 +42,9 @@ export type OrderCheckQuery = {
 
 function getWorkspaceId() {
   try {
-    return localStorage.getItem('workspaceId') || '00000000-0000-0000-0000-000000000000';
+    return localStorage.getItem('workspaceId') || '';
   } catch {
-    return '00000000-0000-0000-0000-000000000000';
+    return '';
   }
 }
 
@@ -68,17 +68,29 @@ export async function fetchMexcSpotSnapshot(query: OrderCheckQuery): Promise<Ord
   if (query.origClientOrderId) params.set('origClientOrderId', query.origClientOrderId.trim());
   if (query.integrationId) params.set('integrationId', query.integrationId.trim());
 
-  const res = await fetch(
-    withApiBase(`/api/v1/orders/${encodeURIComponent(workspaceId)}/spot?${params.toString()}`),
-    {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() }
-    }
-  );
+  const headers = { 'Content-Type': 'application/json', ...authHeaders() };
+  const requestPaths = workspaceId
+    ? [
+        `/api/v1/orders/${encodeURIComponent(workspaceId)}/spot?${params.toString()}`,
+        `/api/v1/orders/spot?${params.toString()}`
+      ]
+    : [`/api/v1/orders/spot?${params.toString()}`];
 
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(payload?.error || payload?.message || `Failed to fetch order status (${res.status})`);
+  let lastErrorMessage = 'Failed to fetch order status';
+  for (const path of requestPaths) {
+    const res = await fetch(withApiBase(path), {
+      credentials: 'include',
+      headers
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok) {
+      return payload as OrderCheckSnapshot;
+    }
+    lastErrorMessage = payload?.error || payload?.message || `Failed to fetch order status (${res.status})`;
+    if (res.status !== 404) {
+      throw new Error(lastErrorMessage);
+    }
   }
-  return payload as OrderCheckSnapshot;
+
+  throw new Error(lastErrorMessage);
 }

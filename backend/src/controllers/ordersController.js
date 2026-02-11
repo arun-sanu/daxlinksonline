@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getMexcSpotSnapshot } from '../services/ordersService.js';
+import { prisma } from '../utils/prisma.js';
 
 const paramsSchema = z.object({
   workspaceId: z.string().uuid()
@@ -24,6 +25,45 @@ export async function handleGetSpotOrderSnapshot(req, res, next) {
 
     const snapshot = await getMexcSpotSnapshot({
       workspaceId,
+      integrationId,
+      symbol,
+      orderId,
+      origClientOrderId
+    });
+    res.json(snapshot);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid query parameters';
+    }
+    next(error);
+  }
+}
+
+const myQuerySchema = querySchema.extend({
+  workspaceId: z.string().uuid().optional()
+});
+
+async function resolveWorkspaceForUser(userId, workspaceId) {
+  const row = await prisma.workspace.findFirst({
+    where: {
+      ownerId: userId,
+      ...(workspaceId ? { id: workspaceId } : {})
+    },
+    select: { id: true }
+  });
+  if (!row) {
+    throw Object.assign(new Error('Workspace not found for current user'), { status: 404 });
+  }
+  return row.id;
+}
+
+export async function handleGetMySpotOrderSnapshot(req, res, next) {
+  try {
+    const { integrationId, symbol, orderId, origClientOrderId, workspaceId } = myQuerySchema.parse(req.query || {});
+    const resolvedWorkspaceId = await resolveWorkspaceForUser(req.user.id, workspaceId);
+    const snapshot = await getMexcSpotSnapshot({
+      workspaceId: resolvedWorkspaceId,
       integrationId,
       symbol,
       orderId,
