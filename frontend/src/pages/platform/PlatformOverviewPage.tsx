@@ -8,7 +8,7 @@ const MODULES = [
   { id: 'webhooks', label: 'Webhooks', icon: '/icons/link.svg', metric: '18 active routes', requiresAuth: true },
   { id: 'workflow', label: 'Workflow', icon: '/icons/route.svg', metric: '5 nodes', requiresAuth: true, comingSoon: true },
   { id: 'monitoring', label: 'Monitoring', icon: '/icons/monitoring.svg', metric: 'Telemetry feed', requiresAuth: true, comingSoon: true },
-  { id: 'resources', label: 'Resources', icon: '/icons/menu-book.svg', metric: 'Docs + runbooks' },
+  { id: 'orders', label: 'Orders', icon: '/icons/alert.svg', metric: 'Spot fills + balances', requiresAuth: true, comingSoon: true },
   { id: 'trade-bots', label: 'Trade Bots', icon: '/icons/smart-toy.svg', metric: 'Strategies ready', requiresAuth: true },
   { id: 'banking', label: 'Banking', icon: '/icons/account-balance.svg', metric: 'Settlement windows', requiresAuth: true, comingSoon: true },
   { id: 'dns', label: 'DNS', icon: '/icons/dns.svg', metric: 'Edge profiles', requiresAuth: true },

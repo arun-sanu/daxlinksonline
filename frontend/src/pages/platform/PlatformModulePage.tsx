@@ -5,7 +5,7 @@ import DatabasesModule from './modules/DatabasesModule';
 import WebhooksModule from './modules/WebhooksModule';
 import WorkflowModule from './modules/WorkflowModule';
 import MonitoringModule from './modules/MonitoringModule';
-import ResourcesModule from './modules/ResourcesModule';
+import OrdersModule from './modules/OrdersModule';
 import TradeBotsModule from './modules/TradeBotsModule';
 import DNSModule from './modules/DNSModule';
 import DeploymentModule from './modules/DeploymentModule';
@@ -22,7 +22,7 @@ const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   webhooks: WebhooksModule,
   workflow: WorkflowModule,
   monitoring: MonitoringModule,
-  resources: ResourcesModule,
+  orders: OrdersModule,
   'trade-bots': TradeBotsModule,
   banking: BankingModule,
   dns: DNSModule,
@@ -39,7 +39,7 @@ const MODULE_META: Record<string, { label: string; icon: string }> = {
   webhooks: { label: 'Webhooks', icon: '/icons/link.svg' },
   workflow: { label: 'Workflow', icon: '/icons/route.svg' },
   monitoring: { label: 'Monitoring', icon: '/icons/monitoring.svg' },
-  resources: { label: 'Resources', icon: '/icons/menu-book.svg' },
+  orders: { label: 'Orders', icon: '/icons/alert.svg' },
   'trade-bots': { label: 'Trade Bots', icon: '/icons/smart-toy.svg' },
   banking: { label: 'Banking', icon: '/icons/account-balance.svg' },
   dns: { label: 'DNS', icon: '/icons/dns.svg' },

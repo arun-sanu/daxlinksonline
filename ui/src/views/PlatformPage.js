@@ -11,7 +11,6 @@ function buildModuleInventory(store) {
   const safeWebhooks = Array.isArray(store.webhooks) ? store.webhooks.length : 0;
   const safeWorkflow = Array.isArray(store.dataflowNodes) ? store.dataflowNodes.length : 0;
   const safeEvents = Array.isArray(store.credentialEvents) ? store.credentialEvents.length : 0;
-  const safeResources = Array.isArray(store.resources) ? store.resources.length : 0;
   const safeSessions = Array.isArray(store.recentSessions) ? store.recentSessions.length : 0;
 
   const baseModules = [
@@ -61,15 +60,6 @@ function buildModuleInventory(store) {
       comingSoon: true
     },
     {
-      id: 'resources',
-      name: 'resources',
-      label: 'Resources',
-      metric: pluralize(safeResources, 'resource entry'),
-      icon: '📚',
-      requiresAuth: false,
-      comingSoon: false
-    },
-    {
       id: 'trade-bots',
       name: 'trade-bots',
       label: 'Trade Bots',
@@ -77,6 +67,15 @@ function buildModuleInventory(store) {
       icon: '🤖',
       requiresAuth: true,
       comingSoon: false
+    },
+    {
+      id: 'orders',
+      name: 'orders',
+      label: 'Orders',
+      metric: 'Spot fills + balances',
+      icon: '🧾',
+      requiresAuth: true,
+      comingSoon: true
     },
     {
       id: 'banking',

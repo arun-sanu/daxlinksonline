@@ -21,7 +21,7 @@ const breadcrumbLabelMap: Record<string, string> = {
   webhooks: 'Webhooks',
   workflow: 'Workflow',
   monitoring: 'Monitoring',
-  resources: 'Resources',
+  orders: 'Orders',
   'trade-bots': 'Trade Bots',
   dns: 'DNS',
   deployment: 'Deployment',
