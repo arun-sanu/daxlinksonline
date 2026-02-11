@@ -60,7 +60,7 @@ const CONNECTIVITY_POLL_MS = 15000;
 
 function authHeaders() {
   try {
-    const token = localStorage.getItem('authToken');
+    const token = localStorage.getItem('authToken') || localStorage.getItem('daxlinksToken');
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch {
     return {};
@@ -81,6 +81,18 @@ function renderValue(value: any) {
   return String(value);
 }
 
+function toDateInputValue(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseDateInput(value: string) {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
 export default function MonitoringModule() {
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -90,6 +102,8 @@ export default function MonitoringModule() {
   const [clearedAt, setClearedAt] = useState<Date | null>(null);
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(new Date()));
   const [dnsRecords, setDnsRecords] = useState<DnsRecord[]>([]);
   const [dnsLoading, setDnsLoading] = useState(false);
   const [dnsError, setDnsError] = useState('');
@@ -107,11 +121,26 @@ export default function MonitoringModule() {
   const navigate = useNavigate();
 
   const fetchAlertsPayload = useCallback(
-    async (params: Record<string, string>, sinceOverride?: Date | null) => {
+    async (
+      params: Record<string, string>,
+      options?: { dateValue?: string; includeCleared?: boolean }
+    ) => {
       const query = new URLSearchParams(params);
-      const sinceValue = sinceOverride === undefined ? clearedAt : sinceOverride;
-      if (sinceValue) {
+      const dateValue = options?.dateValue ?? selectedDate;
+      const includeCleared = options?.includeCleared !== false;
+      const baseDate = parseDateInput(dateValue);
+      if (baseDate) {
+        const start = new Date(baseDate);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(baseDate);
+        end.setHours(23, 59, 59, 999);
+        const todayKey = toDateInputValue(new Date());
+        let sinceValue = start;
+        if (includeCleared && dateValue === todayKey && clearedAt && clearedAt > start) {
+          sinceValue = clearedAt;
+        }
         query.set('since', sinceValue.toISOString());
+        query.set('until', end.toISOString());
       }
       const queryString = query.toString();
       const fetchAlertsFrom = async (path: string) => {
@@ -143,16 +172,24 @@ export default function MonitoringModule() {
       }
       return data;
     },
-    [clearedAt, navigate]
+    [clearedAt, navigate, selectedDate]
   );
 
   const fetchAlerts = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAlertsPayload({ limit: '50' });
+      const data = await fetchAlertsPayload({ page: '1', pageSize: '200', limit: '200' });
       const items = Array.isArray(data?.items) ? data.items : [];
       setAlerts(items);
+      setSelectedIds((prev) => {
+        if (!prev.size) return prev;
+        const next = new Set<string>();
+        items.forEach((item: AlertRow) => {
+          if (prev.has(item.id)) next.add(item.id);
+        });
+        return next;
+      });
       setLastUpdated(new Date());
     } catch (err: any) {
       setError(err?.message || 'Failed to load alerts.');
@@ -163,18 +200,24 @@ export default function MonitoringModule() {
 
   useEffect(() => {
     fetchAlerts();
+    if (!isTodaySelected) return undefined;
     const handle = setInterval(fetchAlerts, POLL_MS);
     return () => clearInterval(handle);
-  }, [fetchAlerts]);
+  }, [fetchAlerts, isTodaySelected]);
 
   const handleClearAlerts = useCallback(() => {
     const now = new Date();
-    setClearedAt(now);
+    if (isTodaySelected) {
+      setClearedAt(now);
+    } else {
+      setClearedAt(null);
+    }
     setAlerts([]);
     setSelected(null);
+    setSelectedIds(new Set());
     setLastUpdated(now);
     setError('');
-  }, []);
+  }, [isTodaySelected]);
 
   const handleDownloadAlerts = useCallback(async () => {
     setDownloadLoading(true);
@@ -185,7 +228,10 @@ export default function MonitoringModule() {
       let all: AlertRow[] = [];
       let total: number | null = null;
       while (true) {
-        const data = await fetchAlertsPayload({ page: String(page), pageSize: String(pageSize) }, null);
+        const data = await fetchAlertsPayload(
+          { page: String(page), pageSize: String(pageSize) },
+          { includeCleared: false }
+        );
         const items = Array.isArray(data?.items) ? data.items : [];
         all = all.concat(items);
         if (Number.isFinite(data?.total)) {
@@ -251,14 +297,39 @@ export default function MonitoringModule() {
       }
       setAlerts([]);
       setSelected(null);
+      setSelectedIds(new Set());
       setClearedAt(null);
-      setLastUpdated(new Date());
+      await fetchAlerts();
     } catch (err: any) {
       setError(err?.message || 'Failed to delete alerts.');
     } finally {
       setDeleteLoading(false);
     }
-  }, [navigate]);
+  }, [fetchAlerts, navigate]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (alerts.length === 0) return prev;
+      const allSelected = alerts.every((alert) => prev.has(alert.id));
+      if (allSelected) return new Set();
+      return new Set(alerts.map((alert) => alert.id));
+    });
+  }, [alerts]);
+
+  const isTodaySelected = selectedDate === toDateInputValue(new Date());
+  const allSelected = alerts.length > 0 && alerts.every((alert) => selectedIds.has(alert.id));
 
   const fetchDnsRecords = useCallback(async () => {
     setDnsLoading(true);
@@ -569,9 +640,27 @@ export default function MonitoringModule() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Incoming alerts</p>
-            <p className="text-sm muted-text">Auto-refreshing every {POLL_MS / 1000}s.</p>
+            <p className="text-sm muted-text">
+              {isTodaySelected ? `Auto-refreshing every ${POLL_MS / 1000}s.` : 'Viewing alerts for the selected date.'}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                  <line x1="16" y1="2.5" x2="16" y2="6"></line>
+                  <line x1="8" y1="2.5" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+              </span>
+              <input
+                type="date"
+                className="rounded-lg border border-white/10 bg-white/5 py-1.5 pl-8 pr-3 text-xs text-gray-200 focus:border-primary-300 focus:outline-none"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+              />
+            </div>
             <span>Last update: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</span>
             <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchAlerts} disabled={loading}>
               {loading ? 'Refreshing…' : 'Refresh'}
@@ -590,10 +679,19 @@ export default function MonitoringModule() {
 
         {error && <p className="text-sm text-rose-400">{error}</p>}
 
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className={`rounded-xl border border-white/10 overflow-x-auto ${isTodaySelected ? 'max-h-[420px] overflow-y-auto' : ''}`}>
           <table className="min-w-full text-sm">
-            <thead className="bg-white/5 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+            <thead className="sticky top-0 z-10 bg-white/5 text-[11px] uppercase tracking-[0.2em] text-gray-400">
               <tr>
+                <th className="px-3 py-2 text-left">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-indigo-400"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all alerts"
+                  />
+                </th>
                 <th className="px-3 py-2 text-left">Time</th>
                 <th className="px-3 py-2 text-left">Strategy</th>
                 <th className="px-3 py-2 text-left">Symbol</th>
@@ -612,6 +710,16 @@ export default function MonitoringModule() {
                   className={`border-t border-white/5 ${alert.payload ? 'cursor-pointer hover:bg-white/5' : ''}`}
                   onClick={() => alert.payload && setSelected(alert)}
                 >
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-indigo-400"
+                      checked={selectedIds.has(alert.id)}
+                      onChange={() => toggleSelect(alert.id)}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`Select alert ${alert.id}`}
+                    />
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-300">{formatTime(alert.receivedAt)}</td>
                   <td className="px-3 py-2 text-xs text-main">{renderValue(alert.strategyName)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.symbol)}</td>
@@ -625,14 +733,14 @@ export default function MonitoringModule() {
               ))}
               {loading && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-400">
+                  <td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-400">
                     Loading alerts…
                   </td>
                 </tr>
               )}
               {!loading && alerts.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-400">
+                  <td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-400">
                     No alerts yet.
                   </td>
                 </tr>
@@ -651,7 +759,7 @@ export default function MonitoringModule() {
           </div>
           <div className="flex items-center gap-3 text-xs text-gray-400">
             <span>Auto-refresh every {WEBHOOK_POLL_MS / 1000}s</span>
-            <button className="btn btn-secondary btn-small" type="button" onClick={fetchWebhooks} disabled={webhooksLoading}>
+            <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchWebhooks} disabled={webhooksLoading}>
               {webhooksLoading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
@@ -715,7 +823,7 @@ export default function MonitoringModule() {
           </div>
           <div className="flex items-center gap-3 text-xs text-gray-400">
             <span>Auto-refresh every {DNS_POLL_MS / 1000}s</span>
-            <button className="btn btn-secondary btn-small" type="button" onClick={fetchDnsRecords} disabled={dnsLoading}>
+            <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchDnsRecords} disabled={dnsLoading}>
               {dnsLoading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
@@ -774,7 +882,7 @@ export default function MonitoringModule() {
               </div>
               <div className="flex items-center gap-3 text-xs text-gray-400">
                 <span>Auto-refresh every {CONNECTIVITY_POLL_MS / 1000}s</span>
-                <button className="btn btn-secondary btn-small" type="button" onClick={fetchConnectivity} disabled={connectivityLoading}>
+                <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchConnectivity} disabled={connectivityLoading}>
                   {connectivityLoading ? 'Loading…' : 'Refresh'}
                 </button>
               </div>
@@ -980,7 +1088,7 @@ export default function MonitoringModule() {
               </div>
               <div className="flex items-center gap-3 text-xs text-gray-400">
                 <span>Auto-refresh every {METRICS_POLL_MS / 1000}s</span>
-                <button className="btn btn-secondary btn-small" type="button" onClick={fetchMetrics} disabled={metricsLoading}>
+                <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={fetchMetrics} disabled={metricsLoading}>
                   {metricsLoading ? 'Refreshing…' : 'Refresh'}
                 </button>
               </div>
@@ -1068,7 +1176,7 @@ export default function MonitoringModule() {
                 <p className="text-xs uppercase tracking-[0.28em] text-gray-500">Payload</p>
                 <p className="text-sm text-main">TradingView alert</p>
               </div>
-              <button className="btn btn-secondary btn-small" type="button" onClick={() => setSelected(null)}>
+              <button className="btn btn-secondary btn-small btn-rect" type="button" onClick={() => setSelected(null)}>
                 Close
               </button>
             </header>

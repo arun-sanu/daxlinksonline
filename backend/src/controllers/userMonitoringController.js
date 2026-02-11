@@ -7,6 +7,7 @@ const querySchema = z.object({
   pageSize: z.preprocess((val) => Number(val || 50), z.number().int().positive().max(200)).optional(),
   limit: z.preprocess((val) => Number(val || 50), z.number().int().positive().max(200)).optional(),
   since: z.string().datetime().optional(),
+  until: z.string().datetime().optional(),
   q: z.string().optional()
 });
 
@@ -53,6 +54,7 @@ export async function handleListWebhookAlerts(req, res, next) {
       limit: parsed.limit || parsed.pageSize || 50,
       page: parsed.page || 1,
       since: parsed.since ? new Date(parsed.since) : undefined,
+      until: parsed.until ? new Date(parsed.until) : undefined,
       q: parsed.q
     });
     const items = result.rows.map(toAlertRow);
