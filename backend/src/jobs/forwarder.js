@@ -1,7 +1,7 @@
 import { prisma } from '../utils/prisma.js';
 import { decrypt } from '../lib/kms.js';
 import { createExchange } from '../sdk/index.js';
-import { normalizePayload, computeIdempotencyKey, sanitizePayload } from '../services/forwardingMapper.js';
+import { normalizePayload, computeIdempotencyKey } from '../services/forwardingMapper.js';
 import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
 import crypto from 'crypto';
 import { getWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
@@ -47,7 +47,18 @@ export async function processForwardJob(job) {
       const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
       const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
       const simulation = await simulateRules({ workspaceId, rules: config.rules || [], source, signal });
-      executionTargets.push(...simulation.matchedRules);
+      if (simulation.matchedRules.length > 0) {
+        executionTargets.push(...simulation.matchedRules);
+        continue;
+      }
+
+      const autoTargets = await resolveAutoExecutionTargets({ workspaceId, normalized });
+      if (autoTargets.length > 0) {
+        console.log(
+          `[forwarder] Auto-routed signal for workspace ${workspaceId} to integration ${autoTargets[0].destinationIntegrationId}`
+        );
+        executionTargets.push(...autoTargets);
+      }
     }
 
     if (!executionTargets.length) {
@@ -68,6 +79,11 @@ export async function processForwardJob(job) {
     }
 
     for (const target of executionTargets) {
+      const scopedIdempotencyKey = buildTargetIdempotencyKey({
+        idempotencyKey: idemKey,
+        integrationId: target.destinationIntegrationId,
+        ruleId: target.ruleId
+      });
       const augmented = {
         ...normalized,
         raw: {
@@ -80,7 +96,7 @@ export async function processForwardJob(job) {
       const record = await upsertForwardedSignal({
         userId,
         integrationId: target.destinationIntegrationId || null,
-        idempotencyKey: idemKey,
+        idempotencyKey: scopedIdempotencyKey,
         normalized: augmented,
         status: 'ready_for_execution',
         attempts: 0,
@@ -103,6 +119,52 @@ export async function processForwardJob(job) {
     }
     throw err;
   }
+}
+
+const AUTO_ROUTE_SINGLE_INTEGRATION =
+  String(process.env.TRADINGVIEW_AUTO_ROUTE_SINGLE_INTEGRATION || 'true').toLowerCase() === 'true';
+
+function buildTargetIdempotencyKey({ idempotencyKey, integrationId, ruleId }) {
+  return crypto
+    .createHash('sha256')
+    .update(`${idempotencyKey}:${integrationId || 'none'}:${ruleId || 'none'}`)
+    .digest('hex');
+}
+
+async function resolveAutoExecutionTargets({ workspaceId, normalized }) {
+  if (!AUTO_ROUTE_SINGLE_INTEGRATION) return [];
+  const integrations = await prisma.integration.findMany({
+    where: {
+      workspaceId,
+      credential: { isNot: null },
+      status: { in: ['active', 'pending', 'connected'] }
+    },
+    select: {
+      id: true,
+      exchange: true
+    },
+    orderBy: { updatedAt: 'desc' }
+  });
+  if (!integrations.length) return [];
+
+  const requestedExchange = normalized.exchange ? String(normalized.exchange).toLowerCase() : null;
+  const candidates = requestedExchange
+    ? integrations.filter((integration) => String(integration.exchange || '').toLowerCase() === requestedExchange)
+    : integrations;
+  if (candidates.length !== 1) return [];
+
+  const target = candidates[0];
+  return [
+    {
+      ruleId: 'auto-single-integration',
+      destinationIntegrationId: target.id,
+      mappedOrder: {
+        orderType: normalized.type || 'market',
+        size: normalized.amount ?? null,
+        leverage: 1
+      }
+    }
+  ];
 }
 
 async function upsertForwardedSignal({ userId, integrationId, idempotencyKey, normalized, status, attempts, error }) {

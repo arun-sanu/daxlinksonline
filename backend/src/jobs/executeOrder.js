@@ -63,16 +63,16 @@ function resolveOrderSize(mappedSize, fallbackAmount) {
       const trimmed = mappedSize.trim();
       if (trimmed.endsWith('%')) {
         const fallback = parseNumeric(fallbackAmount);
-        return fallback != null ? fallback : null;
+        return fallback != null && fallback > 0 ? fallback : null;
       }
       const parsed = parseNumeric(trimmed);
-      if (parsed != null) return parsed;
+      if (parsed != null && parsed > 0) return parsed;
     }
     const numeric = parseNumeric(mappedSize);
-    if (numeric != null) return numeric;
+    if (numeric != null && numeric > 0) return numeric;
   }
   const fallback = parseNumeric(fallbackAmount);
-  return fallback != null ? fallback : null;
+  return fallback != null && fallback > 0 ? fallback : null;
 }
 
 async function placeOrderBestEffort(exchange, n) {
@@ -160,7 +160,14 @@ export async function executePreparedSignal(signalId) {
   const { symbol: mappedSymbol, size, orderType, leverage } = mappedOrder;
   const symbol = mappedSymbol || signal.symbol || signal.payload?.raw?.symbol || null;
   const side = normalizeSide(signal.side || signal.payload?.raw?.side || mappedOrder.side);
-  const qty = resolveOrderSize(size, signal.amount);
+  const fallbackAmount =
+    signal.amount ??
+    signal.payload?.amount ??
+    signal.payload?.raw?.amount ??
+    signal.payload?.raw?.qty ??
+    signal.payload?.raw?.quantity ??
+    null;
+  const qty = resolveOrderSize(size, fallbackAmount);
   if (!symbol || !side || qty === null) {
     await markAlertStatus(getAlertId(signal), 'failed', 'Mapped order incomplete');
     await prisma.forwardedSignal.update({

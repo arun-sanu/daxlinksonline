@@ -15,6 +15,24 @@ function parseEdgeKey(edgeKey) {
   return null;
 }
 
+function resolveMappedSize(mapping) {
+  const positionSizeType = String(mapping?.positionSizeType || 'absolute').toLowerCase();
+  const rawValue = mapping?.positionSizeValue;
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return null;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  if (positionSizeType === 'percent') {
+    return `${numeric}%`;
+  }
+  return numeric;
+}
+
 function mapForwardedSignalEvent(row, integration) {
   const status = (row.status || '').toLowerCase();
   const ok = ['succeeded', 'success', 'executed_success'].includes(status);
@@ -198,12 +216,7 @@ export async function simulateRules({ workspaceId, rules, source, signal }) {
     }
 
     const mapping = rule.mapping || {};
-    const size = (() => {
-      if (mapping.positionSizeType === 'percent') {
-        return `${mapping.positionSizeValue || 0}%`;
-      }
-      return mapping.positionSizeValue || 0;
-    })();
+    const size = resolveMappedSize(mapping);
     matchedRules.push({
       ruleId: rule.id || 'unknown',
       destinationIntegrationId: rule.destination.id,
