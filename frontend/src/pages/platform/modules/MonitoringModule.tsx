@@ -10,7 +10,6 @@ import type { MonitoringMetrics } from '../../../api/metrics';
 import LiveGauge from '../../../components/LiveGauge';
 import LiveLineChart from '../../../components/LiveLineChart';
 import MetricTile from '../../../components/MetricTile';
-import DigitalGauge from '../../../components/DigitalGauge';
 
 type AlertRow = {
   id: string;
@@ -1111,27 +1110,6 @@ export default function MonitoringModule() {
                 label="Latency (ms)"
                 value={metrics?.latencyMs != null ? `${metrics.latencyMs}` : '—'}
                 detail="Avg response time (last minute)"
-              />
-            </div>
-
-            <div className="grid gap-4">
-              <DigitalGauge
-                label="Alerts / min"
-                value={metrics ? String(metrics.throughputPerMin).padStart(3, '0') : '---'}
-                unit="/min"
-                hint="7-seg throughput"
-              />
-              <DigitalGauge
-                label="Queue depth"
-                value={metrics ? String(metrics.queueDepth).padStart(3, '0') : '---'}
-                unit="jobs"
-                hint="Pending deliveries"
-              />
-              <DigitalGauge
-                label="Latency"
-                value={metrics?.latencyMs != null ? String(metrics.latencyMs).padStart(3, '0') : '---'}
-                unit="ms"
-                hint="Avg response time"
               />
             </div>
 
