@@ -119,6 +119,7 @@ export default function MonitoringModule() {
   const [connectivityError, setConnectivityError] = useState('');
   const [connectivityUpdatedAt, setConnectivityUpdatedAt] = useState<Date | null>(null);
   const navigate = useNavigate();
+  const isTodaySelected = selectedDate === toDateInputValue(new Date());
 
   const fetchAlertsPayload = useCallback(
     async (
@@ -328,7 +329,6 @@ export default function MonitoringModule() {
     });
   }, [alerts]);
 
-  const isTodaySelected = selectedDate === toDateInputValue(new Date());
   const allSelected = alerts.length > 0 && alerts.every((alert) => selectedIds.has(alert.id));
 
   const fetchDnsRecords = useCallback(async () => {
