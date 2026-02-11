@@ -66,6 +66,14 @@ function parseNumeric(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizeAmountMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['quote', 'usdc', 'usdt', 'quote_amount', 'quoteamount'].includes(normalized)) return 'quote';
+  if (['base', 'btc', 'quantity', 'qty'].includes(normalized)) return 'base';
+  return null;
+}
+
 function toFixedString(value, maxDecimals = 12) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
@@ -99,6 +107,8 @@ async function placeOrderBestEffort(exchange, n) {
     amount: n.amount || n.qty || 0,
     qty: n.qty || n.amount || 0,
     quantity: n.amount || n.qty || 0,
+    quoteAmount: n.quoteAmount,
+    quoteOrderQty: n.quoteAmount,
     price: n.price,
     clientOrderId: n.clientOrderId,
     exchange: n.exchange,
@@ -126,11 +136,6 @@ async function placeOrderBestEffort(exchange, n) {
   throw new Error('Exchange adapter does not support order placement');
 }
 
-function isUnsupportedExchangeApiError(error) {
-  const message = String(error?.message || '').toLowerCase();
-  return message.includes('api not supported for exchange');
-}
-
 async function placeMexcSpotOrderDirect({
   apiKey,
   apiSecret,
@@ -141,15 +146,14 @@ async function placeMexcSpotOrderDirect({
   price,
   clientOrderId
 }) {
-  const quantity = toFixedString(qty, 12);
-  if (!quantity || Number(quantity) <= 0) {
-    throw new Error('Invalid quantity for MEXC order');
-  }
-
   const params = new URLSearchParams();
   params.set('symbol', symbol);
   params.set('side', side);
   params.set('type', type);
+  const quantity = toFixedString(qty, 12);
+  if (!quantity || Number(quantity) <= 0) {
+    throw new Error('Invalid quantity for MEXC order');
+  }
   params.set('quantity', quantity);
   params.set('recvWindow', String(SAFE_MEXC_RECV_WINDOW));
   params.set('timestamp', String(Date.now()));
@@ -192,8 +196,87 @@ async function placeMexcSpotOrderDirect({
   }
   return {
     provider: 'mexc-direct',
+    amountMode: 'base',
     ...payload
   };
+}
+
+async function fetchMexcTickerPrice(symbol) {
+  const res = await fetch(`${MEXC_BASE_URL}/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`, {
+    method: 'GET'
+  });
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  if (!res.ok) {
+    throw new Error(payload?.msg || payload?.message || text || `Failed to fetch ticker price (${res.status})`);
+  }
+  const price = parseNumeric(payload?.price);
+  if (!price || price <= 0) {
+    throw new Error('Invalid ticker price for quote conversion');
+  }
+  return price;
+}
+
+async function fetchMexcSymbolMeta(symbol) {
+  const res = await fetch(`${MEXC_BASE_URL}/api/v3/exchangeInfo?symbol=${encodeURIComponent(symbol)}`, {
+    method: 'GET'
+  });
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  if (!res.ok) {
+    throw new Error(payload?.msg || payload?.message || text || `Failed to fetch exchange info (${res.status})`);
+  }
+  const symbolInfo = Array.isArray(payload?.symbols) ? payload.symbols[0] : null;
+  const filters = Array.isArray(symbolInfo?.filters) ? symbolInfo.filters : [];
+  const lotSize = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
+  const notionalFilter = filters.find((f) => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL') || {};
+  const stepFromSymbol = parseNumeric(symbolInfo?.baseSizePrecision) || 0;
+  return {
+    minQty: parseNumeric(lotSize.minQty) || stepFromSymbol || 0,
+    stepSize: parseNumeric(lotSize.stepSize) || stepFromSymbol || 0,
+    minNotional: parseNumeric(notionalFilter.minNotional) || 0
+  };
+}
+
+function floorToStep(value, step) {
+  if (!step || step <= 0) return value;
+  const precision = (() => {
+    const s = String(step);
+    if (!s.includes('.')) return 0;
+    return s.split('.')[1].replace(/0+$/, '').length;
+  })();
+  const scale = Math.pow(10, precision);
+  const scaledValue = Math.floor(value * scale + 1e-8);
+  const scaledStep = Math.round(step * scale);
+  if (!scaledStep || scaledStep <= 0) return value;
+  const stepped = Math.floor(scaledValue / scaledStep) * scaledStep;
+  return stepped / scale;
+}
+
+async function convertQuoteToBaseQty({ symbol, quoteAmount }) {
+  const [price, meta] = await Promise.all([fetchMexcTickerPrice(symbol), fetchMexcSymbolMeta(symbol)]);
+  if (meta.minNotional > 0 && quoteAmount < meta.minNotional) {
+    throw new Error(`Amount too small: minimum notional is ${meta.minNotional}`);
+  }
+  let qty = quoteAmount / price;
+  qty = floorToStep(qty, meta.stepSize);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    throw new Error('Amount too small after quantity step rounding');
+  }
+  if (meta.minQty > 0 && qty < meta.minQty) {
+    throw new Error(`Amount too small: minimum quantity is ${meta.minQty}`);
+  }
+  return qty;
 }
 
 function getAlertId(signal) {
@@ -243,6 +326,7 @@ export async function executePreparedSignal(signalId) {
   const { symbol: mappedSymbol, size, orderType, leverage } = mappedOrder;
   const symbol = mappedSymbol || signal.symbol || signal.payload?.raw?.symbol || null;
   const side = normalizeSide(signal.side || signal.payload?.raw?.side || mappedOrder.side);
+  const orderTypeNorm = normalizeOrderType(orderType || signal.type || signal.payload?.raw?.type || 'market');
   const fallbackAmount =
     signal.amount ??
     signal.payload?.amount ??
@@ -250,8 +334,30 @@ export async function executePreparedSignal(signalId) {
     signal.payload?.raw?.qty ??
     signal.payload?.raw?.quantity ??
     null;
-  const qty = resolveOrderSize(size, fallbackAmount);
-  if (!symbol || !side || qty === null) {
+  let qty = resolveOrderSize(size, fallbackAmount);
+  const defaultAmountMode =
+    orderTypeNorm === 'MARKET' && typeof symbol === 'string' && /(USDT|USDC)$/i.test(symbol) ? 'quote' : 'base';
+
+  const amountMode =
+    normalizeAmountMode(signal.payload?.amountMode) ||
+    normalizeAmountMode(signal.payload?.amountCurrency) ||
+    normalizeAmountMode(signal.payload?.raw?.amountMode) ||
+    normalizeAmountMode(signal.payload?.raw?.amountCurrency) ||
+    (signal.payload?.quoteAmount != null || signal.payload?.raw?.quoteAmount != null ? 'quote' : defaultAmountMode);
+
+  let quoteAmount = parseNumeric(signal.payload?.quoteAmount ?? signal.payload?.raw?.quoteAmount);
+  if (amountMode === 'quote' && (quoteAmount == null || quoteAmount <= 0)) {
+    quoteAmount = parseNumeric(fallbackAmount);
+  }
+
+  const needsQuoteConversion = amountMode === 'quote';
+  if (needsQuoteConversion && quoteAmount != null && quoteAmount > 0 && symbol) {
+    qty = await convertQuoteToBaseQty({ symbol, quoteAmount });
+  }
+
+  const missingQty = qty === null || qty <= 0;
+  const missingQuote = amountMode === 'quote' && (!quoteAmount || quoteAmount <= 0);
+  if (!symbol || !side || (missingQty && !(amountMode === 'quote' && side === 'BUY' && orderTypeNorm === 'MARKET')) || missingQuote) {
     await markAlertStatus(getAlertId(signal), 'failed', 'Mapped order incomplete');
     await prisma.forwardedSignal.update({
       where: { id: signalId },
@@ -286,7 +392,6 @@ export async function executePreparedSignal(signalId) {
       passphrase
     });
 
-    const orderTypeNorm = normalizeOrderType(orderType || signal.type || signal.payload?.raw?.type || 'market');
     const price = parseNumeric(mappedOrder.price ?? signal.price ?? signal.payload?.raw?.price);
     const clientOrderId =
       signal.payload?.raw?.clientOrderId ||
@@ -296,29 +401,9 @@ export async function executePreparedSignal(signalId) {
       signal.idempotencyKey ||
       null;
 
+    const isMexc = String(integration.exchange || '').toLowerCase() === 'mexc';
     let result;
-    try {
-      result = await placeOrderBestEffort(client, {
-        symbol,
-        side,
-        type: orderTypeNorm,
-        amount: qty,
-        qty,
-        price,
-        clientOrderId,
-        exchange: integration.exchange,
-        environment: integration.environment,
-        raw: {
-          ...(signal.payload || {}),
-          leverage: leverage || signal.payload?.raw?.leverage || undefined
-        }
-      });
-    } catch (adapterErr) {
-      const isMexc = String(integration.exchange || '').toLowerCase() === 'mexc';
-      if (!isMexc || !isUnsupportedExchangeApiError(adapterErr)) {
-        throw adapterErr;
-      }
-
+    if (isMexc) {
       result = await placeMexcSpotOrderDirect({
         apiKey,
         apiSecret,
@@ -328,6 +413,23 @@ export async function executePreparedSignal(signalId) {
         qty,
         price,
         clientOrderId
+      });
+    } else {
+      result = await placeOrderBestEffort(client, {
+        symbol,
+        side,
+        type: orderTypeNorm,
+        amount: qty,
+        qty,
+        quoteAmount: amountMode === 'quote' ? quoteAmount : null,
+        price,
+        clientOrderId,
+        exchange: integration.exchange,
+        environment: integration.environment,
+        raw: {
+          ...(signal.payload || {}),
+          leverage: leverage || signal.payload?.raw?.leverage || undefined
+        }
       });
     }
     await markAlertStatus(getAlertId(signal), 'executed', null);
