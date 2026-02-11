@@ -133,6 +133,16 @@ a {
   opacity: 0;
 }
 
+.orders-page .card-shell:hover {
+  transform: none;
+  box-shadow: 0 30px 80px rgba(8, 9, 14, 0.55);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.orders-page .card-shell:hover::after {
+  opacity: 0;
+}
+
 .connectivity-shell {
   background: radial-gradient(circle at 20% 20%, rgba(32, 40, 52, 0.55), rgba(8, 12, 20, 0.9) 55%);
   border: 1px solid rgba(255, 255, 255, 0.12);

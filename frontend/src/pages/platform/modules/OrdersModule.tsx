@@ -157,7 +157,7 @@ export default function OrdersModule() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="orders-page space-y-6">
       <header className="space-y-2">
         <p className="section-label">Orders</p>
         <h2 className="text-3xl font-semibold text-main">MEXC spot order status</h2>
