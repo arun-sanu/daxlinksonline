@@ -110,3 +110,9 @@ export async function listTradingviewAlerts({ page = 1, limit = 50, userId, stat
   ]);
   return { rows, total, page: Math.max(1, Number(page) || 1), pageSize: take };
 }
+
+export async function deleteTradingviewAlerts({ userId } = {}) {
+  const where = {};
+  if (userId) where.userId = String(userId);
+  return prisma.tradingviewAlert.deleteMany({ where });
+}

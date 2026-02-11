@@ -79,6 +79,9 @@ export default {
     const pageSize = ref(20);
     const total = ref(0);
     const selectedAlert = ref(null);
+    const clearedAt = ref(null);
+    const downloadLoading = ref(false);
+    const deleteLoading = ref(false);
     const webhooks = ref([]);
     const webhooksLoading = ref(false);
     const webhooksError = ref('');
@@ -104,6 +107,7 @@ export default {
       workspaceError = err?.message || 'Workspace ID missing.';
     }
     const alertsEndpoint = `${apiPrefix}/users/alerts`;
+    const webhookAlertsEndpoint = `${apiPrefix}/users/webhook-alerts`;
     const webhooksEndpoint = workspaceId ? `${apiPrefix}/webhooks/${encodeURIComponent(workspaceId)}` : '';
     const deliveriesEndpoint = `${apiPrefix}/admin/deliveries`;
     const metricsEndpoint = `${apiPrefix}/metrics/monitoring`;
@@ -116,22 +120,47 @@ export default {
       unknown: '#9ca3af'
     };
 
-    async function loadAlerts() {
-      loading.value = true;
-      error.value = '';
-      try {
-        const params = new URLSearchParams({ limit: String(pageSize.value) });
-        if (status.value) params.set('status', status.value);
-        if (q.value.trim()) params.set('q', q.value.trim());
-        if (userId.value.trim()) params.set('userId', userId.value.trim());
-        const res = await fetch(`${alertsEndpoint}?${params.toString()}`, {
+    async function fetchAlertsPage({ pageOverride, pageSizeOverride, includeSince = true } = {}) {
+      const effectivePage = pageOverride ?? page.value;
+      const effectivePageSize = pageSizeOverride ?? pageSize.value;
+      const params = new URLSearchParams({
+        page: String(effectivePage),
+        pageSize: String(effectivePageSize),
+        limit: String(effectivePageSize)
+      });
+      if (status.value) params.set('status', status.value);
+      if (q.value.trim()) params.set('q', q.value.trim());
+      if (userId.value.trim()) params.set('userId', userId.value.trim());
+      if (includeSince && clearedAt.value) params.set('since', clearedAt.value.toISOString());
+
+      const request = async (endpoint) => {
+        const res = await fetch(`${endpoint}?${params.toString()}`, {
           headers: { ...authHeaders() },
           credentials: 'include'
         });
         if (!res.ok) {
-          throw new Error(await res.text());
+          const error = new Error(await res.text());
+          error.status = res.status;
+          throw error;
         }
-        const data = await res.json();
+        return res.json();
+      };
+
+      try {
+        return await request(alertsEndpoint);
+      } catch (e) {
+        if (e?.status === 404) {
+          return await request(webhookAlertsEndpoint);
+        }
+        throw e;
+      }
+    }
+
+    async function loadAlerts() {
+      loading.value = true;
+      error.value = '';
+      try {
+        const data = await fetchAlertsPage();
         const rows = Array.isArray(data?.items) ? data.items.map(normalizeAlert) : [];
         alerts.value = rows;
         total.value = data?.total || rows.length || 0;
@@ -237,6 +266,94 @@ export default {
     function applyFilters() {
       page.value = 1;
       loadAlerts();
+    }
+
+    function clearAlerts() {
+      const now = new Date();
+      clearedAt.value = now;
+      alerts.value = [];
+      total.value = 0;
+      page.value = 1;
+      selectedAlert.value = null;
+      error.value = '';
+    }
+
+    async function downloadAlerts() {
+      downloadLoading.value = true;
+      error.value = '';
+      try {
+        const pageSizeValue = 200;
+        let pageNum = 1;
+        let all = [];
+        let totalCount = null;
+        while (true) {
+          const data = await fetchAlertsPage({ pageOverride: pageNum, pageSizeOverride: pageSizeValue, includeSince: false });
+          const rows = Array.isArray(data?.items) ? data.items.map(normalizeAlert) : [];
+          all = all.concat(rows);
+          if (Number.isFinite(data?.total)) totalCount = Number(data.total);
+          if (rows.length < pageSizeValue) break;
+          if (totalCount !== null && all.length >= totalCount) break;
+          pageNum += 1;
+        }
+        const payload = JSON.stringify(
+          {
+            exportedAt: new Date().toISOString(),
+            total: all.length,
+            items: all
+          },
+          null,
+          2
+        );
+        const blob = new Blob([payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `incoming-alerts-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        error.value = e?.message || 'Failed to download alerts.';
+      } finally {
+        downloadLoading.value = false;
+      }
+    }
+
+    async function deleteAlerts() {
+      if (!window.confirm('Delete all incoming alerts? This action cannot be undone.')) return;
+      deleteLoading.value = true;
+      error.value = '';
+      try {
+        const request = async (endpoint) => {
+          const res = await fetch(endpoint, {
+            method: 'DELETE',
+            headers: { ...authHeaders() },
+            credentials: 'include'
+          });
+          if (!res.ok) {
+            const error = new Error(await res.text());
+            error.status = res.status;
+            throw error;
+          }
+        };
+        try {
+          await request(alertsEndpoint);
+        } catch (e) {
+          if (e?.status === 404) {
+            await request(webhookAlertsEndpoint);
+          } else {
+            throw e;
+          }
+        }
+        alerts.value = [];
+        total.value = 0;
+        page.value = 1;
+        clearedAt.value = null;
+        selectedAlert.value = null;
+      } catch (e) {
+        error.value = e?.message || 'Failed to delete alerts.';
+      } finally {
+        deleteLoading.value = false;
+      }
     }
 
     function nextPage() {
@@ -487,6 +604,11 @@ export default {
       applyFilters,
       nextPage,
       prevPage,
+      clearAlerts,
+      downloadAlerts,
+      downloadLoading,
+      deleteAlerts,
+      deleteLoading,
       formatTime,
       statusColor,
       pageStart,
@@ -709,10 +831,25 @@ export default {
             <p class="text-xs uppercase tracking-[0.3em] text-gray-500">Recent Alerts</p>
             <p class="text-sm muted-text">Incoming webhook alerts with validation, routing outcomes, and execution feedback.</p>
           </div>
-          <div class="flex items-center gap-3 text-xs text-gray-400">
+          <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
             <span v-if="!loading && total">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</span>
             <button class="btn btn-secondary btn-small" type="button" :disabled="loading" @click="loadAlerts">
               {{ loading ? 'Loading…' : 'Refresh' }}
+            </button>
+            <button class="btn btn-secondary btn-small" type="button" :disabled="loading || alerts.length === 0" @click="clearAlerts">
+              Clear
+            </button>
+            <button class="btn btn-secondary btn-small" type="button" :disabled="downloadLoading" @click="downloadAlerts">
+              {{ downloadLoading ? 'Downloading…' : 'Download' }}
+            </button>
+            <button
+              class="btn btn-secondary btn-small"
+              type="button"
+              :disabled="deleteLoading"
+              @click="deleteAlerts"
+              :style="{ borderColor: 'rgba(248, 113, 113, 0.55)', color: '#f87171' }"
+            >
+              {{ deleteLoading ? 'Deleting…' : 'Delete' }}
             </button>
           </div>
         </div>

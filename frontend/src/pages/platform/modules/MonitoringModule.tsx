@@ -87,6 +87,9 @@ export default function MonitoringModule() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<AlertRow | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [clearedAt, setClearedAt] = useState<Date | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [dnsRecords, setDnsRecords] = useState<DnsRecord[]>([]);
   const [dnsLoading, setDnsLoading] = useState(false);
   const [dnsError, setDnsError] = useState('');
@@ -103,10 +106,14 @@ export default function MonitoringModule() {
   const [connectivityUpdatedAt, setConnectivityUpdatedAt] = useState<Date | null>(null);
   const navigate = useNavigate();
 
-  const fetchAlerts = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
+  const fetchAlertsPayload = useCallback(
+    async (params: Record<string, string>, sinceOverride?: Date | null) => {
+      const query = new URLSearchParams(params);
+      const sinceValue = sinceOverride === undefined ? clearedAt : sinceOverride;
+      if (sinceValue) {
+        query.set('since', sinceValue.toISOString());
+      }
+      const queryString = query.toString();
       const fetchAlertsFrom = async (path: string) => {
         const res = await fetch(withApiBase(path), {
           credentials: 'include',
@@ -126,14 +133,24 @@ export default function MonitoringModule() {
 
       let data: any;
       try {
-        data = await fetchAlertsFrom('/api/v1/users/alerts?limit=50');
+        data = await fetchAlertsFrom(`/api/v1/users/alerts?${queryString}`);
       } catch (err: any) {
         if (err?.status === 404) {
-          data = await fetchAlertsFrom('/api/v1/users/webhook-alerts?limit=50');
+          data = await fetchAlertsFrom(`/api/v1/users/webhook-alerts?${queryString}`);
         } else {
           throw err;
         }
       }
+      return data;
+    },
+    [clearedAt, navigate]
+  );
+
+  const fetchAlerts = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await fetchAlertsPayload({ limit: '50' });
       const items = Array.isArray(data?.items) ? data.items : [];
       setAlerts(items);
       setLastUpdated(new Date());
@@ -142,13 +159,106 @@ export default function MonitoringModule() {
     } finally {
       setLoading(false);
     }
-  }, [navigate]);
+  }, [fetchAlertsPayload]);
 
   useEffect(() => {
     fetchAlerts();
     const handle = setInterval(fetchAlerts, POLL_MS);
     return () => clearInterval(handle);
   }, [fetchAlerts]);
+
+  const handleClearAlerts = useCallback(() => {
+    const now = new Date();
+    setClearedAt(now);
+    setAlerts([]);
+    setSelected(null);
+    setLastUpdated(now);
+    setError('');
+  }, []);
+
+  const handleDownloadAlerts = useCallback(async () => {
+    setDownloadLoading(true);
+    setError('');
+    try {
+      const pageSize = 200;
+      let page = 1;
+      let all: AlertRow[] = [];
+      let total: number | null = null;
+      while (true) {
+        const data = await fetchAlertsPayload({ page: String(page), pageSize: String(pageSize) }, null);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        all = all.concat(items);
+        if (Number.isFinite(data?.total)) {
+          total = Number(data.total);
+        }
+        if (items.length < pageSize) break;
+        if (total !== null && all.length >= total) break;
+        page += 1;
+      }
+      const payload = JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          total: all.length,
+          items: all
+        },
+        null,
+        2
+      );
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `incoming-alerts-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to download alerts.');
+    } finally {
+      setDownloadLoading(false);
+    }
+  }, [fetchAlertsPayload]);
+
+  const handleDeleteAlerts = useCallback(async () => {
+    const confirmed = window.confirm('Delete all incoming alerts? This action cannot be undone.');
+    if (!confirmed) return;
+    setDeleteLoading(true);
+    setError('');
+    try {
+      const deleteFrom = async (path: string) => {
+        const res = await fetch(withApiBase(path), {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() }
+        });
+        if (res.status === 401) {
+          navigate('/login');
+          throw new Error('Unauthorized');
+        }
+        if (!res.ok) {
+          const error = new Error(`Request failed (${res.status})`) as Error & { status?: number };
+          error.status = res.status;
+          throw error;
+        }
+      };
+      try {
+        await deleteFrom('/api/v1/users/alerts');
+      } catch (err: any) {
+        if (err?.status === 404) {
+          await deleteFrom('/api/v1/users/webhook-alerts');
+        } else {
+          throw err;
+        }
+      }
+      setAlerts([]);
+      setSelected(null);
+      setClearedAt(null);
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete alerts.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [navigate]);
 
   const fetchDnsRecords = useCallback(async () => {
     setDnsLoading(true);
@@ -461,10 +571,25 @@ export default function MonitoringModule() {
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Incoming alerts</p>
             <p className="text-sm muted-text">Auto-refreshing every {POLL_MS / 1000}s.</p>
           </div>
-          <div className="flex items-center gap-3 text-xs text-gray-400">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
             <span>Last update: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</span>
             <button className="btn btn-secondary btn-small" type="button" onClick={fetchAlerts} disabled={loading}>
               {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <button className="btn btn-secondary btn-small" type="button" onClick={handleClearAlerts} disabled={loading || alerts.length === 0}>
+              Clear
+            </button>
+            <button className="btn btn-secondary btn-small" type="button" onClick={handleDownloadAlerts} disabled={downloadLoading}>
+              {downloadLoading ? 'Downloading…' : 'Download'}
+            </button>
+            <button
+              className="btn btn-secondary btn-small"
+              type="button"
+              onClick={handleDeleteAlerts}
+              disabled={deleteLoading}
+              style={{ borderColor: 'rgba(248, 113, 113, 0.55)', color: '#f87171' }}
+            >
+              {deleteLoading ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         </div>

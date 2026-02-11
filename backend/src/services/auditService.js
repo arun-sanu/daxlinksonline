@@ -33,3 +33,10 @@ export async function listAudit({ limit = 50, page = 1, action, userId, q, since
   ]);
   return { rows, total, page, pageSize: take };
 }
+
+export async function deleteAudit({ userId, action } = {}) {
+  const where = {};
+  if (userId) where.userId = String(userId);
+  if (action) where.action = { contains: String(action), mode: 'insensitive' };
+  return prisma.auditLog.deleteMany({ where });
+}
