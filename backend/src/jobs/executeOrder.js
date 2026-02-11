@@ -2,9 +2,18 @@ import { prisma } from '../utils/prisma.js';
 import { decrypt } from '../lib/kms.js';
 import { createExchange } from '../sdk/index.js';
 import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
+import crypto from 'crypto';
 
-const MAX_RETRY = 3;
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
+const MEXC_BASE_URL = (process.env.MEXC_SPOT_BASE_URL || 'https://api.mexc.com').replace(/\/+$/, '');
+const MEXC_RECV_WINDOW = Number(process.env.MEXC_RECV_WINDOW || 5000);
+
+function normalizeRecvWindow(value) {
+  if (!Number.isFinite(value) || value <= 0) return 5000;
+  return Math.floor(value);
+}
+
+const SAFE_MEXC_RECV_WINDOW = normalizeRecvWindow(MEXC_RECV_WINDOW);
 
 function toBuffer(value) {
   if (!value) return Buffer.alloc(0);
@@ -57,6 +66,13 @@ function parseNumeric(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function toFixedString(value, maxDecimals = 12) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const asFixed = numeric.toFixed(maxDecimals).replace(/\.?0+$/, '');
+  return asFixed || '0';
+}
+
 function resolveOrderSize(mappedSize, fallbackAmount) {
   if (mappedSize !== undefined && mappedSize !== null) {
     if (typeof mappedSize === 'string') {
@@ -107,10 +123,77 @@ async function placeOrderBestEffort(exchange, n) {
   if (typeof exchange.trade === 'function') {
     return exchange.trade(params);
   }
-  if (typeof exchange.testConnectivity === 'function') {
-    return exchange.testConnectivity();
-  }
   throw new Error('Exchange adapter does not support order placement');
+}
+
+function isUnsupportedExchangeApiError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('api not supported for exchange');
+}
+
+async function placeMexcSpotOrderDirect({
+  apiKey,
+  apiSecret,
+  symbol,
+  side,
+  type,
+  qty,
+  price,
+  clientOrderId
+}) {
+  const quantity = toFixedString(qty, 12);
+  if (!quantity || Number(quantity) <= 0) {
+    throw new Error('Invalid quantity for MEXC order');
+  }
+
+  const params = new URLSearchParams();
+  params.set('symbol', symbol);
+  params.set('side', side);
+  params.set('type', type);
+  params.set('quantity', quantity);
+  params.set('recvWindow', String(SAFE_MEXC_RECV_WINDOW));
+  params.set('timestamp', String(Date.now()));
+  if (clientOrderId) {
+    params.set('newClientOrderId', String(clientOrderId).slice(0, 32));
+  }
+
+  if (type === 'LIMIT') {
+    const orderPrice = toFixedString(price, 12);
+    if (!orderPrice || Number(orderPrice) <= 0) {
+      throw new Error('Price required for MEXC LIMIT order');
+    }
+    params.set('price', orderPrice);
+    params.set('timeInForce', 'GTC');
+  }
+
+  const signature = crypto.createHmac('sha256', apiSecret).update(params.toString()).digest('hex');
+  params.set('signature', signature);
+
+  const res = await fetch(`${MEXC_BASE_URL}/api/v3/order?${params.toString()}`, {
+    method: 'POST',
+    headers: {
+      'X-MEXC-APIKEY': apiKey
+    }
+  });
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!res.ok) {
+    const detail = payload?.msg || payload?.message || text || `MEXC order failed (${res.status})`;
+    throw new Error(detail);
+  }
+  if (payload && typeof payload === 'object' && 'code' in payload && payload.code !== 0) {
+    throw new Error(payload.msg || payload.message || `MEXC order failed with code ${payload.code}`);
+  }
+  return {
+    provider: 'mexc-direct',
+    ...payload
+  };
 }
 
 function getAlertId(signal) {
@@ -213,21 +296,40 @@ export async function executePreparedSignal(signalId) {
       signal.idempotencyKey ||
       null;
 
-    const result = await placeOrderBestEffort(client, {
-      symbol,
-      side,
-      type: orderTypeNorm,
-      amount: qty,
-      qty,
-      price,
-      clientOrderId,
-      exchange: integration.exchange,
-      environment: integration.environment,
-      raw: {
-        ...(signal.payload || {}),
-        leverage: leverage || signal.payload?.raw?.leverage || undefined
+    let result;
+    try {
+      result = await placeOrderBestEffort(client, {
+        symbol,
+        side,
+        type: orderTypeNorm,
+        amount: qty,
+        qty,
+        price,
+        clientOrderId,
+        exchange: integration.exchange,
+        environment: integration.environment,
+        raw: {
+          ...(signal.payload || {}),
+          leverage: leverage || signal.payload?.raw?.leverage || undefined
+        }
+      });
+    } catch (adapterErr) {
+      const isMexc = String(integration.exchange || '').toLowerCase() === 'mexc';
+      if (!isMexc || !isUnsupportedExchangeApiError(adapterErr)) {
+        throw adapterErr;
       }
-    });
+
+      result = await placeMexcSpotOrderDirect({
+        apiKey,
+        apiSecret,
+        symbol,
+        side,
+        type: orderTypeNorm,
+        qty,
+        price,
+        clientOrderId
+      });
+    }
     await markAlertStatus(getAlertId(signal), 'executed', null);
     await prisma.forwardedSignal.update({
       where: { id: signalId },
@@ -240,18 +342,15 @@ export async function executePreparedSignal(signalId) {
     return { ok: true, result };
   } catch (err) {
     const attempts = (signal.attempts || 0) + 1;
-    const canRetry = attempts < MAX_RETRY;
-    if (!canRetry) {
-      await markAlertStatus(getAlertId(signal), 'failed', err?.message || String(err));
-    }
+    await markAlertStatus(getAlertId(signal), 'failed', err?.message || String(err));
     await prisma.forwardedSignal.update({
       where: { id: signalId },
       data: {
-        status: canRetry ? 'retrying' : 'executed_error',
+        status: 'executed_error',
         error: err?.message || String(err),
         attempts
       }
     });
-    return { ok: false, error: err?.message || String(err), retry: canRetry };
+    return { ok: false, error: err?.message || String(err), retry: false };
   }
 }
