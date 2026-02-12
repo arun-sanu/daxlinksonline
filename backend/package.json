@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon --watch src --ext js,mjs --exec node src/server.js",
     "start": "node src/server.js",
-    "test": "node --test",
+    "test:node": "DOTENV_CONFIG_PATH=.env node -r dotenv/config --test test/*.test.js",
+    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --runInBand",
+    "test": "npm run test:node && npm run test:e2e",
     "lint": "eslint 'src/**/*.js' 'test/**/*.js'",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -41,7 +43,10 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-node": "^11.1.0",
+    "jest": "^30.2.0",
+    "nock": "^14.0.11",
     "nodemon": "^3.1.4",
-    "prisma": "^5.18.0"
+    "prisma": "^5.18.0",
+    "supertest": "^7.2.2"
   }
 }

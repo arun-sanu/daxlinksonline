@@ -5,6 +5,8 @@ let queue = null;
 let queueEvents = null;
 let worker = null;
 let memoryHandlers = [];
+let forwarderMemoryHandler = null;
+let executeOrdersMemoryHandler = null;
 export let executeOrdersQueue = null;
 export let executeOrdersWorker = null;
 
@@ -28,7 +30,12 @@ export function initQueue({ queueName = 'pendax-forwarder', processor } = {}) {
     return { mode: 'redis', queue, worker, queueEvents };
   }
   // In-memory fallback
-  memoryHandlers.push(processor);
+  if (typeof processor === 'function') {
+    forwarderMemoryHandler = processor;
+    if (!memoryHandlers.includes(processor)) {
+      memoryHandlers.push(processor);
+    }
+  }
   return { mode: 'memory' };
 }
 
@@ -37,7 +44,7 @@ export async function enqueue(name, data, opts) {
     return queue.add(name, data, opts);
   }
   // In-memory: run soon, but async
-  const processor = memoryHandlers[0];
+  const processor = forwarderMemoryHandler || memoryHandlers.find((handler) => typeof handler === 'function');
   if (processor) setTimeout(() => processor({ data }), 0);
   return { id: `mem_${Date.now()}` };
 }
@@ -53,12 +60,18 @@ export function initExecuteOrdersQueue({ processor } = {}) {
   }
   // In-memory fallback
   const runner = processor ? (job) => processor(job) : null;
-  if (runner && !memoryHandlers.includes(runner)) {
-    memoryHandlers.push(runner);
+  if (runner) {
+    executeOrdersMemoryHandler = runner;
+    if (!memoryHandlers.includes(runner)) {
+      memoryHandlers.push(runner);
+    }
   }
   executeOrdersQueue = {
     async add(name, data) {
-      const handler = runner || memoryHandlers[memoryHandlers.length - 1];
+      const handler =
+        executeOrdersMemoryHandler ||
+        runner ||
+        [...memoryHandlers].reverse().find((registered) => typeof registered === 'function');
       if (handler) {
         setTimeout(() => handler({ name, data }), 0);
       }
