@@ -82,6 +82,17 @@ export type OrderReportRow = {
       state: string;
     };
   };
+  sizing?: {
+    qtyRaw: number | null;
+    qtyRounded: number | null;
+    computedPrice: number | null;
+    freeQuote: number | null;
+    freeBase: number | null;
+    quoteSpendComputed: number | null;
+    notionalAfterRounding: number | null;
+    rejectedReason: string | null;
+    sizingDebug: any;
+  } | null;
 };
 
 export type OrderReportResponse = {

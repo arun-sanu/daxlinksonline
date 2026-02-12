@@ -9,6 +9,7 @@ const MODULES = [
   { id: 'workflow', label: 'Workflow', icon: '/icons/route.svg', metric: '5 nodes', requiresAuth: true, comingSoon: true },
   { id: 'monitoring', label: 'Monitoring', icon: '/icons/monitoring.svg', metric: 'Telemetry feed', requiresAuth: true, comingSoon: true },
   { id: 'orders', label: 'Orders', icon: '/icons/alert.svg', metric: 'Spot fills + balances', requiresAuth: true, comingSoon: true },
+  { id: 'sizing', label: 'Sizing', icon: '/icons/monitoring-2.svg', metric: 'Sizing diagnostics', requiresAuth: true, path: '/platform/sizing/details' },
   { id: 'trade-bots', label: 'Trade Bots', icon: '/icons/smart-toy.svg', metric: 'Strategies ready', requiresAuth: true },
   { id: 'banking', label: 'Banking', icon: '/icons/account-balance.svg', metric: 'Settlement windows', requiresAuth: true, comingSoon: true },
   { id: 'dns', label: 'DNS', icon: '/icons/dns.svg', metric: 'Edge profiles', requiresAuth: true },
@@ -49,7 +50,7 @@ export default function PlatformOverviewPage() {
               {filtered.map((module) => (
                 <Link
                   key={module.id}
-                  to={`/platform/${module.id}`}
+                  to={module.path || `/platform/${module.id}`}
                   className="group relative flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border px-3 py-3 transition border-white/10 bg-transparent hover:border-primary-400/40 hover:bg-primary-500/10"
                 >
                   <div className="absolute right-4 top-3 flex flex-col items-center gap-1 text-sm">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchMexcSpotSnapshot, fetchOrderReport, type OrderCheckSnapshot, type OrderReportRow } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
+import SizingDebugCard from '../../../components/SizingDebugCard';
 
 type Integration = Awaited<ReturnType<typeof listIntegrations>>[number];
 
@@ -109,6 +110,7 @@ export default function OrdersModule() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState('');
   const [reportUpdatedAt, setReportUpdatedAt] = useState<string | null>(null);
+  const [selectedSizingRow, setSelectedSizingRow] = useState<OrderReportRow | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
     if (!symbol.trim()) {
@@ -500,22 +502,27 @@ export default function OrdersModule() {
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Amount</th>
                     <th className="px-3 py-2">Quantity</th>
+                    <th className="px-3 py-2">Qty (Rounded)</th>
+                    <th className="px-3 py-2">Price Used</th>
+                    <th className="px-3 py-2">Spend (BUY)</th>
+                    <th className="px-3 py-2">Rejection Reason</th>
                     <th className="px-3 py-2">Order ID</th>
                     <th className="px-3 py-2">Position after</th>
                     <th className="px-3 py-2">Error reason</th>
+                    <th className="px-3 py-2">Sizing</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
                   {reportLoading && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={9}>
+                      <td className="px-3 py-3 text-gray-400" colSpan={14}>
                         Loading report…
                       </td>
                     </tr>
                   )}
                   {!reportLoading && reportRows.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={9}>
+                      <td className="px-3 py-3 text-gray-500" colSpan={14}>
                         No exchange rows yet.
                       </td>
                     </tr>
@@ -533,6 +540,16 @@ export default function OrdersModule() {
                         <td className="px-3 py-2 uppercase">{row.exchange.type || '—'}</td>
                         <td className="px-3 py-2">{formatNullableDecimal(row.exchange.amount, 4)}</td>
                         <td className="px-3 py-2">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
+                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
+                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
+                        <td className="px-3 py-2">
+                          {row.exchange.side === 'BUY'
+                            ? formatNullableDecimal(row.sizing?.quoteSpendComputed ?? null, 4)
+                            : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-rose-200">
+                          {row.sizing?.rejectedReason || '—'}
+                        </td>
                         <td className="px-3 py-2 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
                         <td className="px-3 py-2 text-xs">
                           {row.exchange.positionAfter?.state || 'UNKNOWN'}
@@ -542,6 +559,19 @@ export default function OrdersModule() {
                         </td>
                         <td className="max-w-[260px] px-3 py-2 text-xs text-rose-200" title={row.exchange.errorMessage || ''}>
                           {row.exchange.errorMessage || '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.sizing?.sizingDebug ? (
+                            <button
+                              type="button"
+                              className="rounded-md border border-sky-400/40 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200"
+                              onClick={() => setSelectedSizingRow(row)}
+                            >
+                              View
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-500">—</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -663,6 +693,27 @@ export default function OrdersModule() {
           </div>
         </article>
       </section>
+
+      {selectedSizingRow?.sizing?.sizingDebug && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-4xl">
+            <SizingDebugCard
+              sizingDebug={selectedSizingRow.sizing.sizingDebug}
+              title="Sizing details"
+              subtitle={`${selectedSizingRow.signal?.symbol || '—'} · ${selectedSizingRow.exchange?.side || '—'} · ${selectedSizingRow.exchange?.tradeStatus || '—'}`}
+              extra={(
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small btn-rect"
+                  onClick={() => setSelectedSizingRow(null)}
+                >
+                  Close
+                </button>
+              )}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

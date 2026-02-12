@@ -59,11 +59,15 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
   const filters = Array.isArray(symbolInfo?.filters) ? symbolInfo.filters : [];
   const lotSize = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
   const minNotionalFilter = filters.find((f) => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL') || {};
+  const basePrecision = asNumber(symbolInfo?.baseSizePrecision);
+  const stepSize = basePrecision && basePrecision > 0
+    ? basePrecision
+    : asNumber(lotSize.stepSize) || 0;
   return {
     symbol: symbolInfo?.symbol || String(symbol || '').toUpperCase(),
     baseAsset: symbolInfo?.baseAsset || null,
     quoteAsset: symbolInfo?.quoteAsset || null,
-    stepSize: asNumber(lotSize.stepSize) || asNumber(symbolInfo?.baseSizePrecision) || 0,
+    stepSize,
     minQty: asNumber(lotSize.minQty) || 0,
     minNotional: asNumber(minNotionalFilter.minNotional) || 0
   };

@@ -51,6 +51,14 @@ function throwSizingError(message, sizingDebug, rejectedReason) {
   throw error;
 }
 
+function normalizeSellMode(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'SELL_FIXED_QTY' || normalized === 'SELL_PCT' || normalized === 'SELL_ALL') {
+    return normalized;
+  }
+  return 'SELL_ALL';
+}
+
 export function roundDownToStep(value, stepSize) {
   const valueNum = asNumber(value);
   if (!valueNum || valueNum <= 0) return 0;
@@ -71,6 +79,22 @@ export function normalizeBaseSizingConfig(rawConfig = {}, env = process.env) {
   }
   const fixedBaseQty = asNumber(baseRule?.fixedBaseQty ?? env.TV_FIXED_BASE_QTY);
   const riskPctOfFreeQuote = asNumber(baseRule?.riskPctOfFreeQuote ?? env.TV_RISK_PCT_FREE_QUOTE);
+  const minQuoteSpend = asNumber(
+    baseRule?.minQuoteSpend ??
+    rawConfig?.minQuoteSpend ??
+    env.TV_MIN_QUOTE_SPEND
+  );
+  const sellMode = normalizeSellMode(baseRule?.sellMode ?? rawConfig?.sellMode);
+  const sellFixedBaseQty = asNumber(
+    baseRule?.sellFixedBaseQty ??
+    rawConfig?.sellFixedBaseQty
+  );
+  const sellPctOfFreeBase = asNumber(
+    rawConfig?.sellPctOfFreeBase ??
+    rawConfig?.sellPct ??
+    baseRule?.sellPctOfFreeBase ??
+    baseRule?.sellPct
+  );
 
   const hasFixed = fixedBaseQty !== null && fixedBaseQty > 0;
   const hasRiskPct = riskPctOfFreeQuote !== null && riskPctOfFreeQuote > 0;
@@ -83,13 +107,19 @@ export function normalizeBaseSizingConfig(rawConfig = {}, env = process.env) {
   return {
     sizingMode: 'BASE',
     fixedBaseQty: hasFixed ? fixedBaseQty : null,
-    riskPctOfFreeQuote: hasRiskPct ? riskPctOfFreeQuote : null
+    riskPctOfFreeQuote: hasRiskPct ? riskPctOfFreeQuote : null,
+    // Internal floor for BUY quote spend calculations (not exchange minNotional).
+    minQuoteSpend: minQuoteSpend !== null && minQuoteSpend > 0 ? minQuoteSpend : null,
+    sellMode,
+    sellFixedBaseQty: sellFixedBaseQty !== null && sellFixedBaseQty > 0 ? sellFixedBaseQty : null,
+    sellPctOfFreeBase: sellPctOfFreeBase !== null && sellPctOfFreeBase > 0 ? sellPctOfFreeBase : null
   };
 }
 
 export function computeBaseQuantityFromInputs({
   fixedBaseQty = null,
   riskPctOfFreeQuote = null,
+  minQuoteSpend = null,
   freeQuote,
   price,
   stepSize,
@@ -109,6 +139,7 @@ export function computeBaseQuantityFromInputs({
     priceUsed: safePrice,
     fixedBaseQty: asNullableNumber(fixedBaseQty),
     riskPctOfFreeQuote: asNullableNumber(riskPctOfFreeQuote),
+    minQuoteSpend: asNullableNumber(minQuoteSpend),
     qtyRaw: null,
     quoteSpendComputed: null,
     stepSize: stepSizeNum,
@@ -144,6 +175,11 @@ export function computeBaseQuantityFromInputs({
       throwSizingError('riskPctOfFreeQuote must be greater than 0.', sizingDebug, 'invalid_risk_pct');
     }
     quoteSpendComputed = safeFreeQuote * (pct / 100);
+    const minQuoteFloor = toFiniteOrZero(minQuoteSpend);
+    if (minQuoteFloor > 0) {
+      // Internal safety floor only; exchange minNotional rules still apply below.
+      quoteSpendComputed = Math.max(quoteSpendComputed, minQuoteFloor);
+    }
     qtyRaw = quoteSpendComputed / safePrice;
   }
 
@@ -183,6 +219,106 @@ export function computeBaseQuantityFromInputs({
     qtyRounded,
     notional,
     quoteSpendComputed,
+    sizingDebug
+  };
+}
+
+function computeSellQuantityFromInputs({
+  freeBase,
+  sellMode = 'SELL_ALL',
+  sellFixedBaseQty = null,
+  sellPctOfFreeBase = null,
+  price,
+  stepSize,
+  minNotional = 0,
+  minQty = 0,
+  sizingDebugBase = {}
+}) {
+  const safePrice = asNumber(price);
+  const safeFreeBase = asNumber(freeBase);
+  const stepSizeNum = toFiniteOrZero(stepSize);
+  const minQtyNum = toFiniteOrZero(minQty);
+  const minNotionalNum = toFiniteOrZero(minNotional);
+
+  const sizingDebug = {
+    ...(sizingDebugBase && typeof sizingDebugBase === 'object' ? sizingDebugBase : {}),
+    freeBase: safeFreeBase || 0,
+    priceUsed: safePrice,
+    sellMode,
+    sellFixedBaseQty: asNullableNumber(sellFixedBaseQty),
+    sellPctOfFreeBase: asNullableNumber(sellPctOfFreeBase),
+    qtyRaw: null,
+    quoteSpendComputed: null,
+    stepSize: stepSizeNum,
+    minQty: minQtyNum,
+    minNotional: minNotionalNum,
+    qtyAfterStepRounding: null,
+    notionalAfterRounding: null,
+    rejectedReason: null
+  };
+
+  if (!safePrice || safePrice <= 0) {
+    throwSizingError('Cannot compute sell quantity without a valid market price.', sizingDebug, 'invalid_price');
+  }
+
+  if (!safeFreeBase || safeFreeBase <= 0) {
+    throwSizingError(
+      'Cannot compute sell quantity because free base balance is zero.',
+      sizingDebug,
+      'insufficient_base_for_sell'
+    );
+  }
+
+  let qtyRaw = safeFreeBase;
+  if (sellMode === 'SELL_FIXED_QTY') {
+    const fixed = asNumber(sellFixedBaseQty);
+    if (!fixed || fixed <= 0) {
+      throwSizingError('sellFixedBaseQty must be greater than 0.', sizingDebug, 'invalid_sell_fixed_qty');
+    }
+    qtyRaw = Math.min(safeFreeBase, fixed);
+  } else if (sellMode === 'SELL_PCT') {
+    const pct = asNumber(sellPctOfFreeBase);
+    if (!pct || pct <= 0) {
+      throwSizingError('sellPctOfFreeBase must be greater than 0.', sizingDebug, 'invalid_sell_pct');
+    }
+    qtyRaw = safeFreeBase * (pct / 100);
+  }
+
+  sizingDebug.qtyRaw = asNumber(qtyRaw);
+
+  const qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
+  sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
+  const notional = qtyRounded * safePrice;
+  sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
+  if (!qtyRounded || qtyRounded <= 0) {
+    throwSizingError(
+      'Computed sell quantity is zero after applying step size rounding.',
+      sizingDebug,
+      'below_step_size'
+    );
+  }
+
+  if (minQtyNum > 0 && qtyRounded < minQtyNum) {
+    throwSizingError(
+      `Quantity ${qtyRounded} is below exchange minQty ${minQtyNum}.`,
+      sizingDebug,
+      'below_min_qty'
+    );
+  }
+
+  if (minNotionalNum > 0 && notional < minNotionalNum) {
+    throwSizingError(
+      `Order value ${notional} is below exchange minNotional ${minNotionalNum}.`,
+      sizingDebug,
+      'below_min_notional'
+    );
+  }
+
+  return {
+    qtyRaw,
+    qtyRounded,
+    notional,
+    quoteSpendComputed: null,
     sizingDebug
   };
 }
@@ -249,6 +385,10 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, si
     sizingMode: sizing.sizingMode,
     fixedBaseQty: sizing.fixedBaseQty,
     riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
+    minQuoteSpend: sizing.minQuoteSpend,
+    sellMode: sizing.sellMode,
+    sellFixedBaseQty: sizing.sellFixedBaseQty,
+    sellPctOfFreeBase: sizing.sellPctOfFreeBase,
     stepSize,
     minQty,
     minNotional
@@ -256,16 +396,31 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, si
 
   let quantity;
   try {
-    quantity = computeBaseQuantityFromInputs({
-      fixedBaseQty: sizing.fixedBaseQty,
-      riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
-      freeQuote,
-      price: computedPrice,
-      stepSize,
-      minNotional,
-      minQty,
-      sizingDebugBase
-    });
+    if (normalizedSide === 'SELL') {
+      quantity = computeSellQuantityFromInputs({
+        freeBase,
+        sellMode: sizing.sellMode,
+        sellFixedBaseQty: sizing.sellFixedBaseQty,
+        sellPctOfFreeBase: sizing.sellPctOfFreeBase,
+        price: computedPrice,
+        stepSize,
+        minNotional,
+        minQty,
+        sizingDebugBase
+      });
+    } else {
+      quantity = computeBaseQuantityFromInputs({
+        fixedBaseQty: sizing.fixedBaseQty,
+        riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
+        minQuoteSpend: sizing.minQuoteSpend,
+        freeQuote,
+        price: computedPrice,
+        stepSize,
+        minNotional,
+        minQty,
+        sizingDebugBase
+      });
+    }
   } catch (error) {
     if (error instanceof SizingConfigError && !error.sizingDebug) {
       error.sizingDebug = {

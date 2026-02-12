@@ -414,6 +414,22 @@ function resolveReportQuantity(signal, audit) {
   return auditQty > 0 ? auditQty : 0;
 }
 
+function extractSizingFromAudit(audit) {
+  if (!audit) return null;
+  const sizingDebug = audit?.sizingDebug || null;
+  return {
+    qtyRaw: audit?.qtyRaw ?? sizingDebug?.qtyRaw ?? null,
+    qtyRounded: audit?.qtyRounded ?? sizingDebug?.qtyAfterStepRounding ?? null,
+    computedPrice: audit?.computedPrice ?? sizingDebug?.priceUsed ?? null,
+    freeQuote: audit?.freeQuote ?? sizingDebug?.freeQuote ?? null,
+    freeBase: sizingDebug?.freeBase ?? null,
+    quoteSpendComputed: sizingDebug?.quoteSpendComputed ?? null,
+    notionalAfterRounding: sizingDebug?.notionalAfterRounding ?? null,
+    rejectedReason: sizingDebug?.rejectedReason ?? null,
+    sizingDebug
+  };
+}
+
 function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, audit) {
   const symbol = alert?.symbol || signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || null;
   const side = normalizeSide(alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side);
@@ -465,7 +481,8 @@ function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, 
         estimatedBaseQty: null,
         state: 'UNKNOWN'
       }
-    }
+    },
+    sizing: extractSizingFromAudit(audit)
   };
 }
 
@@ -609,10 +626,14 @@ export async function getWorkspaceOrderReport({
       forwardedSignalId: true,
       status: true,
       errorMessage: true,
+      computedPrice: true,
+      freeQuote: true,
+      qtyRaw: true,
       qtyRounded: true,
       mexcOrderId: true,
       mexcStatus: true,
-      updatedAt: true
+      updatedAt: true,
+      sizingDebug: true
     }
   });
   const auditBySignalId = {};

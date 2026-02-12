@@ -131,7 +131,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
       orderId: 'A10002'
     });
 
-    const payload = { symbol: 'BTCUSDC', side: 'SELL', ts: FIXED_TIME_MS };
+    const payload = { symbol: 'BTCUSDC', side: 'BUY', ts: FIXED_TIME_MS };
     const response = await sendTradingviewWebhook({
       prefix: seeded.prefix,
       secret: seeded.secret,
@@ -145,7 +145,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
     const audit = await waitForExecutionAuditStatus({
       userId: seeded.user.id,
       symbol: 'BTCUSDC',
-      side: 'SELL',
+      side: 'BUY',
       tvTs: FIXED_TIME_MS,
       statuses: ['SENT', 'FILLED']
     });
@@ -343,7 +343,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
     const response = await sendTradingviewWebhook({
       prefix: seeded.prefix,
       secret: seeded.secret,
-      payload: { symbol: 'BTCUSDC', side: 'SELL', ts: FIXED_TIME_MS },
+      payload: { symbol: 'BTCUSDC', side: 'BUY', ts: FIXED_TIME_MS },
       contentType: 'application/json'
     });
 
@@ -352,7 +352,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
     const audit = await waitForExecutionAuditStatus({
       userId: seeded.user.id,
       symbol: 'BTCUSDC',
-      side: 'SELL',
+      side: 'BUY',
       tvTs: FIXED_TIME_MS,
       statuses: ['REJECTED']
     });

@@ -25,6 +25,7 @@ import { router as tradeBotsRouter } from './v1/tradeBots.js';
 import { router as usersRouter } from './v1/users.js';
 import { router as metricsRouter } from './v1/metrics.js';
 import { router as ordersRouter } from './v1/orders.js';
+import { sizingRouter } from './sizing.js';
 
 export const router = Router();
 
@@ -52,6 +53,7 @@ router.use('/v1/trade-bots', tradeBotsRouter);
 router.use('/v1/users', usersRouter);
 router.use('/v1/metrics', metricsRouter);
 router.use('/v1/orders', ordersRouter);
+router.use('/sizing', sizingRouter);
 // Phase 0 mounts for Trade Bots
 
 router.get('/v1/metadata', (_req, res) => {

@@ -153,6 +153,7 @@ export async function getWorkspaceWorkflowConfig(workspaceId) {
   }
   const cfg = ws.workflowConfig || {};
   return {
+    ...cfg,
     version: typeof cfg.version === 'number' ? cfg.version : 1,
     rules: Array.isArray(cfg.rules) ? cfg.rules : [],
     customNodes: Array.isArray(cfg.customNodes) ? cfg.customNodes : []

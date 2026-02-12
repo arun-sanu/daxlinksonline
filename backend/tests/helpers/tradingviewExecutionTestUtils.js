@@ -153,8 +153,10 @@ export async function waitForExecutionAuditStatus({
 
 export function mockMexcSpotFlow({
   symbol = 'BTCUSDC',
+  baseAsset = 'BTC',
   quoteAsset = 'USDC',
   freeQuote = 100,
+  freeBase = 0,
   price = 50000,
   stepSize = 0.000001,
   minQty = 0.000001,
@@ -171,7 +173,7 @@ export function mockMexcSpotFlow({
     .reply(200, {
       balances: [
         { asset: quoteAsset, free: String(freeQuote), locked: '0' },
-        { asset: 'BTC', free: '0', locked: '0' }
+        { asset: baseAsset, free: String(freeBase), locked: '0' }
       ]
     });
 
@@ -190,7 +192,7 @@ export function mockMexcSpotFlow({
       symbols: [
         {
           symbol: String(symbol).toUpperCase(),
-          baseAsset: 'BTC',
+          baseAsset,
           quoteAsset,
           filters: [
             { filterType: 'LOT_SIZE', minQty: String(minQty), stepSize: String(stepSize) },
@@ -232,8 +234,10 @@ export function mockMexcSpotFlow({
 
 export function mockMexcForSizingOnly({
   symbol = 'BTCUSDC',
+  baseAsset = 'BTC',
   quoteAsset = 'USDC',
   freeQuote = 10,
+  freeBase = 0,
   price = 100,
   stepSize = 0.000001,
   minQty = 0.000001,
@@ -246,7 +250,10 @@ export function mockMexcForSizingOnly({
     .get('/api/v3/account')
     .query(true)
     .reply(200, {
-      balances: [{ asset: quoteAsset, free: String(freeQuote), locked: '0' }]
+      balances: [
+        { asset: quoteAsset, free: String(freeQuote), locked: '0' },
+        { asset: baseAsset, free: String(freeBase), locked: '0' }
+      ]
     });
 
   scope
@@ -264,7 +271,7 @@ export function mockMexcForSizingOnly({
       symbols: [
         {
           symbol: String(symbol).toUpperCase(),
-          baseAsset: 'BTC',
+          baseAsset,
           quoteAsset,
           filters: [
             { filterType: 'LOT_SIZE', minQty: String(minQty), stepSize: String(stepSize) },

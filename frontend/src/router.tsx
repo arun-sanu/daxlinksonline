@@ -14,6 +14,8 @@ import ExchangeAccounts from './pages/ExchangeAccounts';
 import PineConvert from './pages/pine/Convert';
 import ExchangeIntegrationPage from './pages/platform/ExchangeIntegrationPage';
 import AccountRegistrationPage from './pages/AccountRegistrationPage';
+import SizingDetailsPage from './pages/platform/sizing/SizingDetailsPage';
+import SizingReportsPage from './pages/platform/sizing/SizingReportsPage';
 
 const withinCard = (node: ReactNode) => (
   <div className="layout-container section-pad">
@@ -38,6 +40,9 @@ export function AppRouter() {
         { path: 'account/register', element: <AccountRegistrationPage /> },
         { path: 'account', element: <AccountPage /> },
         { path: 'platform', element: <PlatformOverviewPage /> },
+        { path: 'platform/sizing', element: <Navigate to="/platform/sizing/details" replace /> },
+        { path: 'platform/sizing/details', element: <SizingDetailsPage /> },
+        { path: 'platform/sizing/reports', element: <SizingReportsPage /> },
         { path: 'platform/integrations/:exchangeId', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/connectivity', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/data', element: <ExchangeIntegrationPage /> },
