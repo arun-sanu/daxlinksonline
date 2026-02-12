@@ -329,6 +329,10 @@ function mapTradeStatus(status) {
   if (normalized === 'rejected') return 'rejected';
   if (normalized === 'pending') return 'pending';
   if (normalized === 'retried') return 'retried';
+  if (normalized === 'received') return 'pending';
+  if (normalized === 'sent') return 'pending';
+  if (normalized === 'filled') return 'executed';
+  if (normalized === 'error') return 'rejected';
   if (normalized === 'executed_success' || normalized === 'succeeded') return 'executed';
   if (normalized === 'executed_error' || normalized === 'failed') return 'rejected';
   if (normalized === 'retrying') return 'retried';
@@ -382,18 +386,49 @@ function normalizeReportLimit(limit) {
   return Math.min(Math.floor(n), MAX_REPORT_LIMIT);
 }
 
-function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter) {
+function resolveReportErrorMessage(signal, audit) {
+  return (
+    audit?.errorMessage ||
+    signal?.error ||
+    signal?.payload?.executionResult?.errorMessage ||
+    signal?.payload?.executionResult?.msg ||
+    signal?.payload?.executionResult?.message ||
+    null
+  );
+}
+
+function resolveReportOrderId(signal, audit) {
+  return (
+    signal?.payload?.executionResult?.orderId ||
+    signal?.payload?.executionResult?.id ||
+    signal?.payload?.executionResult?.clientOrderId ||
+    audit?.mexcOrderId ||
+    null
+  );
+}
+
+function resolveReportQuantity(signal, audit) {
+  const signalQty = resolveQuantity(signal);
+  if (signalQty > 0) return signalQty;
+  const auditQty = asNumber(audit?.qtyRounded);
+  return auditQty > 0 ? auditQty : 0;
+}
+
+function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, audit) {
   const symbol = alert?.symbol || signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || null;
   const side = normalizeSide(alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side);
   const signalTimestamp =
     toIso(alert?.receivedAt) ||
     toIso(signal?.payload?.timestamp || signal?.payload?.raw?.timestamp) ||
     toIso(signal?.createdAt);
-  const tradeStatus = mapTradeStatus(signal.status);
+  const signalTradeStatus = mapTradeStatus(signal.status);
+  const auditTradeStatus = mapTradeStatus(audit?.status || audit?.mexcStatus || null);
+  const tradeStatus = signalTradeStatus === 'pending' ? auditTradeStatus || signalTradeStatus : signalTradeStatus;
   const alertId = alert?.id || extractAlertId(signal) || signal.id;
   const sentToExchange = Boolean(signal.integrationId);
   const requestTimestamp = toIso(signal?.createdAt);
   const signalAction = side || '—';
+  const errorMessage = resolveReportErrorMessage(signal, audit);
 
   return {
     key: signal.id,
@@ -419,17 +454,13 @@ function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter) 
       integrationLabel: integrationMeta?.label || integrationMeta?.exchange || 'Integration',
       exchange: integrationMeta?.exchange || null,
       tradeStatus,
-      executionTimestamp: toIso(signal.executedAt) || toIso(signal.createdAt),
+      executionTimestamp: toIso(signal.executedAt) || toIso(audit?.updatedAt) || toIso(signal.createdAt),
       side: normalizeSide(signal.side || side || null),
       type: signal.type || signal?.payload?.type || signal?.payload?.raw?.type || null,
       amount: signal.amount ?? null,
-      quantity: resolveQuantity(signal),
-      orderId:
-        signal?.payload?.executionResult?.orderId ||
-        signal?.payload?.executionResult?.id ||
-        signal?.payload?.executionResult?.clientOrderId ||
-        null,
-      errorMessage: signal.error || null,
+      quantity: resolveReportQuantity(signal, audit),
+      orderId: resolveReportOrderId(signal, audit),
+      errorMessage,
       positionAfter: positionAfter || {
         estimatedBaseQty: null,
         state: 'UNKNOWN'
@@ -568,6 +599,30 @@ export async function getWorkspaceOrderReport({
     return { signal, alert: null, matchType: 'unmatched' };
   });
 
+  const signalIds = signals.map((signal) => signal.id);
+  const executionAudits = await prisma.executionAudit.findMany({
+    where: {
+      forwardedSignalId: { in: signalIds }
+    },
+    orderBy: { receivedAt: 'desc' },
+    select: {
+      forwardedSignalId: true,
+      status: true,
+      errorMessage: true,
+      qtyRounded: true,
+      mexcOrderId: true,
+      mexcStatus: true,
+      updatedAt: true
+    }
+  });
+  const auditBySignalId = {};
+  executionAudits.forEach((audit) => {
+    if (!audit?.forwardedSignalId) return;
+    if (!auditBySignalId[audit.forwardedSignalId]) {
+      auditBySignalId[audit.forwardedSignalId] = audit;
+    }
+  });
+
   const positionBySignalId = {};
   let runningPositionQty = 0;
   const matchedAsc = [...matchedRows].sort((a, b) => {
@@ -597,7 +652,8 @@ export async function getWorkspaceOrderReport({
       row.alert,
       integrationMap[row.signal.integrationId],
       row.matchType,
-      positionBySignalId[row.signal.id]
+      positionBySignalId[row.signal.id],
+      auditBySignalId[row.signal.id] || null
     )
   );
 

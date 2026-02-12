@@ -502,19 +502,20 @@ export default function OrdersModule() {
                     <th className="px-3 py-2">Quantity</th>
                     <th className="px-3 py-2">Order ID</th>
                     <th className="px-3 py-2">Position after</th>
+                    <th className="px-3 py-2">Error reason</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
                   {reportLoading && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={8}>
+                      <td className="px-3 py-3 text-gray-400" colSpan={9}>
                         Loading report…
                       </td>
                     </tr>
                   )}
                   {!reportLoading && reportRows.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={8}>
+                      <td className="px-3 py-3 text-gray-500" colSpan={9}>
                         No exchange rows yet.
                       </td>
                     </tr>
@@ -538,6 +539,9 @@ export default function OrdersModule() {
                           {row.exchange.positionAfter?.estimatedBaseQty !== null &&
                             row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
                             ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
+                        </td>
+                        <td className="max-w-[260px] px-3 py-2 text-xs text-rose-200" title={row.exchange.errorMessage || ''}>
+                          {row.exchange.errorMessage || '—'}
                         </td>
                       </tr>
                     ))}
