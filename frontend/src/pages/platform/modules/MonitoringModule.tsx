@@ -700,6 +700,7 @@ export default function MonitoringModule() {
                 <th className="px-3 py-2 text-left">TP</th>
                 <th className="px-3 py-2 text-left">SL</th>
                 <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Error</th>
               </tr>
             </thead>
             <tbody>
@@ -728,18 +729,19 @@ export default function MonitoringModule() {
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.takeProfit)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.stopLoss)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.status || 'received')}</td>
+                  <td className="px-3 py-2 text-xs text-rose-200">{renderValue(alert.errorMessage)}</td>
                 </tr>
               ))}
               {loading && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-400">
+                  <td colSpan={11} className="px-3 py-6 text-center text-sm text-gray-400">
                     Loading alerts…
                   </td>
                 </tr>
               )}
               {!loading && alerts.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-400">
+                  <td colSpan={11} className="px-3 py-6 text-center text-sm text-gray-400">
                     No alerts yet.
                   </td>
                 </tr>

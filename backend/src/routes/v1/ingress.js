@@ -5,6 +5,7 @@ import { tradingViewIpWhitelist } from '../../middleware/ipWhitelist.js';
 import { forward } from '../../services/tradingviewService.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { createTradingviewWebhookHandler } from '../../controllers/tradingviewWebhookController.js';
+import { tradingviewBodyMiddleware } from '../../middleware/tradingviewBody.js';
 
 export const router = Router();
 
@@ -17,7 +18,13 @@ const legacyWebhookHandler = createTradingviewWebhookHandler({
   allowBodySecret: true
 });
 
-router.post('/webhook', tradingViewIpWhitelist(), perSubdomainRateLimit({ maxPerSecond: 20 }), legacyWebhookHandler);
+router.post(
+  '/webhook',
+  ...tradingviewBodyMiddleware,
+  tradingViewIpWhitelist(),
+  perSubdomainRateLimit({ maxPerSecond: 20 }),
+  legacyWebhookHandler
+);
 
 // Authenticated test endpoint to simulate a webhook without DNS/subdomain
 router.post('/webhook/test', requireAuth, async (req, res, next) => {

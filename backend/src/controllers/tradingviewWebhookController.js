@@ -7,6 +7,14 @@ import { extractSubdomain } from '../lib/webhookDomains.js';
 import { webhookConfig } from '../config/webhook.js';
 import { createTradingviewAlert, updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
 import { getWebhookHmacPolicy } from '../services/webhookPolicy.js';
+import {
+  EXECUTION_AUDIT_STATUS,
+  buildExecutionDedupeKey,
+  createExecutionAudit,
+  findDuplicateExecutionAudit,
+  updateExecutionAudit
+} from '../services/executionAuditService.js';
+import { normalizeTradingviewSignal } from '../services/tradingviewSignalService.js';
 
 const payloadSchema = z.object({
   secret: z.string().optional()
@@ -22,6 +30,36 @@ async function findUserByPrefix(prefix) {
   });
   if (!record) return null;
   return prisma.user.findUnique({ where: { id: record.userId } });
+}
+
+async function resolveSingleExecutionTarget(userId) {
+  if (!userId) return null;
+  const rows = await prisma.integration.findMany({
+    where: {
+      workspace: { ownerId: userId },
+      exchange: { equals: 'mexc', mode: 'insensitive' },
+      credential: { isNot: null },
+      status: { in: ['active', 'pending', 'connected'] }
+    },
+    select: {
+      id: true,
+      workspaceId: true
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 2
+  });
+  if (rows.length !== 1) return null;
+  return {
+    botId: rows[0].id,
+    integrationId: rows[0].id,
+    workspaceId: rows[0].workspaceId
+  };
+}
+
+function toRawText(req) {
+  if (typeof req.rawBodyText === 'string') return req.rawBodyText;
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody.toString('utf8');
+  return '';
 }
 
 function validateUserStatus(user) {
@@ -53,7 +91,9 @@ function extractTimestamp(req) {
   const candidates = [
     req.headers['x-tv-timestamp'],
     req.query?.timestamp,
-    req.body?.timestamp
+    req.body?.timestamp,
+    req.body?.ts,
+    req.query?.ts
   ].filter(Boolean);
   if (!candidates.length) return null;
   const raw = candidates[0];
@@ -162,23 +202,33 @@ export function createTradingviewWebhookHandler(
   { requireQuerySecret = false, allowBodySecret = true } = {},
   deps = {}
 ) {
-  const { findUser = findUserByPrefix, forwarder = forward } = deps;
+  const {
+    findUser = findUserByPrefix,
+    forwarder = forward,
+    resolveExecutionTarget = resolveSingleExecutionTarget,
+    getHmacPolicy = getWebhookHmacPolicy,
+    createAudit = createExecutionAudit,
+    updateAudit = updateExecutionAudit,
+    findDuplicateAudit = findDuplicateExecutionAudit
+  } = deps;
   return async function tradingviewWebhookHandler(req, res, next) {
     let alertRecord = null;
+    let executionAudit = null;
     try {
+      const clientIp = getClientIp(req);
       let prefix = req.subdomainPrefix;
       if (!prefix) {
         const host = req.headers['x-forwarded-host'] || req.headers.host;
         prefix = extractSubdomain(host);
       }
       if (!prefix) {
-        logReject('invalid_host', { ip: getClientIp(req) });
+        logReject('invalid_host', { ip: clientIp });
         return res.status(400).json({ error: 'Invalid host header' });
       }
 
       const user = await findUser(prefix);
       if (!user) {
-        logReject('user_not_found', { prefix, ip: getClientIp(req) });
+        logReject('user_not_found', { prefix, ip: clientIp });
         return res.status(404).json({ error: 'Not found' });
       }
       try {
@@ -187,47 +237,99 @@ export function createTradingviewWebhookHandler(
         logReject(statusErr.message || 'user_inactive', {
           prefix,
           userId: user.id,
-          ip: getClientIp(req)
+          ip: clientIp
         });
         return res.status(statusErr.status || 500).json({ error: statusErr.message });
       }
 
-      const candidatePayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
+      const inboundPayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
+      const candidatePayload = { ...inboundPayload };
       if (!candidatePayload.source) {
         candidatePayload.source = 'tradingview';
       }
       if (!candidatePayload.sourceId && !candidatePayload.webhookId && prefix) {
         candidatePayload.sourceId = `tv:${prefix}`;
       }
+      const normalizedSignal = normalizeTradingviewSignal(candidatePayload);
+      const rawBody = toRawText(req);
+
       try {
         alertRecord = await createTradingviewAlert({
           userId: user.id,
-          payload: candidatePayload,
+          payload: normalizedSignal.normalizedPayload || candidatePayload,
           status: 'received',
           webhookSubdomain: prefix,
-          clientIp: getClientIp(req)
+          clientIp
         });
       } catch (err) {
         console.warn('[tradingview] failed to record alert', err?.message || err);
       }
+      try {
+        executionAudit = await createAudit({
+          userId: user.id,
+          tradingviewAlertId: alertRecord?.id || null,
+          tvTs: normalizedSignal?.signal?.ts || candidatePayload.ts || candidatePayload.timestamp || null,
+          symbol: normalizedSignal?.signal?.symbol || candidatePayload.symbol || null,
+          side: normalizedSignal?.signal?.side || candidatePayload.side || null,
+          rawBody,
+          parsedPayload: normalizedSignal.normalizedPayload || candidatePayload,
+          status: EXECUTION_AUDIT_STATUS.RECEIVED
+        });
+      } catch (err) {
+        console.warn('[tradingview] failed to create execution audit', err?.message || err);
+      }
+
+      const safeUpdateAlert = async (status, message = null) => {
+        if (!alertRecord) return;
+        try {
+          await updateTradingviewAlertStatus(alertRecord.id, status, message);
+        } catch (err) {
+          console.warn('[tradingview] failed to update alert status', err?.message || err);
+        }
+      };
+      const safeUpdateExecutionAudit = async (patch = {}) => {
+        if (!executionAudit?.id) return;
+        try {
+          executionAudit = await updateAudit(executionAudit.id, patch);
+        } catch (err) {
+          console.warn('[tradingview] failed to update execution audit', err?.message || err);
+        }
+      };
+      const rejectInbound = async ({ statusCode, reason, reasonKey = 'invalid_payload' }) => {
+        logReject(reasonKey, { prefix, userId: user.id, ip: clientIp });
+        await safeUpdateAlert('rejected', reason);
+        await safeUpdateExecutionAudit({
+          status: EXECUTION_AUDIT_STATUS.REJECTED,
+          errorMessage: reason
+        });
+        return res.status(statusCode).json({ error: reason });
+      };
 
       const expectedSecret = user.webhookSecret;
       if (expectedSecret) {
         try {
           const providedSecret = resolveSecret(req, { requireQuerySecret, allowBodySecret });
           if (!providedSecret) {
-            logReject('secret_missing', { prefix, userId: user.id, ip: getClientIp(req) });
-            if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Secret required');
-            return res.status(401).json({ error: 'Secret required' });
+            return rejectInbound({
+              statusCode: 401,
+              reason: 'Secret required',
+              reasonKey: 'secret_missing'
+            });
           }
           if (providedSecret !== expectedSecret) {
-            logReject('secret_invalid', { prefix, userId: user.id, ip: getClientIp(req) });
-            if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Invalid secret');
-            return res.status(401).json({ error: 'Invalid secret' });
+            return rejectInbound({
+              statusCode: 401,
+              reason: 'Invalid secret',
+              reasonKey: 'secret_invalid'
+            });
           }
         } catch (secretErr) {
-          logReject(secretErr.message || 'secret_error', { prefix, userId: user.id, ip: getClientIp(req) });
-          if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', secretErr.message || 'Secret error');
+          logReject(secretErr.message || 'secret_error', { prefix, userId: user.id, ip: clientIp });
+          await safeUpdateAlert('rejected', secretErr.message || 'Secret error');
+          await safeUpdateExecutionAudit({
+            status: EXECUTION_AUDIT_STATUS.REJECTED,
+            errorMessage: secretErr.message || 'Secret error'
+          });
           return res.status(secretErr.status || 401).json({ error: secretErr.message });
         }
       }
@@ -235,42 +337,105 @@ export function createTradingviewWebhookHandler(
       const timestamp = extractTimestamp(req);
       const tsStatus = verifyTimestamp(timestamp);
       if (!tsStatus.ok) {
-        logReject('timestamp_invalid', { prefix, userId: user.id, ip: getClientIp(req), skewMs: webhookConfig.maxSkewMs });
-        if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', tsStatus.message);
-        return res.status(403).json({ error: tsStatus.message });
+        return rejectInbound({
+          statusCode: 403,
+          reason: tsStatus.message,
+          reasonKey: 'timestamp_invalid'
+        });
       }
 
       const expectedHmacKey = user.webhookHmacKey;
-      const providedHmac = candidatePayload.hmac || candidatePayload.signature || candidatePayload.sign;
-      const policy = await getWebhookHmacPolicy();
+      const providedHmac = inboundPayload.hmac || inboundPayload.signature || inboundPayload.sign;
+      const policy = await getHmacPolicy();
       const disableTradingview = Boolean(policy.disableTradingview);
       const hmacEnforced = Boolean(policy.enforceGlobal) && !disableTradingview;
       if (expectedHmacKey && providedHmac) {
-        const payloadBuffer = resolveHmacSource(req, candidatePayload);
+        const payloadBuffer = resolveHmacSource(req, inboundPayload);
         const result = verifyHmac({ provided: String(providedHmac), key: expectedHmacKey, payloadBuffer });
         if (!result.ok) {
-          logReject('hmac_invalid', { prefix, userId: user.id, ip: getClientIp(req) });
-          if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', result.message);
-          return res.status(401).json({ error: result.message });
+          return rejectInbound({
+            statusCode: 401,
+            reason: result.message,
+            reasonKey: 'hmac_invalid'
+          });
         }
       } else if (expectedHmacKey && hmacEnforced) {
-        logReject('hmac_missing', { prefix, userId: user.id, ip: getClientIp(req) });
-        if (alertRecord) await updateTradingviewAlertStatus(alertRecord.id, 'rejected', 'Missing HMAC signature');
-        return res.status(401).json({ error: 'Missing HMAC signature' });
+        return rejectInbound({
+          statusCode: 401,
+          reason: 'Missing HMAC signature',
+          reasonKey: 'hmac_missing'
+        });
       }
 
-      const payload = payloadSchema.parse(candidatePayload || {});
-      if (alertRecord) {
-        try {
-          await updateTradingviewAlertStatus(alertRecord.id, 'validated', null);
-        } catch (err) {
-          console.warn('[tradingview] failed to update alert status', err?.message || err);
-        }
+      if (!normalizedSignal.ok) {
+        return rejectInbound({
+          statusCode: 422,
+          reason: normalizedSignal.errors.join('; '),
+          reasonKey: 'payload_validation_failed'
+        });
       }
-      forwarder(user.id, payload, { alertId: alertRecord?.id }).catch((err) => {
+
+      const signal = normalizedSignal.signal;
+      const executionTarget = await resolveExecutionTarget(user.id);
+      let dedupeKey = null;
+      if (executionTarget?.botId && signal?.ts) {
+        dedupeKey = buildExecutionDedupeKey({
+          symbol: signal.symbol,
+          side: signal.side,
+          tvTs: signal.ts,
+          botId: executionTarget.botId
+        });
+        await safeUpdateExecutionAudit({
+          workspaceId: executionTarget.workspaceId,
+          botId: executionTarget.botId,
+          integrationId: executionTarget.integrationId,
+          symbol: signal.symbol,
+          side: signal.side,
+          tvTs: signal.ts,
+          dedupeKey,
+          parsedPayload: normalizedSignal.normalizedPayload
+        });
+        const duplicate = await findDuplicateAudit({
+          botId: executionTarget.botId,
+          dedupeKey,
+          excludeId: executionAudit?.id || null
+        });
+        if (duplicate) {
+          await safeUpdateAlert('rejected', 'duplicate');
+          await safeUpdateExecutionAudit({
+            status: EXECUTION_AUDIT_STATUS.REJECTED,
+            errorMessage: 'duplicate'
+          });
+          return res.status(200).json({ ok: true, message: 'duplicate' });
+        }
+      } else {
+        await safeUpdateExecutionAudit({
+          symbol: signal.symbol,
+          side: signal.side,
+          tvTs: signal.ts,
+          parsedPayload: normalizedSignal.normalizedPayload
+        });
+      }
+
+      const payload = payloadSchema.parse({
+        ...(normalizedSignal.normalizedPayload || candidatePayload || {}),
+        source: 'tradingview',
+        sourceId: candidatePayload.sourceId,
+        symbol: signal.symbol,
+        side: signal.side,
+        type: 'market',
+        ts: signal.ts,
+        executionAuditId: executionAudit?.id || null,
+        dedupeKey: dedupeKey || null,
+        workspaceId: executionTarget?.workspaceId || null,
+        botId: executionTarget?.botId || null
+      });
+
+      await safeUpdateAlert('validated', null);
+      forwarder(user.id, payload, { alertId: alertRecord?.id, executionAuditId: executionAudit?.id }).catch((err) => {
         console.warn('[tradingview] forward failed', err);
       });
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, message: 'queued' });
     } catch (error) {
       if (error instanceof z.ZodError) {
         error.status = 400;

@@ -211,6 +211,7 @@ model User {
   devices          Device[]
   dnsOrder         String[]             @default([])
   tradingviewAlerts TradingviewAlert[]
+  executionAudits  ExecutionAudit[]
 
   @@index([trialEndsAt])
 }
@@ -461,6 +462,42 @@ model TradingviewAlert {
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, receivedAt])
+}
+
+model ExecutionAudit {
+  id                 String   @id @default(uuid())
+  userId             String
+  workspaceId        String?
+  botId              String?
+  integrationId      String?
+  tradingviewAlertId String?
+  forwardedSignalId  String?
+  receivedAt         DateTime @default(now())
+  tvTs               BigInt?
+  dedupeKey          String?
+  symbol             String?
+  side               String?
+  strategyName       String?
+  rawBody            String?
+  parsedPayload      Json?
+  computedPrice      Float?
+  freeQuote          Float?
+  qtyRaw             Float?
+  qtyRounded         Float?
+  mexcOrderId        String?
+  mexcStatus         String?
+  mexcRawResponse    Json?
+  status             String   @default("RECEIVED") // RECEIVED | REJECTED | SENT | FILLED | ERROR
+  errorMessage       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, receivedAt])
+  @@index([botId, dedupeKey])
+  @@index([dedupeKey, receivedAt])
+  @@index([status, receivedAt])
 }
 
 // Power-user DNS records for custom subdomains

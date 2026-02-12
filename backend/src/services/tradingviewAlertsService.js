@@ -1,28 +1,11 @@
 import { prisma } from '../utils/prisma.js';
 import { normalizePayload, sanitizePayload } from './forwardingMapper.js';
+import { extractStrategyName as extractStrategyFromSignal, normalizeTradingviewSignal } from './tradingviewSignalService.js';
 
 function parseNumber(value) {
   if (value === null || value === undefined) return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
-}
-
-function trimString(value, max = 160) {
-  if (value === null || value === undefined) return null;
-  const str = String(value).trim();
-  if (!str) return null;
-  return str.length > max ? str.slice(0, max) : str;
-}
-
-function extractStrategyName(payload) {
-  const p = payload || {};
-  return (
-    trimString(p.strategy) ||
-    trimString(p.strategyName) ||
-    trimString(p.strategy_name) ||
-    trimString(p.name) ||
-    null
-  );
 }
 
 function extractTakeProfit(payload) {
@@ -56,20 +39,23 @@ export async function createTradingviewAlert({
   webhookSubdomain = null,
   clientIp = null
 }) {
-  const normalized = normalizePayload(payload || {});
+  const signal = normalizeTradingviewSignal(payload || {});
+  const mergedPayload = signal.normalizedPayload || payload || {};
+  const normalized = normalizePayload(mergedPayload);
+  const normalizedSide = signal?.signal?.side ? signal.signal.side.toLowerCase() : normalized.side || null;
   const data = {
     userId,
     source: 'tradingview',
-    strategyName: extractStrategyName(payload),
-    symbol: normalized.symbol || null,
-    side: normalized.side || null,
-    orderType: normalized.type || null,
+    strategyName: extractStrategyFromSignal(mergedPayload),
+    symbol: signal?.signal?.symbol || normalized.symbol || null,
+    side: normalizedSide,
+    orderType: (normalized.type || 'market').toLowerCase(),
     quantity: normalized.amount ?? null,
-    takeProfit: extractTakeProfit(payload),
-    stopLoss: extractStopLoss(payload),
+    takeProfit: extractTakeProfit(mergedPayload),
+    stopLoss: extractStopLoss(mergedPayload),
     webhookSubdomain: webhookSubdomain || null,
     clientIp: clientIp || null,
-    payload: sanitizePayload(payload || {}),
+    payload: sanitizePayload(mergedPayload),
     status,
     errorMessage
   };

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { deleteAudit, listAudit } from '../services/auditService.js';
 import { deleteTradingviewAlerts } from '../services/tradingviewAlertsService.js';
+import { deleteExecutionAuditsForUser, listExecutionAuditsForUser } from '../services/executionAuditService.js';
 
 const querySchema = z.object({
   page: z.preprocess((val) => Number(val || 1), z.number().int().positive()).optional(),
@@ -21,7 +22,7 @@ function normalizePayload(detail) {
   }
 }
 
-function toAlertRow(row) {
+function toLegacyAlertRow(row) {
   const payload = normalizePayload(row.detail);
   return {
     id: row.id,
@@ -42,13 +43,53 @@ function toAlertRow(row) {
   };
 }
 
+function toExecutionAlertRow(row) {
+  const payload = normalizePayload(row.parsedPayload) || {};
+  return {
+    id: row.id,
+    receivedAt: row.receivedAt,
+    status: String(row.status || 'RECEIVED').toLowerCase(),
+    strategyName: row.strategyName || payload.strategy || payload.strategyName || payload.strategy_name || null,
+    symbol: row.symbol || payload.symbol || payload.ticker || null,
+    side: row.side || payload.side || payload.action || null,
+    orderType: 'MARKET',
+    quantity: row.qtyRounded ?? '',
+    takeProfit: payload.tp ?? payload.takeProfit ?? payload.take_profit ?? '',
+    stopLoss: payload.sl ?? payload.stopLoss ?? payload.stop_loss ?? '',
+    errorMessage: row.errorMessage || '',
+    userId: row.userId || '',
+    webhookSubdomain: payload.webhookSubdomain || payload.subdomain || '',
+    clientIp: payload.clientIp || payload.ip || '',
+    payload: payload && Object.keys(payload).length ? payload : row.rawBody || null
+  };
+}
+
 export async function handleListWebhookAlerts(req, res, next) {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
     const parsed = querySchema.parse(req.query || {});
-    const result = await listAudit({
+    const executionResult = await listExecutionAuditsForUser({
+      userId: req.user.id,
+      limit: parsed.limit || parsed.pageSize || 50,
+      page: parsed.page || 1,
+      since: parsed.since ? new Date(parsed.since) : undefined,
+      until: parsed.until ? new Date(parsed.until) : undefined,
+      q: parsed.q
+    });
+    if (executionResult.rows.length > 0) {
+      const items = executionResult.rows.map(toExecutionAlertRow);
+      return res.json({
+        items,
+        total: executionResult.total,
+        page: executionResult.page,
+        pageSize: executionResult.pageSize
+      });
+    }
+
+    // Backward compatibility for older records before execution audit ledger.
+    const legacyResult = await listAudit({
       userId: req.user.id,
       action: 'webhook.received',
       limit: parsed.limit || parsed.pageSize || 50,
@@ -57,8 +98,8 @@ export async function handleListWebhookAlerts(req, res, next) {
       until: parsed.until ? new Date(parsed.until) : undefined,
       q: parsed.q
     });
-    const items = result.rows.map(toAlertRow);
-    res.json({ items, total: result.total, page: result.page, pageSize: result.pageSize });
+    const items = legacyResult.rows.map(toLegacyAlertRow);
+    return res.json({ items, total: legacyResult.total, page: legacyResult.page, pageSize: legacyResult.pageSize });
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
@@ -70,13 +111,15 @@ export async function handleDeleteWebhookAlerts(req, res, next) {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    const [auditResult, tradingviewResult] = await Promise.all([
+    const [auditResult, tradingviewResult, executionResult] = await Promise.all([
       deleteAudit({ userId: req.user.id, action: 'webhook.received' }),
-      deleteTradingviewAlerts({ userId: req.user.id })
+      deleteTradingviewAlerts({ userId: req.user.id }),
+      deleteExecutionAuditsForUser(req.user.id)
     ]);
     res.json({
       deleted: auditResult?.count || 0,
-      tradingviewDeleted: tradingviewResult?.count || 0
+      tradingviewDeleted: tradingviewResult?.count || 0,
+      executionDeleted: executionResult?.count || 0
     });
   } catch (error) {
     next(error);

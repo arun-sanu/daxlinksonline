@@ -181,10 +181,23 @@ function sanitize(obj) {
   }
 }
 
-export async function forward(userId, payload, { alertId } = {}) {
+export async function forward(userId, payload, { alertId, executionAuditId } = {}) {
   ensureQueue();
+  const safePayload = sanitize(payload);
+  if (executionAuditId && !safePayload.executionAuditId) {
+    safePayload.executionAuditId = executionAuditId;
+  }
   // Enqueue job for fire-and-forget processing
-  await enqueue('forward-alert', { userId, payload: sanitize(payload), alertId: alertId || null }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+  await enqueue(
+    'forward-alert',
+    {
+      userId,
+      payload: safePayload,
+      alertId: alertId || null,
+      executionAuditId: executionAuditId || safePayload.executionAuditId || null
+    },
+    { attempts: 3, backoff: { type: 'exponential', delay: 2000 } }
+  );
   // Record receipt
   await prisma.auditLog.create({
     data: {

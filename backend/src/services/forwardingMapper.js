@@ -3,17 +3,30 @@ import crypto from 'crypto';
 // Normalize TradingView-like payloads into a generic order request
 export function normalizePayload(raw = {}) {
   const p = typeof raw === 'object' && raw ? raw : {};
-  const symbol = p.symbol || p.ticker || p.pair || p.market || null;
-  let side = String(p.side || p.action || p.direction || '').toLowerCase();
+  const parsedMessage =
+    typeof p.message === 'string'
+      ? (() => {
+          try {
+            const parsed = JSON.parse(p.message);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+  const source = parsedMessage ? { ...p, ...parsedMessage } : p;
+  const symbol = source.symbol || source.ticker || source.pair || source.market || null;
+  let side = String(source.side || source.action || source.direction || '').toLowerCase();
   if (side === 'buy' || side === 'long') side = 'buy';
   else if (side === 'sell' || side === 'short') side = 'sell';
   else side = null;
-  const type = (p.type || p.orderType || (p.price ? 'limit' : 'market'))?.toLowerCase();
-  const amount = Number(p.amount ?? p.qty ?? p.quantity ?? p.size ?? NaN);
-  const price = p.price !== undefined ? Number(p.price) : undefined;
-  const clientOrderId = p.clientOrderId || p.client_id || p.order_id || p.id || null;
-  const exchange = p.exchange || p.venue || null;
-  const environment = p.environment || p.env || null;
+  const type = (source.type || source.orderType || (source.price ? 'limit' : 'market'))?.toLowerCase();
+  const amount = Number(source.amount ?? source.qty ?? source.quantity ?? source.size ?? NaN);
+  const price = source.price !== undefined ? Number(source.price) : undefined;
+  const clientOrderId = source.clientOrderId || source.client_id || source.order_id || source.id || null;
+  const exchange = source.exchange || source.venue || null;
+  const environment = source.environment || source.env || null;
+  const ts = source.ts ?? source.timestamp ?? source.timenow ?? null;
 
   return {
     symbol: symbol || undefined,
@@ -24,7 +37,8 @@ export function normalizePayload(raw = {}) {
     clientOrderId: clientOrderId || undefined,
     exchange: exchange || undefined,
     environment: environment || undefined,
-    raw: p
+    ts: ts || undefined,
+    raw: source
   };
 }
 
@@ -37,7 +51,7 @@ export function computeIdempotencyKey({ userId, normalized }) {
     amount: normalized.amount || null,
     price: normalized.price || null,
     clientOrderId: normalized.clientOrderId || null,
-    ts: normalized.raw?.timestamp || normalized.raw?.ts || null
+    ts: normalized.ts || normalized.raw?.timestamp || normalized.raw?.ts || null
   };
   const input = JSON.stringify(base);
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -56,4 +70,3 @@ export function sanitizePayload(obj) {
     return {};
   }
 }
-

@@ -23,8 +23,8 @@ function createReq({ prefix = 'demo', secret = 'secret', body, rawBody } = {}) {
   const payload =
     body ||
     (() => {
-      const timestamp = Date.now();
-      return { timestamp, message: '{"symbol":"BTC"}' };
+      const ts = Date.now();
+      return { ts, message: `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"ts\":${ts}}` };
     })();
   const buffer =
     rawBody ||
@@ -39,6 +39,14 @@ function createReq({ prefix = 'demo', secret = 'secret', body, rawBody } = {}) {
     rawBody: buffer
   };
 }
+
+const noopExecutionDeps = {
+  resolveExecutionTarget: async () => null,
+  getHmacPolicy: async () => ({ enforceGlobal: true, disableTradingview: false }),
+  createAudit: async () => ({ id: 'audit-1' }),
+  updateAudit: async () => ({}),
+  findDuplicateAudit: async () => null
+};
 
 function canonicalize(obj) {
   if (Array.isArray(obj)) {
@@ -72,14 +80,15 @@ test('tradingview webhook handler accepts valid secret and HMAC', async () => {
       findUser: async () => user,
       forwarder: async () => {
         forwarded = true;
-      }
+      },
+      ...noopExecutionDeps
     }
   );
 
   const res = createRes();
   await handler(req, res, () => {});
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.payload, { ok: true });
+  assert.deepEqual(res.payload, { ok: true, message: 'queued' });
   assert.equal(forwarded, true);
 });
 
@@ -91,7 +100,8 @@ test('tradingview webhook handler rejects invalid secret', async () => {
     { requireQuerySecret: true },
     {
       findUser: async () => user,
-      forwarder: async () => {}
+      forwarder: async () => {},
+      ...noopExecutionDeps
     }
   );
   const res = createRes();
@@ -104,12 +114,13 @@ test('tradingview webhook handler enforces timestamp skew', async () => {
   process.env.WEBHOOK_MAX_SKEW_MS = '1000';
   const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: crypto.randomBytes(32).toString('hex') };
   const past = Date.now() - 10 * 60 * 1000;
-  const req = createReq({ body: { timestamp: past, message: '{"symbol":"BTC"}' } });
+  const req = createReq({ body: { ts: past, message: `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"ts\":${past}}` } });
   const handler = createTradingviewWebhookHandler(
     { requireQuerySecret: true },
     {
       findUser: async () => user,
-      forwarder: async () => {}
+      forwarder: async () => {},
+      ...noopExecutionDeps
     }
   );
   const res = createRes();
@@ -122,8 +133,8 @@ test('tradingview webhook handler enforces timestamp skew', async () => {
 test('tradingview webhook handler validates sorted JSON payload HMAC', async () => {
   const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: crypto.randomBytes(32).toString('hex') };
   const unordered = { z: 5, a: 'alpha', nested: { b: 2, a: 1 } };
-  const timestamp = Date.now();
-  const payload = { ...unordered, timestamp };
+  const ts = Date.now();
+  const payload = { ...unordered, symbol: 'BTCUSDC', side: 'BUY', ts };
   const canonical = JSON.stringify(canonicalize(payload));
   const signature = crypto.createHmac('sha256', Buffer.from(user.webhookHmacKey, 'hex')).update(Buffer.from(canonical, 'utf8')).digest('hex');
   const req = createReq({
@@ -134,7 +145,8 @@ test('tradingview webhook handler validates sorted JSON payload HMAC', async () 
     { requireQuerySecret: true },
     {
       findUser: async () => user,
-      forwarder: async () => {}
+      forwarder: async () => {},
+      ...noopExecutionDeps
     }
   );
   const res = createRes();
@@ -149,7 +161,8 @@ test('tradingview webhook handler enforces missing HMAC when required', async ()
     { requireQuerySecret: true },
     {
       findUser: async () => user,
-      forwarder: async () => {}
+      forwarder: async () => {},
+      ...noopExecutionDeps
     }
   );
   const res = createRes();
@@ -160,15 +173,17 @@ test('tradingview webhook handler enforces missing HMAC when required', async ()
 
 test('tradingview webhook handler accepts plain text payload HMAC', async () => {
   const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: crypto.randomBytes(32).toString('hex') };
-  const message = 'BUY NIFTY NOW';
+  const ts = Date.now();
+  const message = `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"ts\":${ts}}`;
   const hmac = crypto.createHmac('sha256', Buffer.from(user.webhookHmacKey, 'hex')).update(Buffer.from(message, 'utf8')).digest('hex');
-  const body = { message, timestamp: Date.now(), hmac };
+  const body = { message, ts, hmac };
   const req = createReq({ body, rawBody: Buffer.from(message) });
   const handler = createTradingviewWebhookHandler(
     { requireQuerySecret: true },
     {
       findUser: async () => user,
-      forwarder: async () => {}
+      forwarder: async () => {},
+      ...noopExecutionDeps
     }
   );
   const res = createRes();
