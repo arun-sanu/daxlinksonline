@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { fetchMexcSpotSnapshot, fetchOrderReport, type OrderCheckSnapshot, type OrderReportRow } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
 import SizingDebugCard from '../../../components/SizingDebugCard';
@@ -274,6 +275,26 @@ export default function OrdersModule() {
           Understand if a spot trade executed, whether it is still open, and what your current holdings look like.
         </p>
       </header>
+
+      <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-2 text-xs uppercase tracking-[0.2em]">
+        {[
+          { label: 'Order Status', to: '/platform/orders' },
+          { label: 'Sizing', to: '/platform/orders/sizing/details' }
+        ].map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              `rounded-xl px-3 py-2 transition ${
+                isActive ? 'bg-sky-500/20 text-sky-100' : 'text-gray-300 hover:bg-white/10'
+              }`
+            }
+            end={item.to === '/platform/orders'}
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
 
       <article className="card-shell space-y-4">
         <div>
