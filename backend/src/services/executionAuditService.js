@@ -55,6 +55,7 @@ export async function createExecutionAudit({
   side = null,
   rawBody = null,
   parsedPayload = null,
+  sizingDebug = null,
   strategyName = null,
   status = EXECUTION_AUDIT_STATUS.RECEIVED,
   errorMessage = null
@@ -74,6 +75,7 @@ export async function createExecutionAudit({
       strategyName: strategyName || extractStrategyName(parsedPayload || {}),
       rawBody: rawBody != null ? String(rawBody) : null,
       parsedPayload: toJsonSafe(parsedPayload),
+      sizingDebug: toJsonSafe(sizingDebug),
       status,
       errorMessage: errorMessage || null
     }
@@ -101,6 +103,7 @@ export async function updateExecutionAudit(auditId, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(patch, 'mexcStatus')) data.mexcStatus = patch.mexcStatus ? String(patch.mexcStatus) : null;
   if (Object.prototype.hasOwnProperty.call(patch, 'mexcRawResponse')) data.mexcRawResponse = toJsonSafe(patch.mexcRawResponse);
   if (Object.prototype.hasOwnProperty.call(patch, 'parsedPayload')) data.parsedPayload = toJsonSafe(patch.parsedPayload);
+  if (Object.prototype.hasOwnProperty.call(patch, 'sizingDebug')) data.sizingDebug = toJsonSafe(patch.sizingDebug);
   if (Object.prototype.hasOwnProperty.call(patch, 'rawBody')) data.rawBody = patch.rawBody != null ? String(patch.rawBody) : null;
   if (Object.prototype.hasOwnProperty.call(patch, 'strategyName')) data.strategyName = patch.strategyName || null;
   if (Object.keys(data).length === 0) return null;

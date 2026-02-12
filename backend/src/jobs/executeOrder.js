@@ -121,17 +121,28 @@ async function markExecutionAudit(auditId, patch) {
   }
 }
 
-async function markSignalExecutionError({ signalId, alertId, auditId, message, auditStatus = EXECUTION_AUDIT_STATUS.ERROR }) {
+async function markSignalExecutionError({
+  signalId,
+  alertId,
+  auditId,
+  message,
+  auditStatus = EXECUTION_AUDIT_STATUS.ERROR,
+  sizingDebug = undefined
+}) {
   debugExecution('executed', {
     auditId: auditId || null,
     status: auditStatus,
     error: message
   });
   await markAlertStatus(alertId, 'failed', message);
-  await markExecutionAudit(auditId, {
+  const auditPatch = {
     status: auditStatus,
     errorMessage: message
-  });
+  };
+  if (sizingDebug !== undefined) {
+    auditPatch.sizingDebug = sizingDebug;
+  }
+  await markExecutionAudit(auditId, auditPatch);
   await prisma.forwardedSignal.update({
     where: { id: signalId },
     data: {
@@ -265,6 +276,7 @@ export async function executePreparedSignal(signalId) {
       const sizing = await computeMexcBaseQuantityForSignal({
         workspaceId: integration.workspaceId,
         symbol,
+        side,
         client: mexcClient
       });
 
@@ -275,7 +287,8 @@ export async function executePreparedSignal(signalId) {
         computedPrice: sizing.computedPrice,
         freeQuote: sizing.freeQuote,
         qtyRaw: sizing.qtyRaw,
-        qtyRounded: sizing.qtyRounded
+        qtyRounded: sizing.qtyRounded,
+        sizingDebug: sizing.sizingDebug || null
       });
 
       result = await mexcClient.placeMarketOrderBaseQty({
@@ -401,7 +414,8 @@ export async function executePreparedSignal(signalId) {
       alertId,
       auditId: executionAuditId,
       message,
-      auditStatus
+      auditStatus,
+      sizingDebug: err?.sizingDebug
     });
   }
 }

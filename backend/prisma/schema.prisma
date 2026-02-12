@@ -480,6 +480,7 @@ model ExecutionAudit {
   strategyName       String?
   rawBody            String?
   parsedPayload      Json?
+  sizingDebug        Json?
   computedPrice      Float?
   freeQuote          Float?
   qtyRaw             Float?

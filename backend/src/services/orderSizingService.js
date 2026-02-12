@@ -13,6 +13,11 @@ function asNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function asNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  return asNumber(value);
+}
+
 function firstObject(candidates = []) {
   return candidates.find((item) => item && typeof item === 'object') || null;
 }
@@ -22,6 +27,28 @@ function quoteAssetFromSymbol(symbol) {
   if (normalized.endsWith('USDC')) return 'USDC';
   if (normalized.endsWith('USDT')) return 'USDT';
   return null;
+}
+
+function baseAssetFromSymbol(symbol, quoteAsset) {
+  const normalized = String(symbol || '').toUpperCase();
+  const quote = String(quoteAsset || '').toUpperCase();
+  if (!normalized || !quote || !normalized.endsWith(quote)) return null;
+  const base = normalized.slice(0, -quote.length).trim();
+  return base || null;
+}
+
+function toFiniteOrZero(value) {
+  const n = asNumber(value);
+  return n && n > 0 ? n : 0;
+}
+
+function throwSizingError(message, sizingDebug, rejectedReason) {
+  const error = new SizingConfigError(message);
+  error.sizingDebug = {
+    ...(sizingDebug && typeof sizingDebug === 'object' ? sizingDebug : {}),
+    rejectedReason: rejectedReason || 'sizing_error'
+  };
+  throw error;
 }
 
 export function roundDownToStep(value, stepSize) {
@@ -67,53 +94,96 @@ export function computeBaseQuantityFromInputs({
   price,
   stepSize,
   minNotional = 0,
-  minQty = 0
+  minQty = 0,
+  sizingDebugBase = {}
 }) {
   const safePrice = asNumber(price);
   const safeFreeQuote = asNumber(freeQuote);
+  const stepSizeNum = toFiniteOrZero(stepSize);
+  const minQtyNum = toFiniteOrZero(minQty);
+  const minNotionalNum = toFiniteOrZero(minNotional);
+
+  const sizingDebug = {
+    ...(sizingDebugBase && typeof sizingDebugBase === 'object' ? sizingDebugBase : {}),
+    freeQuote: safeFreeQuote || 0,
+    priceUsed: safePrice,
+    fixedBaseQty: asNullableNumber(fixedBaseQty),
+    riskPctOfFreeQuote: asNullableNumber(riskPctOfFreeQuote),
+    qtyRaw: null,
+    quoteSpendComputed: null,
+    stepSize: stepSizeNum,
+    minQty: minQtyNum,
+    minNotional: minNotionalNum,
+    qtyAfterStepRounding: null,
+    notionalAfterRounding: null,
+    rejectedReason: null
+  };
+
   if (!safePrice || safePrice <= 0) {
-    throw new SizingConfigError('Cannot compute quantity without a valid market price.');
+    throwSizingError('Cannot compute quantity without a valid market price.', sizingDebug, 'invalid_price');
   }
 
   let qtyRaw = null;
+  let quoteSpendComputed = null;
   if (fixedBaseQty !== null && fixedBaseQty !== undefined) {
     const fixed = asNumber(fixedBaseQty);
     if (!fixed || fixed <= 0) {
-      throw new SizingConfigError('fixedBaseQty must be greater than 0.');
+      throwSizingError('fixedBaseQty must be greater than 0.', sizingDebug, 'invalid_fixed_base_qty');
     }
     qtyRaw = fixed;
   } else {
     if (!safeFreeQuote || safeFreeQuote <= 0) {
-      throw new SizingConfigError('Cannot compute quantity because free quote balance is zero.');
+      throwSizingError(
+        'Cannot compute quantity because free quote balance is zero.',
+        sizingDebug,
+        'free_quote_unavailable'
+      );
     }
     const pct = asNumber(riskPctOfFreeQuote);
     if (!pct || pct <= 0) {
-      throw new SizingConfigError('riskPctOfFreeQuote must be greater than 0.');
+      throwSizingError('riskPctOfFreeQuote must be greater than 0.', sizingDebug, 'invalid_risk_pct');
     }
-    const quoteSpend = safeFreeQuote * (pct / 100);
-    qtyRaw = quoteSpend / safePrice;
+    quoteSpendComputed = safeFreeQuote * (pct / 100);
+    qtyRaw = quoteSpendComputed / safePrice;
   }
 
-  const qtyRounded = roundDownToStep(qtyRaw, stepSize);
-  if (!qtyRounded || qtyRounded <= 0) {
-    throw new SizingConfigError('Computed quantity is zero after applying step size rounding.');
-  }
+  sizingDebug.qtyRaw = asNumber(qtyRaw);
+  sizingDebug.quoteSpendComputed = asNullableNumber(quoteSpendComputed);
 
-  const minQtyNum = asNumber(minQty) || 0;
-  if (minQtyNum > 0 && qtyRounded < minQtyNum) {
-    throw new SizingConfigError(`Quantity ${qtyRounded} is below exchange minQty ${minQtyNum}.`);
-  }
-
-  const minNotionalNum = asNumber(minNotional) || 0;
+  const qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
+  sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
   const notional = qtyRounded * safePrice;
+  sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
+  if (!qtyRounded || qtyRounded <= 0) {
+    throwSizingError(
+      'Computed quantity is zero after applying step size rounding.',
+      sizingDebug,
+      'below_step_size'
+    );
+  }
+
+  if (minQtyNum > 0 && qtyRounded < minQtyNum) {
+    throwSizingError(
+      `Quantity ${qtyRounded} is below exchange minQty ${minQtyNum}.`,
+      sizingDebug,
+      'below_min_qty'
+    );
+  }
+
   if (minNotionalNum > 0 && notional < minNotionalNum) {
-    throw new SizingConfigError(`Order value ${notional} is below exchange minNotional ${minNotionalNum}.`);
+    throwSizingError(
+      `Order value ${notional} is below exchange minNotional ${minNotionalNum}.`,
+      sizingDebug,
+      'below_min_notional'
+    );
   }
 
   return {
     qtyRaw,
     qtyRounded,
-    notional
+    notional,
+    quoteSpendComputed,
+    sizingDebug
   };
 }
 
@@ -146,7 +216,7 @@ export async function resolveWorkspaceSizingConfig(workspaceId) {
   return normalizeBaseSizingConfig(dbConfig || {});
 }
 
-export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, client }) {
+export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, side = null, client }) {
   const sizing = await resolveWorkspaceSizingConfig(workspaceId);
   const [account, ticker, filters] = await Promise.all([
     client.getAccount(),
@@ -154,31 +224,73 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, cl
     client.getSymbolFilters(symbol)
   ]);
 
+  const normalizedSymbol = String(symbol || '').toUpperCase();
   const quoteAsset = String(filters?.quoteAsset || quoteAssetFromSymbol(symbol) || 'USDC').toUpperCase();
+  const baseAsset = String(filters?.baseAsset || baseAssetFromSymbol(symbol, quoteAsset) || '').toUpperCase() || null;
   const balances = Array.isArray(account?.balances) ? account.balances : [];
   const quoteBalance = balances.find((row) => String(row?.asset || '').toUpperCase() === quoteAsset);
+  const baseBalance = baseAsset
+    ? balances.find((row) => String(row?.asset || '').toUpperCase() === baseAsset)
+    : null;
   const freeQuote = asNumber(quoteBalance?.free) || 0;
+  const freeBase = asNumber(baseBalance?.free) || 0;
   const computedPrice = asNumber(ticker?.price);
+  const stepSize = asNumber(filters?.stepSize) || 0;
+  const minQty = asNumber(filters?.minQty) || 0;
+  const minNotional = asNumber(filters?.minNotional) || 0;
+  const normalizedSide = side ? String(side).toUpperCase() : null;
 
-  const quantity = computeBaseQuantityFromInputs({
+  const sizingDebugBase = {
+    symbol: normalizedSymbol || null,
+    side: normalizedSide,
+    freeBase,
+    freeQuote,
+    priceUsed: computedPrice,
+    sizingMode: sizing.sizingMode,
     fixedBaseQty: sizing.fixedBaseQty,
     riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
-    freeQuote,
-    price: computedPrice,
-    stepSize: filters?.stepSize,
-    minNotional: filters?.minNotional,
-    minQty: filters?.minQty
-  });
+    stepSize,
+    minQty,
+    minNotional
+  };
+
+  let quantity;
+  try {
+    quantity = computeBaseQuantityFromInputs({
+      fixedBaseQty: sizing.fixedBaseQty,
+      riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
+      freeQuote,
+      price: computedPrice,
+      stepSize,
+      minNotional,
+      minQty,
+      sizingDebugBase
+    });
+  } catch (error) {
+    if (error instanceof SizingConfigError && !error.sizingDebug) {
+      error.sizingDebug = {
+        ...sizingDebugBase,
+        qtyRaw: null,
+        quoteSpendComputed: null,
+        qtyAfterStepRounding: null,
+        notionalAfterRounding: null,
+        rejectedReason: 'sizing_error'
+      };
+    }
+    throw error;
+  }
 
   return {
     ...quantity,
     freeQuote,
+    freeBase,
     computedPrice,
     quoteAsset,
-    baseAsset: filters?.baseAsset || null,
-    stepSize: asNumber(filters?.stepSize) || 0,
-    minQty: asNumber(filters?.minQty) || 0,
-    minNotional: asNumber(filters?.minNotional) || 0,
-    sizing
+    baseAsset,
+    stepSize,
+    minQty,
+    minNotional,
+    sizing,
+    sizingDebug: quantity.sizingDebug
   };
 }
