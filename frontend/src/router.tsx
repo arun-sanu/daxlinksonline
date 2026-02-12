@@ -16,6 +16,7 @@ import ExchangeIntegrationPage from './pages/platform/ExchangeIntegrationPage';
 import AccountRegistrationPage from './pages/AccountRegistrationPage';
 import SizingDetailsPage from './pages/platform/sizing/SizingDetailsPage';
 import SizingReportsPage from './pages/platform/sizing/SizingReportsPage';
+import SignalExchangeReportsPage from './pages/platform/orders/SignalExchangeReportsPage';
 
 const withinCard = (node: ReactNode) => (
   <div className="layout-container section-pad">
@@ -43,6 +44,7 @@ export function AppRouter() {
         { path: 'platform/orders/sizing', element: <Navigate to="/platform/orders/sizing/details" replace /> },
         { path: 'platform/orders/sizing/details', element: <SizingDetailsPage /> },
         { path: 'platform/orders/sizing/reports', element: <SizingReportsPage /> },
+        { path: 'platform/orders/reports', element: <SignalExchangeReportsPage /> },
         { path: 'platform/sizing', element: <Navigate to="/platform/orders/sizing/details" replace /> },
         { path: 'platform/sizing/details', element: <Navigate to="/platform/orders/sizing/details" replace /> },
         { path: 'platform/sizing/reports', element: <Navigate to="/platform/orders/sizing/reports" replace /> },

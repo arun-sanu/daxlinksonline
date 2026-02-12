@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { fetchMexcSpotSnapshot, fetchOrderReport, type OrderCheckSnapshot, type OrderReportRow } from '../../../api/orders';
+import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
-import SizingDebugCard from '../../../components/SizingDebugCard';
 
 type Integration = Awaited<ReturnType<typeof listIntegrations>>[number];
 
@@ -21,11 +20,6 @@ function formatDecimal(value: unknown, digits = 8) {
   if (!Number.isFinite(n)) return '0';
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
-}
-
-function formatNullableDecimal(value: unknown, digits = 8) {
-  if (value === null || value === undefined || value === '') return '—';
-  return formatDecimal(value, digits);
 }
 
 const EXCHANGE_ICON_MAP: Record<string, string> = {
@@ -71,24 +65,6 @@ function formatDate(input?: string | null) {
   return date.toLocaleString();
 }
 
-function tradeStatusClass(status?: string | null) {
-  const normalized = String(status || '').toLowerCase();
-  if (normalized === 'executed') return 'text-emerald-200';
-  if (normalized === 'rejected') return 'text-rose-200';
-  if (normalized === 'retried') return 'text-amber-200';
-  if (normalized === 'pending') return 'text-sky-200';
-  return 'text-slate-200';
-}
-
-function tradeStatusBadge(status?: string | null) {
-  const normalized = String(status || '').toLowerCase();
-  if (normalized === 'executed') return 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100';
-  if (normalized === 'rejected') return 'border-rose-300/40 bg-rose-500/20 text-rose-100';
-  if (normalized === 'retried') return 'border-amber-300/40 bg-amber-500/20 text-amber-100';
-  if (normalized === 'pending') return 'border-sky-300/40 bg-sky-500/20 text-sky-100';
-  return 'border-slate-300/30 bg-slate-500/20 text-slate-100';
-}
-
 export default function OrdersModule() {
   const [symbol, setSymbol] = useState('BTCUSDC');
   const [orderId, setOrderId] = useState('');
@@ -100,18 +76,6 @@ export default function OrdersModule() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snapshot, setSnapshot] = useState<OrderCheckSnapshot | null>(null);
-  const [reportRows, setReportRows] = useState<OrderReportRow[]>([]);
-  const [reportSummary, setReportSummary] = useState({
-    executed: 0,
-    rejected: 0,
-    pending: 0,
-    retried: 0,
-    unmatched: 0
-  });
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState('');
-  const [reportUpdatedAt, setReportUpdatedAt] = useState<string | null>(null);
-  const [selectedSizingRow, setSelectedSizingRow] = useState<OrderReportRow | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
     if (!symbol.trim()) {
@@ -134,33 +98,6 @@ export default function OrdersModule() {
       setLoading(false);
     }
   }, [integrationId, orderId, origClientOrderId, symbol]);
-
-  const refreshReport = useCallback(async () => {
-    setReportLoading(true);
-    setReportError('');
-    try {
-      const data = await fetchOrderReport({
-        symbol,
-        integrationId: integrationId || undefined,
-        limit: 20
-      });
-      setReportRows(Array.isArray(data?.items) ? data.items : []);
-      setReportSummary({
-        executed: Number(data?.summary?.executed || 0),
-        rejected: Number(data?.summary?.rejected || 0),
-        pending: Number(data?.summary?.pending || 0),
-        retried: Number(data?.summary?.retried || 0),
-        unmatched: Number(data?.summary?.unmatched || 0)
-      });
-      setReportUpdatedAt(data?.generatedAt || new Date().toISOString());
-    } catch (err: any) {
-      setReportError(err?.message || 'Failed to load signal/exchange report.');
-      setReportRows([]);
-      setReportSummary({ executed: 0, rejected: 0, pending: 0, retried: 0, unmatched: 0 });
-    } finally {
-      setReportLoading(false);
-    }
-  }, [integrationId, symbol]);
 
   useEffect(() => {
     let mounted = true;
@@ -197,20 +134,12 @@ export default function OrdersModule() {
 
   useEffect(() => {
     refreshSnapshot();
-    refreshReport();
     // Load once with default symbol; subsequent checks are user-triggered.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!integrationId) return;
-    refreshReport();
-  }, [integrationId, refreshReport]);
-
-  const handleRefreshAll = useCallback(() => {
+  const handleRefreshSnapshot = useCallback(() => {
     refreshSnapshot();
-    refreshReport();
-  }, [refreshSnapshot, refreshReport]);
+  }, [refreshSnapshot]);
 
   const orderData = snapshot?.didTradeHappen?.source?.order?.data || {};
   const tradesData = snapshot?.didTradeHappen?.source?.myTrades?.data || {};
@@ -230,41 +159,6 @@ export default function OrdersModule() {
     () => integrations.find((integration) => integration.id === integrationId) || null,
     [integrationId, integrations]
   );
-  const reportCards = useMemo(
-    () => [
-      {
-        key: 'executed',
-        label: 'Executed',
-        value: reportSummary.executed,
-        chip: 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100'
-      },
-      {
-        key: 'rejected',
-        label: 'Rejected',
-        value: reportSummary.rejected,
-        chip: 'border-rose-300/40 bg-rose-500/20 text-rose-100'
-      },
-      {
-        key: 'pending',
-        label: 'Pending',
-        value: reportSummary.pending,
-        chip: 'border-sky-300/40 bg-sky-500/20 text-sky-100'
-      },
-      {
-        key: 'retried',
-        label: 'Retried',
-        value: reportSummary.retried,
-        chip: 'border-amber-300/40 bg-amber-500/20 text-amber-100'
-      },
-      {
-        key: 'unmatched',
-        label: 'Unmatched',
-        value: reportSummary.unmatched,
-        chip: 'border-slate-300/30 bg-slate-500/20 text-slate-100'
-      }
-    ],
-    [reportSummary]
-  );
 
   return (
     <div className="orders-page space-y-6">
@@ -279,7 +173,8 @@ export default function OrdersModule() {
       <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-2 text-xs uppercase tracking-[0.2em]">
         {[
           { label: 'Order Status', to: '/platform/orders' },
-          { label: 'Sizing', to: '/platform/orders/sizing/details' }
+          { label: 'Sizing', to: '/platform/orders/sizing/details' },
+          { label: 'Reports', to: '/platform/orders/reports' }
         ].map((item) => (
           <NavLink
             key={item.to}
@@ -399,8 +294,8 @@ export default function OrdersModule() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={handleRefreshAll}
-            disabled={loading || reportLoading}
+            onClick={handleRefreshSnapshot}
+            disabled={loading}
             className="btn btn-secondary btn-small btn-rect disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Checking...' : 'Refresh status'}
@@ -430,177 +325,6 @@ export default function OrdersModule() {
           <code className="text-sky-200">GET /api/v3/account</code>.
         </div>
         {error && <p className="text-sm text-rose-300">{error}</p>}
-      </article>
-
-      <article className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Signal vs exchange report</p>
-            <p className="text-sm text-gray-300">
-              1:1 execution audit ledger. Left rows are TradingView signals. Right rows are exchange outcomes for the same signal.
-            </p>
-          </div>
-          <p className="text-xs text-gray-500">Updated: {formatDate(reportUpdatedAt)}</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {reportCards.map((card) => (
-            <div key={card.key} className={`rounded-2xl border px-3 py-2 text-xs ${card.chip}`}>
-              <p className="uppercase tracking-[0.18em]">{card.label}</p>
-              <p className="mt-1 text-2xl font-semibold text-white">{card.value}</p>
-            </div>
-          ))}
-        </div>
-        {reportError && <p className="text-sm text-rose-300">{reportError}</p>}
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="rounded-2xl border border-white/8 bg-white/5">
-            <div className="border-b border-white/10 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-gray-400">TradingView signals</p>
-            </div>
-            <div className="max-h-[420px] overflow-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-[#151a2f]">
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                    <th className="px-3 py-2">Alert ID</th>
-                    <th className="px-3 py-2">Signal</th>
-                    <th className="px-3 py-2">Timestamp</th>
-                    <th className="px-3 py-2">Symbol</th>
-                    <th className="px-3 py-2">Side</th>
-                    <th className="px-3 py-2">Sent</th>
-                  </tr>
-                </thead>
-                <tbody className="text-gray-200">
-                  {reportLoading && (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={6}>
-                        Loading report…
-                      </td>
-                    </tr>
-                  )}
-                  {!reportLoading && reportRows.length === 0 && (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={6}>
-                        No signal rows yet.
-                      </td>
-                    </tr>
-                  )}
-                  {!reportLoading &&
-                    reportRows.map((row) => (
-                      <tr key={`signal-${row.key}`} className="border-t border-white/5">
-                        <td className="px-3 py-2 font-mono text-xs text-sky-200">{row.signal.id || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.audit?.signal || row.signal.side || '—'}</td>
-                        <td className="px-3 py-2 text-xs">{formatDate(row.signal.timestamp)}</td>
-                        <td className="px-3 py-2 font-semibold">{row.signal.symbol || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.signal.side || '—'}</td>
-                        <td className="px-3 py-2 text-xs">
-                          <span
-                            className={`inline-flex rounded-md border px-2 py-1 uppercase tracking-[0.14em] ${
-                              row.audit?.sentToExchange
-                                ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100'
-                                : 'border-slate-300/30 bg-slate-500/20 text-slate-200'
-                            }`}
-                          >
-                            {row.audit?.sentToExchange ? 'Yes' : 'No'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/8 bg-white/5">
-            <div className="border-b border-white/10 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-gray-400">Exchange report</p>
-            </div>
-            <div className="max-h-[420px] overflow-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-[#151a2f]">
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                    <th className="px-3 py-2">Trade status</th>
-                    <th className="px-3 py-2">Execution time</th>
-                    <th className="px-3 py-2">Side</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Amount</th>
-                    <th className="px-3 py-2">Quantity</th>
-                    <th className="px-3 py-2">Qty (Rounded)</th>
-                    <th className="px-3 py-2">Price Used</th>
-                    <th className="px-3 py-2">Spend (BUY)</th>
-                    <th className="px-3 py-2">Rejection Reason</th>
-                    <th className="px-3 py-2">Order ID</th>
-                    <th className="px-3 py-2">Position after</th>
-                    <th className="px-3 py-2">Error reason</th>
-                    <th className="px-3 py-2">Sizing</th>
-                  </tr>
-                </thead>
-                <tbody className="text-gray-200">
-                  {reportLoading && (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={14}>
-                        Loading report…
-                      </td>
-                    </tr>
-                  )}
-                  {!reportLoading && reportRows.length === 0 && (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={14}>
-                        No exchange rows yet.
-                      </td>
-                    </tr>
-                  )}
-                  {!reportLoading &&
-                    reportRows.map((row) => (
-                      <tr key={`exchange-${row.key}`} className="border-t border-white/5">
-                        <td className="px-3 py-2 uppercase">
-                          <span className={`inline-flex rounded-md border px-2 py-1 ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
-                            {row.exchange.tradeStatus || '—'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-xs">{formatDate(row.exchange.executionTimestamp)}</td>
-                        <td className="px-3 py-2 uppercase">{row.exchange.side || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.exchange.type || '—'}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.exchange.amount, 4)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
-                        <td className="px-3 py-2">
-                          {row.exchange.side === 'BUY'
-                            ? formatNullableDecimal(row.sizing?.quoteSpendComputed ?? null, 4)
-                            : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-rose-200">
-                          {row.sizing?.rejectedReason || '—'}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
-                        <td className="px-3 py-2 text-xs">
-                          {row.exchange.positionAfter?.state || 'UNKNOWN'}
-                          {row.exchange.positionAfter?.estimatedBaseQty !== null &&
-                            row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
-                            ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
-                        </td>
-                        <td className="max-w-[260px] px-3 py-2 text-xs text-rose-200" title={row.exchange.errorMessage || ''}>
-                          {row.exchange.errorMessage || '—'}
-                        </td>
-                        <td className="px-3 py-2">
-                          {row.sizing?.sizingDebug ? (
-                            <button
-                              type="button"
-                              className="rounded-md border border-sky-400/40 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200"
-                              onClick={() => setSelectedSizingRow(row)}
-                            >
-                              View
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-500">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </article>
 
       <section className="grid gap-4 xl:grid-cols-2">
@@ -715,26 +439,6 @@ export default function OrdersModule() {
         </article>
       </section>
 
-      {selectedSizingRow?.sizing?.sizingDebug && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-4xl">
-            <SizingDebugCard
-              sizingDebug={selectedSizingRow.sizing.sizingDebug}
-              title="Sizing details"
-              subtitle={`${selectedSizingRow.signal?.symbol || '—'} · ${selectedSizingRow.exchange?.side || '—'} · ${selectedSizingRow.exchange?.tradeStatus || '—'}`}
-              extra={(
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small btn-rect"
-                  onClick={() => setSelectedSizingRow(null)}
-                >
-                  Close
-                </button>
-              )}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

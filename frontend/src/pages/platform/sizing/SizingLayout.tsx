@@ -19,7 +19,8 @@ export default function SizingLayout({ title, subtitle, children }: SizingLayout
       <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-2 text-xs uppercase tracking-[0.2em]">
         {[
           { label: 'Order Status', to: '/platform/orders' },
-          { label: 'Sizing', to: '/platform/orders/sizing/details' }
+          { label: 'Sizing', to: '/platform/orders/sizing/details' },
+          { label: 'Reports', to: '/platform/orders/reports' }
         ].map((item) => (
           <NavLink
             key={item.to}
