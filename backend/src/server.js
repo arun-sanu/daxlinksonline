@@ -4,6 +4,7 @@ import { loadEnvOrExit } from './lib/envRuntime.js';
 
 import { createServer } from './app.js';
 import { startNotificationWorker } from './workers/notificationDispatcher.js';
+import './jobs/forwarderProcessor.js';
 import './jobs/executeOrderProcessor.js';
 
 const port = Number(process.env.PORT || 4000);

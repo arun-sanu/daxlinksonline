@@ -7,6 +7,16 @@ import { SizingConfigError, computeMexcBaseQuantityForSignal } from '../services
 import { EXECUTION_AUDIT_STATUS, updateExecutionAudit } from '../services/executionAuditService.js';
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
+const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
+
+function debugExecution(stage, data = {}) {
+  if (!DEBUG_TV_WEBHOOK) return;
+  try {
+    console.log('[tv-webhook-debug]', JSON.stringify({ stage, ...data }));
+  } catch {
+    console.log('[tv-webhook-debug]', stage);
+  }
+}
 
 function toBuffer(value) {
   if (!value) return Buffer.alloc(0);
@@ -102,12 +112,21 @@ async function markExecutionAudit(auditId, patch) {
   if (!auditId) return;
   try {
     await updateExecutionAudit(auditId, patch);
+    debugExecution('audit_updated', {
+      auditId,
+      status: patch?.status || null
+    });
   } catch {
     // Never block execution on audit bookkeeping.
   }
 }
 
 async function markSignalExecutionError({ signalId, alertId, auditId, message, auditStatus = EXECUTION_AUDIT_STATUS.ERROR }) {
+  debugExecution('executed', {
+    auditId: auditId || null,
+    status: auditStatus,
+    error: message
+  });
   await markAlertStatus(alertId, 'failed', message);
   await markExecutionAudit(auditId, {
     status: auditStatus,
@@ -290,6 +309,11 @@ export async function executePreparedSignal(signalId) {
         mexcRawResponse: orderSnapshot || result,
         errorMessage: null
       });
+      debugExecution('executed', {
+        auditId: executionAuditId || null,
+        status: finalAuditStatus,
+        mexcOrderId: mexcOrderId ? String(mexcOrderId) : null
+      });
 
       const executionResult = {
         ...toJsonSafe(result),
@@ -352,6 +376,10 @@ export async function executePreparedSignal(signalId) {
       mexcStatus: 'SENT',
       mexcRawResponse: result,
       errorMessage: null
+    });
+    debugExecution('executed', {
+      auditId: executionAuditId || null,
+      status: EXECUTION_AUDIT_STATUS.SENT
     });
     await prisma.forwardedSignal.update({
       where: { id: signalId },

@@ -21,6 +21,40 @@ const payloadSchema = z.object({
 }).passthrough();
 
 const HMAC_FIELDS = new Set(['hmac', 'signature', 'sign']);
+const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
+
+function maybeRedactSnippet(value) {
+  return String(value || '')
+    .replace(/(\"secret\"\s*:\s*\")([^\"]+)(\")/gi, '$1[redacted]$3')
+    .replace(/(\"hmac\"\s*:\s*\")([^\"]+)(\")/gi, '$1[redacted]$3')
+    .replace(/(\"signature\"\s*:\s*\")([^\"]+)(\")/gi, '$1[redacted]$3')
+    .replace(/(\"sign\"\s*:\s*\")([^\"]+)(\")/gi, '$1[redacted]$3');
+}
+
+function debugWebhook(stage, data = {}) {
+  if (!DEBUG_TV_WEBHOOK) return;
+  const safe = { stage, ...data };
+  try {
+    console.log('[tv-webhook-debug]', JSON.stringify(safe));
+  } catch {
+    console.log('[tv-webhook-debug]', stage);
+  }
+}
+
+function parseJsonObject(text) {
+  if (typeof text !== 'string') {
+    return { ok: false, error: 'Webhook body is not a JSON string' };
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'Webhook JSON body must be an object' };
+    }
+    return { ok: true, value: parsed };
+  } catch {
+    return { ok: false, error: 'Unable to parse webhook JSON body' };
+  }
+}
 
 async function findUserByPrefix(prefix) {
   if (!prefix) return null;
@@ -242,7 +276,40 @@ export function createTradingviewWebhookHandler(
         return res.status(statusErr.status || 500).json({ error: statusErr.message });
       }
 
-      const inboundPayload = (req.body && typeof req.body === 'object' ? req.body : {}) || {};
+      const rawBody = toRawText(req);
+      const contentType = String(req.headers?.['content-type'] || '').toLowerCase();
+      let inboundPayload = null;
+      let inboundParseError = null;
+
+      if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && !Buffer.isBuffer(req.body)) {
+        inboundPayload = { ...req.body };
+      } else if (typeof req.body === 'string') {
+        const parsed = parseJsonObject(req.body);
+        if (parsed.ok) {
+          inboundPayload = parsed.value;
+        } else {
+          inboundParseError = parsed.error;
+        }
+      } else if (rawBody) {
+        const parsed = parseJsonObject(rawBody);
+        if (parsed.ok) {
+          inboundPayload = parsed.value;
+        } else {
+          inboundParseError = parsed.error;
+        }
+      }
+      if (!inboundPayload) {
+        inboundPayload = {};
+      }
+
+      debugWebhook('ingress', {
+        contentType,
+        bodyType: typeof req.body,
+        rawPreview:
+          typeof rawBody === 'string' && rawBody.length > 0 ? maybeRedactSnippet(rawBody.slice(0, 200)) : null,
+        bodyKeys: req.body && typeof req.body === 'object' ? Object.keys(req.body).slice(0, 20) : []
+      });
+
       const candidatePayload = { ...inboundPayload };
       if (!candidatePayload.source) {
         candidatePayload.source = 'tradingview';
@@ -251,7 +318,6 @@ export function createTradingviewWebhookHandler(
         candidatePayload.sourceId = `tv:${prefix}`;
       }
       const normalizedSignal = normalizeTradingviewSignal(candidatePayload);
-      const rawBody = toRawText(req);
 
       try {
         alertRecord = await createTradingviewAlert({
@@ -274,6 +340,10 @@ export function createTradingviewWebhookHandler(
           rawBody,
           parsedPayload: normalizedSignal.normalizedPayload || candidatePayload,
           status: EXECUTION_AUDIT_STATUS.RECEIVED
+        });
+        debugWebhook('audit_created', {
+          auditId: executionAudit?.id || null,
+          status: executionAudit?.status || EXECUTION_AUDIT_STATUS.RECEIVED
         });
       } catch (err) {
         console.warn('[tradingview] failed to create execution audit', err?.message || err);
@@ -302,8 +372,28 @@ export function createTradingviewWebhookHandler(
           status: EXECUTION_AUDIT_STATUS.REJECTED,
           errorMessage: reason
         });
+        debugWebhook('audit_updated', {
+          auditId: executionAudit?.id || null,
+          status: EXECUTION_AUDIT_STATUS.REJECTED,
+          reason
+        });
         return res.status(statusCode).json({ error: reason });
       };
+
+      await safeUpdateExecutionAudit({
+        symbol: normalizedSignal?.signal?.symbol || candidatePayload.symbol || null,
+        side: normalizedSignal?.signal?.side || candidatePayload.side || null,
+        tvTs: normalizedSignal?.signal?.ts || candidatePayload.ts || candidatePayload.timestamp || null,
+        parsedPayload: normalizedSignal.normalizedPayload || candidatePayload,
+        rawBody
+      });
+      debugWebhook('normalized', {
+        auditId: executionAudit?.id || null,
+        status: executionAudit?.status || EXECUTION_AUDIT_STATUS.RECEIVED,
+        symbol: normalizedSignal?.signal?.symbol || null,
+        side: normalizedSignal?.signal?.side || null,
+        tvTs: normalizedSignal?.signal?.ts || null
+      });
 
       const expectedSecret = user.webhookSecret;
       if (expectedSecret) {
@@ -364,6 +454,14 @@ export function createTradingviewWebhookHandler(
           statusCode: 401,
           reason: 'Missing HMAC signature',
           reasonKey: 'hmac_missing'
+        });
+      }
+
+      if (inboundParseError) {
+        return rejectInbound({
+          statusCode: 200,
+          reason: inboundParseError,
+          reasonKey: 'payload_parse_failed'
         });
       }
 
@@ -432,9 +530,25 @@ export function createTradingviewWebhookHandler(
       });
 
       await safeUpdateAlert('validated', null);
-      forwarder(user.id, payload, { alertId: alertRecord?.id, executionAuditId: executionAudit?.id }).catch((err) => {
-        console.warn('[tradingview] forward failed', err);
+      debugWebhook('queued', {
+        auditId: executionAudit?.id || null,
+        status: executionAudit?.status || EXECUTION_AUDIT_STATUS.RECEIVED
       });
+      forwarder(user.id, payload, { alertId: alertRecord?.id, executionAuditId: executionAudit?.id })
+        .catch(async (err) => {
+          const message = err?.message || 'Forward enqueue failed';
+          console.warn('[tradingview] forward failed', err);
+          await safeUpdateAlert('failed', message);
+          await safeUpdateExecutionAudit({
+            status: EXECUTION_AUDIT_STATUS.ERROR,
+            errorMessage: message
+          });
+          debugWebhook('audit_updated', {
+            auditId: executionAudit?.id || null,
+            status: EXECUTION_AUDIT_STATUS.ERROR,
+            reason: message
+          });
+        });
       return res.status(200).json({ ok: true, message: 'queued' });
     } catch (error) {
       if (error instanceof z.ZodError) {

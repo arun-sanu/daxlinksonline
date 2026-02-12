@@ -45,18 +45,31 @@ function toLegacyAlertRow(row) {
 
 function toExecutionAlertRow(row) {
   const payload = normalizePayload(row.parsedPayload) || {};
+  const symbol = row.symbol || payload.symbol || payload.ticker || null;
+  const side = row.side || payload.side || payload.action || null;
+  const statusUpper = String(row.status || 'RECEIVED').toUpperCase();
+  const tvTsNumber = row.tvTs !== null && row.tvTs !== undefined ? Number(row.tvTs) : null;
+  const parsedTs = Number.isFinite(tvTsNumber) ? new Date(tvTsNumber).toISOString() : null;
+  const parseFailed = statusUpper === 'RECEIVED' && (!symbol || !side);
+  const status = parseFailed ? 'parse_failed' : statusUpper.toLowerCase();
+  const errorMessage = row.errorMessage || (parseFailed ? 'PARSE_FAILED' : '');
+  const type = String(payload.type || payload.orderType || 'MARKET').toUpperCase();
+
   return {
     id: row.id,
-    receivedAt: row.receivedAt,
-    status: String(row.status || 'RECEIVED').toLowerCase(),
+    receivedAt: parsedTs || row.receivedAt,
+    ts: Number.isFinite(tvTsNumber) ? tvTsNumber : null,
+    status,
     strategyName: row.strategyName || payload.strategy || payload.strategyName || payload.strategy_name || null,
-    symbol: row.symbol || payload.symbol || payload.ticker || null,
-    side: row.side || payload.side || payload.action || null,
-    orderType: 'MARKET',
+    symbol,
+    side,
+    type,
+    orderType: type,
     quantity: row.qtyRounded ?? '',
     takeProfit: payload.tp ?? payload.takeProfit ?? payload.take_profit ?? '',
     stopLoss: payload.sl ?? payload.stopLoss ?? payload.stop_loss ?? '',
-    errorMessage: row.errorMessage || '',
+    errorMessage,
+    parseFailed,
     userId: row.userId || '',
     webhookSubdomain: payload.webhookSubdomain || payload.subdomain || '',
     clientIp: payload.clientIp || payload.ip || '',

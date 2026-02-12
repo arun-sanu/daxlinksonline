@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { publish } from "../services/publisher.js";
 import { requireAuth } from "../middleware/auth.js";
+import { getQueueDebugSnapshot } from "../jobs/queue.js";
 
 /**
  * Debug utilities for notifications
@@ -28,3 +29,11 @@ notifyDebugRouter.get("/telegram-test", async (req, res) => {
   res.json({ ok: true });
 });
 
+notifyDebugRouter.get('/queue', async (_req, res, next) => {
+  try {
+    const snapshot = await getQueueDebugSnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    next(error);
+  }
+});

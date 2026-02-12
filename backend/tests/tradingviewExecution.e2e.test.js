@@ -175,7 +175,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
       contentType: 'text/plain'
     });
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(200);
 
     const audit = await waitForExecutionAuditStatus({
       userId: seeded.user.id,
@@ -183,7 +183,7 @@ describe('TradingView -> DaxLinks -> MEXC Spot (BASE quantity)', () => {
     });
 
     expect(audit.status).toBe('REJECTED');
-    expect(String(audit.errorMessage || '')).toMatch(/symbol is required/i);
+    expect(String(audit.errorMessage || '')).toMatch(/parse webhook json body/i);
     expect(postOrderScope.isDone()).toBe(false);
   });
 

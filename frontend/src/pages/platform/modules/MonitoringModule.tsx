@@ -14,7 +14,10 @@ import MetricTile from '../../../components/MetricTile';
 type AlertRow = {
   id: string;
   receivedAt?: string | Date | null;
+  ts?: number | null;
   status?: string;
+  type?: string;
+  parseFailed?: boolean;
   strategyName?: string;
   symbol?: string;
   side?: string;
@@ -78,6 +81,33 @@ function formatTime(ts?: string | Date | null) {
 function renderValue(value: any) {
   if (value === undefined || value === null || value === '') return '—';
   return String(value);
+}
+
+function renderAlertStatus(status?: string | null, parseFailed?: boolean, symbol?: string | null, side?: string | null) {
+  const derived = String(status || '').toLowerCase();
+  const effective =
+    parseFailed || (derived === 'received' && (!symbol || !side)) ? 'parse_failed' : derived || 'received';
+
+  if (effective === 'parse_failed') {
+    return (
+      <span className="inline-flex rounded-full bg-rose-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200">
+        PARSE_FAILED
+      </span>
+    );
+  }
+
+  const tone =
+    effective === 'filled' || effective === 'sent'
+      ? 'bg-emerald-500/20 text-emerald-200'
+      : effective === 'rejected' || effective === 'error' || effective === 'failed'
+        ? 'bg-rose-500/20 text-rose-200'
+        : 'bg-cyan-500/20 text-cyan-200';
+
+  return (
+    <span className={`inline-flex rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.2em] ${tone}`}>
+      {effective.toUpperCase()}
+    </span>
+  );
 }
 
 function toDateInputValue(date: Date) {
@@ -724,11 +754,13 @@ export default function MonitoringModule() {
                   <td className="px-3 py-2 text-xs text-main">{renderValue(alert.strategyName)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.symbol)}</td>
                   <td className="px-3 py-2 text-xs uppercase text-gray-200">{renderValue(alert.side)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.orderType)}</td>
+                  <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.orderType || alert.type)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.quantity)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.takeProfit)}</td>
                   <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.stopLoss)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-200">{renderValue(alert.status || 'received')}</td>
+                  <td className="px-3 py-2 text-xs text-gray-200">
+                    {renderAlertStatus(alert.status, alert.parseFailed, alert.symbol, alert.side)}
+                  </td>
                   <td className="px-3 py-2 text-xs text-rose-200">{renderValue(alert.errorMessage)}</td>
                 </tr>
               ))}

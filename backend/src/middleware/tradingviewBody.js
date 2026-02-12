@@ -32,14 +32,52 @@ export function parseTradingviewBodyText(rawBody) {
   return { payload: { message: text }, rawBodyText: text };
 }
 
-const rawBodyParser = express.raw({ type: '*/*', limit: '1mb' });
+function captureRawBody(req, _res, buf) {
+  req.rawBody = Buffer.from(buf);
+  req.rawBodyText = req.rawBody.toString('utf8');
+}
+
+const jsonBodyParser = express.json({
+  type: ['application/json', 'application/*+json'],
+  limit: '1mb',
+  verify: captureRawBody
+});
+
+const textBodyParser = express.text({
+  type: ['text/plain', 'text/*'],
+  limit: '1mb',
+  verify: captureRawBody
+});
 
 function decodeTradingviewPayload(req, _res, next) {
-  const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+  if (typeof req.body === 'string') {
+    if (!Buffer.isBuffer(req.rawBody)) {
+      req.rawBody = Buffer.from(req.body, 'utf8');
+    }
+    req.rawBodyText = req.body;
+    return next();
+  }
+
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    if (!Buffer.isBuffer(req.rawBody)) {
+      const raw = JSON.stringify(req.body);
+      req.rawBody = Buffer.from(raw, 'utf8');
+      req.rawBodyText = raw;
+    } else if (typeof req.rawBodyText !== 'string') {
+      req.rawBodyText = req.rawBody.toString('utf8');
+    }
+    return next();
+  }
+
+  const buffer = Buffer.isBuffer(req.body)
+    ? req.body
+    : Buffer.isBuffer(req.rawBody)
+      ? req.rawBody
+      : Buffer.alloc(0);
   req.rawBody = buffer;
-  if (!buffer.length) {
+  if (!buffer.length && !req.body) {
     req.body = {};
-    req.rawBodyText = '';
+    req.rawBodyText = typeof req.rawBodyText === 'string' ? req.rawBodyText : '';
     return next();
   }
   const { payload, rawBodyText } = parseTradingviewBodyText(buffer);
@@ -48,4 +86,4 @@ function decodeTradingviewPayload(req, _res, next) {
   next();
 }
 
-export const tradingviewBodyMiddleware = [rawBodyParser, decodeTradingviewPayload];
+export const tradingviewBodyMiddleware = [jsonBodyParser, textBodyParser, decodeTradingviewPayload];

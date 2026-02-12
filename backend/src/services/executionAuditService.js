@@ -101,6 +101,7 @@ export async function updateExecutionAudit(auditId, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(patch, 'mexcStatus')) data.mexcStatus = patch.mexcStatus ? String(patch.mexcStatus) : null;
   if (Object.prototype.hasOwnProperty.call(patch, 'mexcRawResponse')) data.mexcRawResponse = toJsonSafe(patch.mexcRawResponse);
   if (Object.prototype.hasOwnProperty.call(patch, 'parsedPayload')) data.parsedPayload = toJsonSafe(patch.parsedPayload);
+  if (Object.prototype.hasOwnProperty.call(patch, 'rawBody')) data.rawBody = patch.rawBody != null ? String(patch.rawBody) : null;
   if (Object.prototype.hasOwnProperty.call(patch, 'strategyName')) data.strategyName = patch.strategyName || null;
   if (Object.keys(data).length === 0) return null;
   return prisma.executionAudit.update({
