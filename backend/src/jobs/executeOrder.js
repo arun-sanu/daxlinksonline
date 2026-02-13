@@ -3,7 +3,11 @@ import { decrypt } from '../lib/kms.js';
 import { createExchange } from '../sdk/index.js';
 import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
 import { createMexcSpotClient } from '../services/mexcSpotClient.js';
-import { SizingConfigError, computeMexcBaseQuantityForSignal } from '../services/orderSizingService.js';
+import {
+  SizingConfigError,
+  computeMexcBaseQuantityForSignal,
+  computeMexcBaseQuantityFromSignalPayload
+} from '../services/orderSizingService.js';
 import { EXECUTION_AUDIT_STATUS, updateExecutionAudit } from '../services/executionAuditService.js';
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
@@ -64,6 +68,39 @@ function normalizeOrderType(value) {
 function parseNumeric(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function findNumericByKeys(objects, keys) {
+  const keySet = new Set((Array.isArray(keys) ? keys : []).map((key) => String(key).toLowerCase()));
+  let present = false;
+
+  for (const obj of objects || []) {
+    if (!obj || typeof obj !== 'object') continue;
+    for (const [key, value] of Object.entries(obj)) {
+      if (!keySet.has(String(key).toLowerCase())) continue;
+      present = true;
+      const numericValue = parseNumeric(value);
+      if (numericValue !== null) {
+        return { present: true, value: numericValue };
+      }
+    }
+  }
+
+  return { present, value: null };
+}
+
+function resolveSignalPayloadSizing(signal) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const sources = [rawPayload, payload];
+  const qtyResult = findNumericByKeys(sources, ['qty', 'quantity', 'baseQty', 'baseQuantity', 'size']);
+  const amountResult = findNumericByKeys(sources, ['amount', 'quoteAmount', 'quoteQty', 'notional']);
+
+  return {
+    requestedQty: qtyResult.value,
+    requestedAmount: amountResult.value,
+    hasPayloadSizingHint: qtyResult.present || amountResult.present
+  };
 }
 
 function toJsonSafe(value) {
@@ -273,12 +310,22 @@ export async function executePreparedSignal(signalId) {
         });
       }
 
-      const sizing = await computeMexcBaseQuantityForSignal({
-        workspaceId: integration.workspaceId,
-        symbol,
-        side,
-        client: mexcClient
-      });
+      const signalPayloadSizing = resolveSignalPayloadSizing(signal);
+      const usingPayloadSizing = signalPayloadSizing.hasPayloadSizingHint;
+      const sizing = usingPayloadSizing
+        ? await computeMexcBaseQuantityFromSignalPayload({
+            symbol,
+            side,
+            client: mexcClient,
+            requestedQty: signalPayloadSizing.requestedQty,
+            requestedAmount: signalPayloadSizing.requestedAmount
+          })
+        : await computeMexcBaseQuantityForSignal({
+            workspaceId: integration.workspaceId,
+            symbol,
+            side,
+            client: mexcClient
+          });
 
       await markExecutionAudit(executionAuditId, {
         workspaceId: integration.workspaceId,
@@ -332,6 +379,7 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
+        sizingSource: usingPayloadSizing ? 'signal_payload' : 'backend_workflow',
         quantity: sizing.qtyRounded,
         qtyRaw: sizing.qtyRaw,
         computedPrice: sizing.computedPrice,
