@@ -96,34 +96,36 @@ export default function SizingReportsPage() {
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
-    setError('');
-    const fromIso = from ? new Date(`${from}T00:00:00.000Z`).toISOString() : undefined;
-    const toIso = to ? new Date(`${to}T23:59:59.999Z`).toISOString() : undefined;
-    fetchAdminSizingReports({
-      symbol: symbol || undefined,
-      strategy: strategy || undefined,
-      status: status === 'ALL' ? undefined : status,
-      from: fromIso,
-      to: toIso,
-      page,
-      limit: 50
-    })
-      .then((payload) => {
+    const load = async () => {
+      if (!mounted) return;
+      setLoading(true);
+      setError('');
+      const fromIso = from ? new Date(`${from}T00:00:00.000Z`).toISOString() : undefined;
+      const toIso = to ? new Date(`${to}T23:59:59.999Z`).toISOString() : undefined;
+      try {
+        const payload = await fetchAdminSizingReports({
+          symbol: symbol || undefined,
+          strategy: strategy || undefined,
+          status: status === 'ALL' ? undefined : status,
+          from: fromIso,
+          to: toIso,
+          page,
+          limit: 50
+        });
         if (!mounted) return;
         setItems(payload.items || []);
         setTotal(payload.total || 0);
         setPageSize(payload.pageSize || 50);
-      })
-      .catch((err: any) => {
+      } catch (err: any) {
         if (!mounted) return;
         setError(err?.message || 'Failed to load sizing reports.');
         setItems([]);
         setTotal(0);
-      })
-      .finally(() => {
+      } finally {
         if (mounted) setLoading(false);
-      });
+      }
+    };
+    load();
 
     return () => {
       mounted = false;
@@ -132,7 +134,7 @@ export default function SizingReportsPage() {
 
   useEffect(() => {
     if (!selectedId) {
-      setSelectedDetail(null);
+      Promise.resolve().then(() => setSelectedDetail(null));
       return;
     }
     let mounted = true;

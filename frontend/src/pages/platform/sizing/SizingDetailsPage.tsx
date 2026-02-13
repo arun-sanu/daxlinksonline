@@ -43,37 +43,39 @@ export default function SizingDetailsPage() {
 
   useEffect(() => {
     let mounted = true;
-    const now = new Date();
-    const since = new Date(
-      range === '24h'
-        ? now.getTime() - 24 * 60 * 60 * 1000
-        : range === '30d'
-          ? now.getTime() - 30 * 24 * 60 * 60 * 1000
-          : now.getTime() - 7 * 24 * 60 * 60 * 1000
-    );
+    const load = async () => {
+      const now = new Date();
+      const since = new Date(
+        range === '24h'
+          ? now.getTime() - 24 * 60 * 60 * 1000
+          : range === '30d'
+            ? now.getTime() - 30 * 24 * 60 * 60 * 1000
+            : now.getTime() - 7 * 24 * 60 * 60 * 1000
+      );
 
-    setLoading(true);
-    setError('');
-    fetchSizingRecent({
-      limit: 120,
-      symbol: symbol === 'ALL' ? undefined : symbol,
-      side: side === 'ALL' ? undefined : side,
-      status: status === 'ALL' ? undefined : status,
-      since: since.toISOString(),
-      until: now.toISOString()
-    })
-      .then((payload) => {
+      if (!mounted) return;
+      setLoading(true);
+      setError('');
+      try {
+        const payload = await fetchSizingRecent({
+          limit: 120,
+          symbol: symbol === 'ALL' ? undefined : symbol,
+          side: side === 'ALL' ? undefined : side,
+          status: status === 'ALL' ? undefined : status,
+          since: since.toISOString(),
+          until: now.toISOString()
+        });
         if (!mounted) return;
         setRows(payload.items || []);
-      })
-      .catch((err: any) => {
+      } catch (err: any) {
         if (!mounted) return;
         setError(err?.message || 'Failed to load sizing diagnostics.');
         setRows([]);
-      })
-      .finally(() => {
+      } finally {
         if (mounted) setLoading(false);
-      });
+      }
+    };
+    load();
 
     return () => {
       mounted = false;
