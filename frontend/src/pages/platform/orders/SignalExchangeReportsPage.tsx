@@ -507,7 +507,7 @@ export default function SignalExchangeReportsPage() {
                         <td className="px-3 py-2.5 uppercase">{row.exchange.side || '—'}</td>
                         <td className="px-3 py-2.5 uppercase">{row.exchange.type || '—'}</td>
                         <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.amount, 4)}</td>
-                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
+                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.quantity, 8)}</td>
                         <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
                         <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
                         <td className="px-3 py-2.5">
