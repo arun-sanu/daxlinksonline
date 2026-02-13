@@ -93,6 +93,20 @@ export type OrderReportRow = {
     rejectedReason: string | null;
     sizingDebug: any;
   } | null;
+  sizingSummary?: {
+    quoteSpend: number | null;
+    qtyRaw: number | null;
+    qtyFinal: number | null;
+    refPrice: number | null;
+    minNotional: number | null;
+    stepSize: number | null;
+    riskMode: string | null;
+    riskValue: number | null;
+    slPrice: number | null;
+    tpPrice: number | null;
+    sizingStatus: string | null;
+    sizingRejectReason: string | null;
+  } | null;
 };
 
 export type OrderReportResponse = {

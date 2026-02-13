@@ -25,6 +25,27 @@ function formatNullableDecimal(value: unknown, digits = 8) {
   return formatDecimal(value, digits);
 }
 
+function getSizingSummary(row: OrderReportRow) {
+  if (row.sizingSummary) {
+    return row.sizingSummary;
+  }
+  if (!row.sizing) return null;
+  return {
+    quoteSpend: row.sizing.quoteSpendComputed ?? null,
+    qtyRaw: row.sizing.qtyRaw ?? null,
+    qtyFinal: row.sizing.qtyRounded ?? null,
+    refPrice: row.sizing.computedPrice ?? null,
+    minNotional: null,
+    stepSize: null,
+    riskMode: null,
+    riskValue: null,
+    slPrice: null,
+    tpPrice: null,
+    sizingStatus: null,
+    sizingRejectReason: row.sizing.rejectedReason ?? null
+  };
+}
+
 function tradeStatusClass(status?: string | null) {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'executed') return 'text-emerald-200';
@@ -445,7 +466,7 @@ export default function SignalExchangeReportsPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Exchange report</p>
             </div>
             <div className="max-h-[440px] overflow-auto rounded-b-xl">
-              <table className="min-w-[1760px] w-full table-fixed text-[13px] leading-5">
+              <table className="min-w-[1960px] w-full table-fixed text-[13px] leading-5">
                 <colgroup>
                   <col style={{ width: '110px' }} />
                   <col style={{ width: '170px' }} />
@@ -459,6 +480,7 @@ export default function SignalExchangeReportsPage() {
                   <col style={{ width: '180px' }} />
                   <col style={{ width: '150px' }} />
                   <col style={{ width: '130px' }} />
+                  <col style={{ width: '220px' }} />
                   <col style={{ width: '220px' }} />
                   <col style={{ width: '74px' }} />
                 </colgroup>
@@ -477,72 +499,89 @@ export default function SignalExchangeReportsPage() {
                     <th className="px-3 py-2.5">Order ID</th>
                     <th className="px-3 py-2.5">Position after</th>
                     <th className="px-3 py-2.5">Error reason</th>
+                    <th className="px-3 py-2.5">Sizing summary</th>
                     <th className="px-3 py-2.5">Sizing</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
                   {reportLoading && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-400" colSpan={14}>
+                      <td className="px-3 py-3 text-gray-400" colSpan={15}>
                         Loading report…
                       </td>
                     </tr>
                   )}
                   {!reportLoading && filteredRows.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={14}>
+                      <td className="px-3 py-3 text-gray-500" colSpan={15}>
                         No exchange rows for this date.
                       </td>
                     </tr>
                   )}
                   {!reportLoading &&
-                    filteredRows.map((row) => (
-                      <tr key={`exchange-${row.key}`} className="border-t border-white/5">
-                        <td className="px-3 py-2.5 uppercase">
-                          <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-[0.06em] ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
-                            {row.exchange.tradeStatus || '—'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-[12px]">{formatDate(row.exchange.executionTimestamp)}</td>
-                        <td className="px-3 py-2.5 uppercase">{row.exchange.side || '—'}</td>
-                        <td className="px-3 py-2.5 uppercase">{row.exchange.type || '—'}</td>
-                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.amount, 4)}</td>
-                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.quantity, 8)}</td>
-                        <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
-                        <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
-                        <td className="px-3 py-2.5">
-                          {row.exchange.side === 'BUY'
-                            ? formatNullableDecimal(row.sizing?.quoteSpendComputed ?? null, 4)
-                            : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-[12px] text-rose-200">
-                          {row.sizing?.rejectedReason || '—'}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
-                        <td className="px-3 py-2.5 text-[12px]">
-                          {row.exchange.positionAfter?.state || 'UNKNOWN'}
-                          {row.exchange.positionAfter?.estimatedBaseQty !== null &&
-                            row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
-                            ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
-                        </td>
-                        <td className="max-w-[260px] truncate px-3 py-2.5 text-[12px] text-rose-200" title={row.exchange.errorMessage || ''}>
-                          {row.exchange.errorMessage || '—'}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {row.sizing?.sizingDebug ? (
-                            <button
-                              type="button"
-                              className="rounded-md border border-sky-400/40 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200"
-                              onClick={() => setSelectedSizingRow(row)}
-                            >
-                              View
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-500">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    filteredRows.map((row) => {
+                      const summary = getSizingSummary(row);
+                      return (
+                        <tr key={`exchange-${row.key}`} className="border-t border-white/5">
+                          <td className="px-3 py-2.5 uppercase">
+                            <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-[0.06em] ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
+                              {row.exchange.tradeStatus || '—'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-[12px]">{formatDate(row.exchange.executionTimestamp)}</td>
+                          <td className="px-3 py-2.5 uppercase">{row.exchange.side || '—'}</td>
+                          <td className="px-3 py-2.5 uppercase">{row.exchange.type || '—'}</td>
+                          <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.amount, 4)}</td>
+                          <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.quantity, 8)}</td>
+                          <td className="px-3 py-2.5">{formatNullableDecimal(summary?.qtyFinal ?? null, 6)}</td>
+                          <td className="px-3 py-2.5">{formatNullableDecimal(summary?.refPrice ?? null, 4)}</td>
+                          <td className="px-3 py-2.5">
+                            {row.exchange.side === 'BUY'
+                              ? formatNullableDecimal(summary?.quoteSpend ?? null, 4)
+                              : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-[12px] text-rose-200">
+                            {summary?.sizingRejectReason || row.sizing?.rejectedReason || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
+                          <td className="px-3 py-2.5 text-[12px]">
+                            {row.exchange.positionAfter?.state || 'UNKNOWN'}
+                            {row.exchange.positionAfter?.estimatedBaseQty !== null &&
+                              row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
+                              ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
+                          </td>
+                          <td className="max-w-[260px] truncate px-3 py-2.5 text-[12px] text-rose-200" title={row.exchange.errorMessage || ''}>
+                            {row.exchange.errorMessage || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-[11px] text-gray-200">
+                            {summary ? (
+                              <div className="space-y-1 rounded-lg border border-white/10 bg-white/5 p-2">
+                                <p>Spend: {formatNullableDecimal(summary.quoteSpend, 4)}</p>
+                                <p>Qty: {formatNullableDecimal(summary.qtyFinal, 8)}</p>
+                                <p>Ref: {formatNullableDecimal(summary.refPrice, 4)}</p>
+                                <p>SL/TP: {formatNullableDecimal(summary.slPrice, 4)} / {formatNullableDecimal(summary.tpPrice, 4)}</p>
+                                <p>Status: {(summary.sizingStatus || '—').toUpperCase()}</p>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-500">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {row.sizing?.sizingDebug ? (
+                              <button
+                                type="button"
+                                className="rounded-md border border-sky-400/40 bg-sky-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-sky-200"
+                                onClick={() => setSelectedSizingRow(row)}
+                              >
+                                View
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-500">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>

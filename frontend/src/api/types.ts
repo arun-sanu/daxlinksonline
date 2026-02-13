@@ -159,6 +159,18 @@ export interface Order {
   type: string; // LIMIT|MARKET|STOP
   price?: string | null; // Decimal as string
   qty: string; // Decimal as string
+  quoteSpend?: string | null;
+  qtyRaw?: string | null;
+  qtyFinal?: string | null;
+  refPrice?: string | null;
+  minNotional?: string | null;
+  stepSize?: string | null;
+  riskMode?: string | null;
+  riskValue?: string | null;
+  slPrice?: string | null;
+  tpPrice?: string | null;
+  sizingStatus?: string | null;
+  sizingRejectReason?: string | null;
   status: string;
   venueOrderId?: string | null;
   error?: string | null;

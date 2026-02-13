@@ -1,57 +1,77 @@
 import { useEffect, useMemo, useState } from 'react';
 import SizingLayout from './SizingLayout';
-import { fetchSizingSummary, type SizingSummaryGroup, type SizingSummaryResponse } from '../../../api/sizing';
+import {
+  fetchAdminSizingReport,
+  fetchAdminSizingReports,
+  type AdminSizingReportDetail,
+  type AdminSizingReportItem
+} from '../../../api/sizing';
 
-const RANGE_OPTIONS = [
-  { label: '24h', value: '24h' },
-  { label: '7d', value: '7d' },
-  { label: '30d', value: '30d' }
-];
+const STATUS_OPTIONS = ['ALL', 'filled', 'open', 'rejected', 'error', 'submitted'];
 
-function formatNumber(value: any, digits = 8) {
+function formatDate(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString();
+}
+
+function formatNumber(value: unknown, digits = 8) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
   if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function downloadCsv(groups: SizingSummaryGroup[]) {
+function toDateInputValue(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function downloadCsv(rows: AdminSizingReportItem[]) {
   const headers = [
+    'created_at',
     'symbol',
     'side',
-    'count_total',
-    'count_sent',
-    'count_filled',
-    'count_rejected',
-    'most_common_rejectedReason',
-    'avg_qtyRounded',
-    'avg_quoteSpendComputed',
-    'avg_notionalAfterRounding',
-    'min_qtyRounded',
-    'max_qtyRounded'
+    'strategy',
+    'status',
+    'quote_spend',
+    'qty_raw',
+    'qty_final',
+    'ref_price',
+    'risk_mode',
+    'risk_value',
+    'sl_price',
+    'tp_price',
+    'reject_reason',
+    'bot_name'
   ];
   const lines = [headers.join(',')];
-  groups.forEach((row) => {
+  rows.forEach((row) => {
     lines.push([
-      row.symbol,
-      row.side,
-      row.count_total,
-      row.count_sent,
-      row.count_filled,
-      row.count_rejected,
-      row.most_common_rejectedReason || '',
-      row.avg_qtyRounded ?? '',
-      row.avg_quoteSpendComputed ?? '',
-      row.avg_notionalAfterRounding ?? '',
-      row.min_qtyRounded ?? '',
-      row.max_qtyRounded ?? ''
+      row.createdAt || '',
+      row.symbol || '',
+      row.side || '',
+      row.strategy || '',
+      row.status || '',
+      row.quoteSpend ?? '',
+      row.qtyRaw ?? '',
+      row.qtyFinal ?? '',
+      row.refPrice ?? '',
+      row.riskMode || '',
+      row.riskValue ?? '',
+      row.slPrice ?? '',
+      row.tpPrice ?? '',
+      row.sizingRejectReason || '',
+      row.botName || ''
     ].join(','));
   });
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `sizing-report-${Date.now()}.csv`;
+  link.download = `sizing-details-${Date.now()}.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -59,146 +79,290 @@ function downloadCsv(groups: SizingSummaryGroup[]) {
 }
 
 export default function SizingReportsPage() {
-  const [range, setRange] = useState('7d');
-  const [groups, setGroups] = useState<SizingSummaryGroup[]>([]);
-  const [summary, setSummary] = useState<SizingSummaryResponse['summary'] | null>(null);
+  const [symbol, setSymbol] = useState('');
+  const [strategy, setStrategy] = useState('');
+  const [status, setStatus] = useState('ALL');
+  const [from, setFrom] = useState(() => toDateInputValue(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
+  const [to, setTo] = useState(() => toDateInputValue(new Date()));
+  const [page, setPage] = useState(1);
+  const [items, setItems] = useState<AdminSizingReportItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const sortedGroups = useMemo(
-    () => [...groups].sort((a, b) => b.count_total - a.count_total),
-    [groups]
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<AdminSizingReportDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     setError('');
-    fetchSizingSummary({ range })
+    const fromIso = from ? new Date(`${from}T00:00:00.000Z`).toISOString() : undefined;
+    const toIso = to ? new Date(`${to}T23:59:59.999Z`).toISOString() : undefined;
+    fetchAdminSizingReports({
+      symbol: symbol || undefined,
+      strategy: strategy || undefined,
+      status: status === 'ALL' ? undefined : status,
+      from: fromIso,
+      to: toIso,
+      page,
+      limit: 50
+    })
       .then((payload) => {
         if (!mounted) return;
-        setGroups(payload.groups || []);
-        setSummary(payload.summary || null);
+        setItems(payload.items || []);
+        setTotal(payload.total || 0);
+        setPageSize(payload.pageSize || 50);
       })
       .catch((err: any) => {
         if (!mounted) return;
-        setError(err?.message || 'Failed to load sizing report.');
-        setGroups([]);
-        setSummary(null);
+        setError(err?.message || 'Failed to load sizing reports.');
+        setItems([]);
+        setTotal(0);
       })
       .finally(() => {
         if (mounted) setLoading(false);
       });
+
     return () => {
       mounted = false;
     };
-  }, [range]);
+  }, [symbol, strategy, status, from, to, page]);
 
-  const topRejected = summary?.topRejectedReason || '—';
-  const totals = useMemo(() => summary || { total: 0, rejected: 0, sent: 0, filled: 0, error: 0, topRejectedReason: null }, [summary]);
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedDetail(null);
+      return;
+    }
+    let mounted = true;
+    setDetailLoading(true);
+    fetchAdminSizingReport(selectedId)
+      .then((detail) => {
+        if (!mounted) return;
+        setSelectedDetail(detail);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setSelectedDetail(null);
+      })
+      .finally(() => {
+        if (mounted) setDetailLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [selectedId]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / Math.max(1, pageSize))), [total, pageSize]);
 
   return (
     <SizingLayout
-      title="Sizing reports"
-      subtitle="Aggregate sizing outcomes by symbol and side to spot rounding failures and rejection trends."
+      title="Sizing Details & Reports"
+      subtitle="Filter sizing telemetry, inspect exact calculations, and export report rows for audits."
     >
       <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-gray-400">
-            <span>Range</span>
-            <select
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <label className="flex flex-col gap-2 text-xs text-gray-400">
+            Symbol
+            <input
+              value={symbol}
+              onChange={(event) => {
+                setPage(1);
+                setSymbol(event.target.value.toUpperCase());
+              }}
+              placeholder="BTC/USDC"
               className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200"
-              value={range}
-              onChange={(e) => setRange(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-2 text-xs text-gray-400">
+            Strategy
+            <input
+              value={strategy}
+              onChange={(event) => {
+                setPage(1);
+                setStrategy(event.target.value);
+              }}
+              placeholder="ARN"
+              className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200"
+            />
+          </label>
+          <label className="flex flex-col gap-2 text-xs text-gray-400">
+            Status
+            <select
+              value={status}
+              onChange={(event) => {
+                setPage(1);
+                setStatus(event.target.value);
+              }}
+              className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200"
             >
-              {RANGE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
                 </option>
               ))}
             </select>
+          </label>
+          <label className="flex flex-col gap-2 text-xs text-gray-400">
+            From
+            <input
+              type="date"
+              value={from}
+              onChange={(event) => {
+                setPage(1);
+                setFrom(event.target.value);
+              }}
+              className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200"
+            />
+          </label>
+          <label className="flex flex-col gap-2 text-xs text-gray-400">
+            To
+            <input
+              type="date"
+              value={to}
+              onChange={(event) => {
+                setPage(1);
+                setTo(event.target.value);
+              }}
+              className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-gray-200"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="w-full rounded-xl border border-sky-400/40 bg-sky-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200"
+              disabled={!items.length}
+              onClick={() => downloadCsv(items)}
+            >
+              Export CSV
+            </button>
           </div>
-          <button
-            type="button"
-            className="rounded-xl border border-sky-400/40 bg-sky-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200"
-            onClick={() => downloadCsv(sortedGroups)}
-            disabled={!sortedGroups.length}
-          >
-            Export CSV
-          </button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
-            <p className="uppercase tracking-[0.18em] text-gray-400">Total signals</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{totals.total}</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
-            <p className="uppercase tracking-[0.18em] text-gray-400">Rejected</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{totals.rejected}</p>
-            <p className="mt-1 text-[11px] text-rose-200">Top: {topRejected}</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
-            <p className="uppercase tracking-[0.18em] text-gray-400">Sent</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{totals.sent}</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-400">
+          <p>Total rows: {total}</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 px-2 py-1 disabled:opacity-50"
+              disabled={page <= 1}
+              onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            >
+              Prev
+            </button>
+            <span>
+              Page {page} / {totalPages}
+            </span>
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 px-2 py-1 disabled:opacity-50"
+              disabled={page >= totalPages}
+              onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            >
+              Next
+            </button>
           </div>
         </div>
         {error && <p className="text-sm text-rose-300">{error}</p>}
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-white/5">
-        <div className="border-b border-white/10 px-4 py-3">
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">By symbol + side</p>
-        </div>
-        <div className="max-h-[520px] overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-[#151a2f]">
-              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                <th className="px-3 py-2">Symbol</th>
-                <th className="px-3 py-2">Side</th>
-                <th className="px-3 py-2">Total</th>
-                <th className="px-3 py-2">Rejected</th>
-                <th className="px-3 py-2">Top reason</th>
-                <th className="px-3 py-2">Avg qty</th>
-                <th className="px-3 py-2">Avg spend</th>
-                <th className="px-3 py-2">Avg notional</th>
-                <th className="px-3 py-2">Min qty</th>
-                <th className="px-3 py-2">Max qty</th>
-              </tr>
-            </thead>
-            <tbody className="text-gray-200">
-              {loading && (
-                <tr>
-                  <td className="px-3 py-3 text-gray-400" colSpan={10}>
-                    Loading report…
-                  </td>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]">
+        <section className="rounded-2xl border border-white/10 bg-white/5">
+          <div className="max-h-[620px] overflow-auto">
+            <table className="min-w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-[#151a2f]">
+                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
+                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2">Symbol</th>
+                  <th className="px-3 py-2">Side</th>
+                  <th className="px-3 py-2">Strategy</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Quote Spend</th>
+                  <th className="px-3 py-2">Qty Final</th>
+                  <th className="px-3 py-2">Ref Price</th>
+                  <th className="px-3 py-2">SL/TP</th>
+                  <th className="px-3 py-2">Reject Reason</th>
                 </tr>
-              )}
-              {!loading && sortedGroups.length === 0 && (
-                <tr>
-                  <td className="px-3 py-3 text-gray-500" colSpan={10}>
-                    No sizing data in this range.
-                  </td>
-                </tr>
-              )}
-              {!loading &&
-                sortedGroups.map((row) => (
-                  <tr key={`${row.symbol}-${row.side}`} className="border-t border-white/5">
-                    <td className="px-3 py-2 font-semibold">{row.symbol}</td>
-                    <td className="px-3 py-2 uppercase">{row.side}</td>
-                    <td className="px-3 py-2">{row.count_total}</td>
-                    <td className="px-3 py-2 text-rose-200">{row.count_rejected}</td>
-                    <td className="px-3 py-2 text-xs text-rose-200">{row.most_common_rejectedReason || '—'}</td>
-                    <td className="px-3 py-2">{formatNumber(row.avg_qtyRounded, 8)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.avg_quoteSpendComputed, 4)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.avg_notionalAfterRounding, 4)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.min_qtyRounded, 8)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.max_qtyRounded, 8)}</td>
+              </thead>
+              <tbody className="text-gray-200">
+                {loading && (
+                  <tr>
+                    <td className="px-3 py-3 text-gray-400" colSpan={10}>
+                      Loading sizing reports…
+                    </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                )}
+                {!loading && items.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-3 text-gray-500" colSpan={10}>
+                      No sizing reports matched the filters.
+                    </td>
+                  </tr>
+                )}
+                {!loading &&
+                  items.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={`cursor-pointer border-t border-white/5 hover:bg-white/5 ${selectedId === row.id ? 'bg-white/10' : ''}`}
+                      onClick={() => setSelectedId(row.id)}
+                    >
+                      <td className="px-3 py-2 text-xs">{formatDate(row.createdAt)}</td>
+                      <td className="px-3 py-2 font-semibold">{row.symbol || '—'}</td>
+                      <td className="px-3 py-2 uppercase">{row.side || '—'}</td>
+                      <td className="px-3 py-2">{row.strategy || '—'}</td>
+                      <td className="px-3 py-2 uppercase">{row.status || '—'}</td>
+                      <td className="px-3 py-2">{formatNumber(row.quoteSpend, 4)}</td>
+                      <td className="px-3 py-2">{formatNumber(row.qtyFinal, 8)}</td>
+                      <td className="px-3 py-2">{formatNumber(row.refPrice, 4)}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {formatNumber(row.slPrice, 4)} / {formatNumber(row.tpPrice, 4)}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-rose-200">{row.sizingRejectReason || '—'}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          {!selectedId && <p className="text-sm text-gray-400">Select a report row to view full sizing breakdown.</p>}
+          {selectedId && detailLoading && <p className="text-sm text-gray-400">Loading report detail…</p>}
+          {selectedDetail && !detailLoading && (
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Sizing Summary</p>
+                <p className="text-sm text-gray-200">
+                  {selectedDetail.summary.symbol || '—'} · {(selectedDetail.summary.side || '—').toUpperCase()} · {(selectedDetail.summary.status || '—').toUpperCase()}
+                </p>
+                <p className="text-xs text-gray-400">Bot: {selectedDetail.summary.botName || selectedDetail.summary.botId || '—'}</p>
+              </div>
+              <div className="grid gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-gray-200">
+                <p>Quote spend: {formatNumber(selectedDetail.summary.quoteSpend, 6)}</p>
+                <p>Qty raw/final: {formatNumber(selectedDetail.summary.qtyRaw, 8)} / {formatNumber(selectedDetail.summary.qtyFinal, 8)}</p>
+                <p>Ref price: {formatNumber(selectedDetail.summary.refPrice, 6)}</p>
+                <p>Min notional: {formatNumber(selectedDetail.summary.minNotional, 6)}</p>
+                <p>Step size: {formatNumber(selectedDetail.summary.stepSize, 10)}</p>
+                <p>Free quote/base: {formatNumber(selectedDetail.summary.freeQuote, 6)} / {formatNumber(selectedDetail.summary.freeBase, 8)}</p>
+                <p>SL/TP: {formatNumber(selectedDetail.summary.slPrice, 6)} / {formatNumber(selectedDetail.summary.tpPrice, 6)}</p>
+                <p>Reject reason: {selectedDetail.summary.sizingRejectReason || '—'}</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Raw Payload JSON</p>
+                <pre className="max-h-[220px] overflow-auto rounded-xl border border-white/10 bg-[#0d1120] p-3 text-[11px] text-gray-300">
+                  {JSON.stringify(selectedDetail.rawPayload, null, 2)}
+                </pre>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Execution Result JSON</p>
+                <pre className="max-h-[220px] overflow-auto rounded-xl border border-white/10 bg-[#0d1120] p-3 text-[11px] text-gray-300">
+                  {JSON.stringify(selectedDetail.executionResult, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </SizingLayout>
   );
 }
