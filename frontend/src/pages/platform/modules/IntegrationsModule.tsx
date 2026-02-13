@@ -112,7 +112,7 @@ export default function IntegrationsModule() {
           {integrations.map((i) => (
             <Link
               key={i.id}
-              to={`/platform/integrations/${i.exchange}/bots`}
+              to={`/platform/integrations/${i.exchange}`}
               className="rounded-2xl border border-white/10 p-4 transition hover:border-primary-300/50"
             >
               <div className="flex items-center justify-between">
@@ -149,7 +149,7 @@ export default function IntegrationsModule() {
             return (
               <Link
                 key={ex.id}
-                to={isReady ? `/platform/integrations/${ex.id}/bots` : `/platform/integrations/${ex.id}`}
+                to={`/platform/integrations/${ex.id}`}
                 className="rounded-xl border border-white/10 p-3 transition hover:border-primary-300/50 text-sm"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -164,7 +164,7 @@ export default function IntegrationsModule() {
                 {!ex.tagline && !isReady && <p className="mt-2 text-[13px] text-gray-200">Prebuilt adapter arriving soon.</p>}
                 {ex.latency && <p className="mt-2 text-[11px] text-gray-400">Latency: {ex.latency}</p>}
                 <p className="mt-3 text-[10px] uppercase tracking-[0.18em] text-primary-200">
-                  {isReady ? 'Open bots →' : 'Preview details →'}
+                  {isReady ? 'Manage keys →' : 'Preview details →'}
                 </p>
               </Link>
             );
