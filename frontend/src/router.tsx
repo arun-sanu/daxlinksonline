@@ -14,6 +14,10 @@ import ExchangeAccounts from './pages/ExchangeAccounts';
 import PineConvert from './pages/pine/Convert';
 import ExchangeIntegrationPage from './pages/platform/ExchangeIntegrationPage';
 import AccountRegistrationPage from './pages/AccountRegistrationPage';
+import TradeBotsPage from './pages/TradeBotsPage';
+import TradeBotDetail from './pages/TradeBotDetail';
+import BotVersions from './pages/BotVersions';
+import BotInstances from './pages/BotInstances';
 import SizingDetailsPage from './pages/platform/sizing/SizingDetailsPage';
 import SizingReportsPage from './pages/platform/sizing/SizingReportsPage';
 import SignalExchangeReportsPage from './pages/platform/orders/SignalExchangeReportsPage';
@@ -36,6 +40,10 @@ export function AppRouter() {
         { path: 'dashboard', element: <DashboardPage /> },
         { path: 'market', element: withinCard(<Market />) },
         { path: 'market/rentals', element: withinCard(<MyRentals />) },
+        { path: 'trade-bots', element: withinCard(<TradeBotsPage />) },
+        { path: 'trade-bots/:botId', element: withinCard(<TradeBotDetail />) },
+        { path: 'trade-bots/:botId/versions', element: withinCard(<BotVersions />) },
+        { path: 'trade-bots/:botId/instances', element: withinCard(<BotInstances />) },
         { path: 'exchange-accounts', element: withinCard(<ExchangeAccounts />) },
         { path: 'pine-convert', element: withinCard(<PineConvert />) },
         { path: 'account/register', element: <AccountRegistrationPage /> },

@@ -931,7 +931,7 @@ export async function listMarketBots(_workspaceId) {
         workspaceId: { in: Array.from(new Set(bots.map((bot) => bot.workspaceId))) },
         active: true
       },
-      orderBy: [{ priceMonthly: 'asc' }, { createdAt: 'asc' }]
+      orderBy: [{ priceMonthly: 'asc' }, { name: 'asc' }]
     })
   ]);
   const versionsById = new Map(versions.map((version) => [version.id, version]));

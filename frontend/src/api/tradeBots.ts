@@ -51,11 +51,7 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit, errorMessage
 export async function listBots(): Promise<ListResponse<Bot>> {
   const ws = getWorkspaceId();
   const url = `/api/v1/trade-bots/${ws}/bots`;
-  try {
-    return await fetchJson<ListResponse<Bot>>(url);
-  } catch {
-    return { items: [] };
-  }
+  return fetchJson<ListResponse<Bot>>(url, undefined, 'Failed to load trade bots');
 }
 
 export async function createBot(payload: Pick<Bot, 'name' | 'kind'> & { description?: string | null }): Promise<Bot> {
@@ -343,11 +339,7 @@ export async function deleteExchangeAccount(id: string): Promise<boolean> {
 export async function listMarketBots(): Promise<ListResponse<MarketBotSummary>> {
   const ws = getWorkspaceId();
   const url = `/api/v1/trade-bots/${ws}/market`;
-  try {
-    return await fetchJson<ListResponse<MarketBotSummary>>(url);
-  } catch {
-    return { items: [] };
-  }
+  return fetchJson<ListResponse<MarketBotSummary>>(url, undefined, 'Failed to load marketplace bots');
 }
 
 export async function rentBot(
