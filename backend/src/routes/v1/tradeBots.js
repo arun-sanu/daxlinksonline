@@ -10,8 +10,11 @@ import {
   handleCreateTradeBotInstance,
   handleCreateTradeBotWithUpload,
   handleGetTradeBot,
+  handleListMarketBots,
+  handleListWorkspaceRentals,
   handleGetTradeBotMonitoring,
   handleGetTradeBotWorkflowLink,
+  handleRentMarketBot,
   handleListTradeBotInstances,
   handleListTradeBotLanguages,
   handleListTradeBotOrders,
@@ -38,12 +41,15 @@ router.post('/:workspaceId/exchange-accounts', handleCreateExchangeAccount);
 router.delete('/:workspaceId/exchange-accounts/:exchangeAccountId', handleDeleteExchangeAccount);
 
 router.get('/:workspaceId/bots', handleListTradeBots);
+router.get('/:workspaceId/market', handleListMarketBots);
 router.post('/:workspaceId/bots', handleCreateTradeBot);
 router.post('/:workspaceId/bots/upload', upload.single('file'), handleCreateTradeBotWithUpload);
 router.get('/:workspaceId/bots/:botId', handleGetTradeBot);
+router.post('/:workspaceId/bots/:botId/rent', handleRentMarketBot);
 router.post('/:workspaceId/bots/:botId/versions/upload', upload.single('file'), handleUploadTradeBotVersion);
 router.get('/:workspaceId/bots/:botId/instances', handleListTradeBotInstances);
 router.post('/:workspaceId/bots/:botId/instances', handleCreateTradeBotInstance);
 router.get('/:workspaceId/bots/:botId/orders', handleListTradeBotOrders);
 router.get('/:workspaceId/bots/:botId/monitoring', handleGetTradeBotMonitoring);
 router.get('/:workspaceId/bots/:botId/workflow', handleGetTradeBotWorkflowLink);
+router.get('/:workspaceId/rentals', handleListWorkspaceRentals);

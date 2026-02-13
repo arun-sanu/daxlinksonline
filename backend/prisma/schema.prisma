@@ -575,6 +575,7 @@ model Bot {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   workspace       Workspace     @relation(fields: [workspaceId], references: [id])
+  latestVersion   BotVersion?   @relation("BotLatestVersion", fields: [latestVersionId], references: [id])
   versions        BotVersion[]
   instances       BotInstance[]
   rentals         Rental[]
@@ -592,6 +593,7 @@ model BotVersion {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   bot          Bot           @relation(fields: [botId], references: [id])
+  latestForBots Bot[]        @relation("BotLatestVersion")
   // Back relation for instances
   instances    BotInstance[]
 }
@@ -680,14 +682,46 @@ model Order {
   type          String // LIMIT|MARKET|STOP
   price         Decimal?    @db.Decimal(38, 12)
   qty           Decimal     @db.Decimal(38, 12)
+  quoteSpend    Decimal?    @db.Decimal(38, 12)
+  qtyRaw        Decimal?    @db.Decimal(38, 12)
+  qtyFinal      Decimal?    @db.Decimal(38, 12)
+  refPrice      Decimal?    @db.Decimal(38, 12)
+  minNotional   Decimal?    @db.Decimal(38, 12)
+  stepSize      Decimal?    @db.Decimal(38, 12)
+  riskMode      String?
+  riskValue     Decimal?    @db.Decimal(38, 12)
+  slPrice       Decimal?    @db.Decimal(38, 12)
+  tpPrice       Decimal?    @db.Decimal(38, 12)
+  sizingStatus  String?
+  sizingRejectReason String?
   status        String
   venueOrderId  String?
   error         String?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
+  sizingReport  OrderSizingReport?
 
   @@index([botInstanceId, symbol, status])
+}
+
+model OrderSizingReport {
+  id                   String   @id @default(cuid())
+  orderId              String   @unique
+  freeQuote            Decimal? @db.Decimal(38, 12)
+  freeBase             Decimal? @db.Decimal(38, 12)
+  exchangeMinNotional  Decimal? @db.Decimal(38, 12)
+  effectiveMinNotional Decimal? @db.Decimal(38, 12)
+  precisionAmount      Decimal? @db.Decimal(38, 12)
+  stepSize             Decimal? @db.Decimal(38, 12)
+  roundingMethod       String?
+  rawPayload           Json
+  normalizedSignal     Json
+  executionResult      Json
+  createdAt            DateTime @default(now())
+  order                Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
 }
 
 model Position {

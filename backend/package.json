@@ -14,7 +14,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
-    "create:super-admin": "node scripts/createSuperAdmin.js"
+    "create:super-admin": "node scripts/createSuperAdmin.js",
+    "bot:register:trade-exec": "node scripts/registerTradeExecBot.js"
   },
   "dependencies": {
     "@compendiumfi/pendax": "^2.1.22",

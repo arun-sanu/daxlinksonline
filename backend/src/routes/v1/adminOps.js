@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { requireAuth, requireAdmin } from '../../middleware/auth.js';
 import { handleQueuesSummary, handleListFlags, handleUpdateFlag, handleListAudit, handleReplayWebhook, handleListDeliveries, handleBulkRotateDatabases, handleBulkToggleWebhooks, handleSendTestEvent, handleEvaluateFlag, handleRetryDelivery, handleRetryFailedForWebhook, handleRetryFailedForWorkspace, handleDeliveryStats } from '../../controllers/adminOpsController.js';
 import { handleListTradingviewAlerts } from '../../controllers/tradingviewAlertsController.js';
+import {
+  handleGetAdminSizingReport,
+  handleListAdminSizingReports
+} from '../../controllers/adminSizingReportsController.js';
 
 export const router = Router();
 
@@ -20,5 +24,7 @@ router.post('/webhooks/:workspaceId/retry-failed', handleRetryFailedForWorkspace
 router.get('/deliveries', handleListDeliveries);
 router.get('/deliveries/stats', handleDeliveryStats);
 router.get('/alerts', handleListTradingviewAlerts);
+router.get('/sizing-reports', handleListAdminSizingReports);
+router.get('/sizing-reports/:id', handleGetAdminSizingReport);
 router.post('/databases/rotate-all', handleBulkRotateDatabases);
 router.post('/webhooks/:workspaceId/bulk', handleBulkToggleWebhooks); // ?action=enable|disable

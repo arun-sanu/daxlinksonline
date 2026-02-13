@@ -706,6 +706,18 @@ export async function listTradeBotOrders(workspaceId, botId, filters = {}) {
       error: item.error || null,
       price: toPlainDecimal(item.price),
       qty: toPlainDecimal(item.qty),
+      quoteSpend: toPlainDecimal(item.quoteSpend),
+      qtyRaw: toPlainDecimal(item.qtyRaw),
+      qtyFinal: toPlainDecimal(item.qtyFinal),
+      refPrice: toPlainDecimal(item.refPrice),
+      minNotional: toPlainDecimal(item.minNotional),
+      stepSize: toPlainDecimal(item.stepSize),
+      riskMode: item.riskMode || null,
+      riskValue: toPlainDecimal(item.riskValue),
+      slPrice: toPlainDecimal(item.slPrice),
+      tpPrice: toPlainDecimal(item.tpPrice),
+      sizingStatus: item.sizingStatus || null,
+      sizingRejectReason: item.sizingRejectReason || null,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt
     }))
@@ -823,4 +835,241 @@ export async function getTradeBotWorkflowLink(workspaceId, botId) {
     linkedRules,
     workflowConfigVersion: cfg.version || 1
   };
+}
+
+function addDays(date, days) {
+  const out = new Date(date);
+  out.setDate(out.getDate() + days);
+  return out;
+}
+
+function presentMarketplacePlan(plan) {
+  return {
+    id: plan.id,
+    workspaceId: plan.workspaceId,
+    name: plan.name,
+    cpuMilli: plan.cpuMilli,
+    memMiB: plan.memMiB,
+    priceMonthly: plan.priceMonthly,
+    active: Boolean(plan.active)
+  };
+}
+
+function presentRental(rental) {
+  return {
+    id: rental.id,
+    botId: rental.botId,
+    renterWorkspaceId: rental.renterWorkspaceId,
+    planId: rental.planId,
+    exchangeAccountId: rental.exchangeAccountId,
+    botInstanceId: rental.botInstanceId || null,
+    status: rental.status,
+    revenueShareBps: rental.revenueShareBps,
+    createdAt: rental.createdAt,
+    expiresAt: rental.expiresAt,
+    bot: rental.bot
+      ? {
+          id: rental.bot.id,
+          workspaceId: rental.bot.workspaceId,
+          name: rental.bot.name,
+          kind: rental.bot.kind,
+          description: rental.bot.description || null,
+          latestVersionId: rental.bot.latestVersionId || null,
+          createdAt: rental.bot.createdAt,
+          updatedAt: rental.bot.updatedAt
+        }
+      : null,
+    plan: rental.plan ? presentMarketplacePlan(rental.plan) : null,
+    exchangeAccount: rental.exchangeAccount
+      ? {
+          id: rental.exchangeAccount.id,
+          workspaceId: rental.exchangeAccount.workspaceId,
+          name: rental.exchangeAccount.name,
+          venue: rental.exchangeAccount.venue,
+          isSandbox: rental.exchangeAccount.isSandbox,
+          createdAt: rental.exchangeAccount.createdAt,
+          updatedAt: rental.exchangeAccount.updatedAt
+        }
+      : null,
+    instance: rental.instance ? presentBotInstance(rental.instance) : null
+  };
+}
+
+export async function listMarketBots(_workspaceId) {
+  const bots = await prisma.bot.findMany({
+    where: { latestVersionId: { not: null } },
+    orderBy: { updatedAt: 'desc' },
+    include: {
+      workspace: {
+        select: { id: true, name: true }
+      }
+    }
+  });
+  if (!bots.length) return [];
+
+  const latestVersionIds = Array.from(
+    new Set(
+      bots
+        .map((bot) => bot.latestVersionId)
+        .filter(Boolean)
+    )
+  );
+  const [versions, plans] = await Promise.all([
+    prisma.botVersion.findMany({
+      where: {
+        id: { in: latestVersionIds },
+        status: { in: ['published', 'approved'] }
+      },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true
+      }
+    }),
+    prisma.plan.findMany({
+      where: {
+        workspaceId: { in: Array.from(new Set(bots.map((bot) => bot.workspaceId))) },
+        active: true
+      },
+      orderBy: [{ priceMonthly: 'asc' }, { createdAt: 'asc' }]
+    })
+  ]);
+  const versionsById = new Map(versions.map((version) => [version.id, version]));
+  const plansByWorkspace = new Map();
+  plans.forEach((plan) => {
+    if (!plansByWorkspace.has(plan.workspaceId)) {
+      plansByWorkspace.set(plan.workspaceId, []);
+    }
+    plansByWorkspace.get(plan.workspaceId).push(plan);
+  });
+
+  return bots
+    .filter((bot) => bot.latestVersionId && versionsById.has(bot.latestVersionId))
+    .map((bot) => {
+      const latestVersion = versionsById.get(bot.latestVersionId);
+      return {
+        id: bot.id,
+        name: bot.name,
+        description: bot.description || null,
+        workspace: {
+          id: bot.workspace.id,
+          name: bot.workspace.name
+        },
+        publishedAt: latestVersion?.createdAt || null,
+        updatedAt: bot.updatedAt,
+        versionId: bot.latestVersionId,
+        plans: (plansByWorkspace.get(bot.workspaceId) || []).map((plan) => presentMarketplacePlan(plan))
+      };
+    });
+}
+
+export async function rentMarketBot(workspaceId, botId, payload = {}) {
+  const symbol = String(payload.symbol || 'BTCUSDT')
+    .trim()
+    .toUpperCase();
+  const [workspace, bot, exchangeAccount] = await Promise.all([
+    prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true }
+    }),
+    prisma.bot.findUnique({
+      where: { id: botId },
+      select: {
+        id: true,
+        workspaceId: true,
+        latestVersionId: true
+      }
+    }),
+    prisma.exchangeAccount.findFirst({
+      where: {
+        id: payload.exchangeAccountId,
+        workspaceId
+      }
+    })
+  ]);
+
+  if (!workspace) throw httpError('Workspace not found', 404);
+  if (!bot?.latestVersionId) throw httpError('Bot is not published in marketplace', 404);
+  if (!exchangeAccount) throw httpError('Exchange account not found in workspace', 404);
+
+  const [version, plan] = await Promise.all([
+    prisma.botVersion.findFirst({
+      where: {
+        id: bot.latestVersionId,
+        botId: bot.id,
+        status: { in: ['published', 'approved'] }
+      }
+    }),
+    prisma.plan.findFirst({
+      where: {
+        id: payload.planId,
+        workspaceId: bot.workspaceId,
+        active: true
+      }
+    })
+  ]);
+  if (!version) throw httpError('Bot latest version is not published', 400);
+  if (!plan) throw httpError('Selected plan is not available for this marketplace bot', 404);
+
+  const instance = await prisma.botInstance.create({
+    data: {
+      botId: bot.id,
+      botVersionId: version.id,
+      workspaceId,
+      exchangeAccountId: exchangeAccount.id,
+      symbol: symbol || 'BTCUSDT',
+      direction: 'both',
+      leverage: 1,
+      maxDailyLossPct: 5,
+      takeProfitPct: 1,
+      slAtrMult: 1.5,
+      useLimitEntries: true,
+      minNotional: 1,
+      status: 'stopped'
+    }
+  });
+
+  const rental = await prisma.rental.create({
+    data: {
+      botId: bot.id,
+      renterWorkspaceId: workspaceId,
+      planId: plan.id,
+      exchangeAccountId: exchangeAccount.id,
+      botInstanceId: instance.id,
+      status: 'active',
+      expiresAt: addDays(new Date(), 30)
+    }
+  });
+
+  return {
+    rentalId: rental.id,
+    instanceId: instance.id
+  };
+}
+
+export async function listWorkspaceRentals(workspaceId) {
+  const rentals = await prisma.rental.findMany({
+    where: {
+      renterWorkspaceId: workspaceId
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      bot: true,
+      plan: true,
+      exchangeAccount: true,
+      instance: {
+        include: {
+          exchange: {
+            select: {
+              id: true,
+              name: true,
+              venue: true,
+              isSandbox: true
+            }
+          }
+        }
+      }
+    }
+  });
+  return rentals.map((rental) => presentRental(rental));
 }

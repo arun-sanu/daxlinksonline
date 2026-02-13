@@ -6,11 +6,14 @@ import {
   getTradeBotDetail,
   getTradeBotMonitoring,
   getTradeBotWorkflowLink,
+  listMarketBots,
+  listWorkspaceRentals,
   listSupportedBotLanguages,
   listTradeBotInstances,
   listTradeBotOrders,
   listTradeBots,
   normalizeBotLanguage,
+  rentMarketBot,
   uploadTradeBotVersion
 } from '../services/tradeBotsService.js';
 import { recordAudit } from '../services/auditService.js';
@@ -63,6 +66,17 @@ const listOrdersQuerySchema = z.object({
 const monitoringQuerySchema = z.object({
   instanceId: z.string().min(8).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional()
+});
+
+const rentPayloadSchema = z.object({
+  planId: z.string().min(8),
+  exchangeAccountId: z.string().min(8),
+  symbol: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9/_-]{4,30}$/)
+    .optional()
 });
 
 function parseBool(value, fallback = false) {
@@ -293,6 +307,55 @@ export async function handleGetTradeBotWorkflowLink(req, res, next) {
     const { workspaceId, botId } = botParamSchema.parse(req.params || {});
     const workflow = await getTradeBotWorkflowLink(workspaceId, botId);
     res.json(workflow);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleListMarketBots(req, res, next) {
+  try {
+    const { workspaceId } = workspaceParamSchema.parse(req.params || {});
+    const items = await listMarketBots(workspaceId);
+    res.json({ items });
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleRentMarketBot(req, res, next) {
+  try {
+    const { workspaceId, botId } = botParamSchema.parse(req.params || {});
+    const payload = rentPayloadSchema.parse(req.body || {});
+    const rented = await rentMarketBot(workspaceId, botId, payload);
+    try {
+      await recordAudit({
+        userId: req.user?.id,
+        action: 'TRADE_BOT_RENTED',
+        entityType: 'Rental',
+        entityId: rented.rentalId,
+        summary: `${botId}:${payload.planId}`,
+        detail: {
+          workspaceId,
+          botId,
+          exchangeAccountId: payload.exchangeAccountId,
+          instanceId: rented.instanceId
+        }
+      });
+    } catch {}
+    res.status(201).json(rented);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleListWorkspaceRentals(req, res, next) {
+  try {
+    const { workspaceId } = workspaceParamSchema.parse(req.params || {});
+    const items = await listWorkspaceRentals(workspaceId);
+    res.json({ items });
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);

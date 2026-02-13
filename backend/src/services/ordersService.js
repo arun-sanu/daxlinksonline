@@ -46,6 +46,12 @@ function compactParams(input) {
   return params;
 }
 
+function settle(promise) {
+  return promise
+    .then((value) => ({ status: 'fulfilled', value }))
+    .catch((reason) => ({ status: 'rejected', reason }));
+}
+
 async function mexcSignedGet(credentials, path, params = {}) {
   const signedParams = compactParams({
     ...params,
@@ -248,11 +254,11 @@ export async function getMexcSpotSnapshot({
         })
       : Promise.resolve(null);
 
-  const [accountResult, openOrdersResult, tradesResult, orderResult] = await Promise.allSettled([
-    accountPromise,
-    openOrdersPromise,
-    tradesPromise,
-    orderPromise
+  const [accountResult, openOrdersResult, tradesResult, orderResult] = await Promise.all([
+    settle(accountPromise),
+    settle(openOrdersPromise),
+    settle(tradesPromise),
+    settle(orderPromise)
   ]);
 
   const accountOk = accountResult.status === 'fulfilled';
@@ -430,7 +436,54 @@ function extractSizingFromAudit(audit) {
   };
 }
 
-function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, audit) {
+function toPlainDecimal(value) {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractSizingSummaryFromOrder(order) {
+  if (!order) return null;
+  return {
+    quoteSpend: toPlainDecimal(order.quoteSpend),
+    qtyRaw: toPlainDecimal(order.qtyRaw),
+    qtyFinal: toPlainDecimal(order.qtyFinal),
+    refPrice: toPlainDecimal(order.refPrice),
+    minNotional: toPlainDecimal(order.minNotional),
+    stepSize: toPlainDecimal(order.stepSize),
+    riskMode: order.riskMode || null,
+    riskValue: toPlainDecimal(order.riskValue),
+    slPrice: toPlainDecimal(order.slPrice),
+    tpPrice: toPlainDecimal(order.tpPrice),
+    sizingStatus: order.sizingStatus || null,
+    sizingRejectReason: order.sizingRejectReason || null
+  };
+}
+
+function extractSizingSummaryFromAudit(audit) {
+  if (!audit) return null;
+  const debug = audit.sizingDebug || {};
+  const maybeNumber = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    quoteSpend: maybeNumber(debug.quoteSpendComputed),
+    qtyRaw: maybeNumber(audit.qtyRaw ?? debug.qtyRaw),
+    qtyFinal: maybeNumber(audit.qtyRounded ?? debug.qtyAfterStepRounding),
+    refPrice: maybeNumber(audit.computedPrice ?? debug.priceUsed),
+    minNotional: maybeNumber(debug.minNotional),
+    stepSize: maybeNumber(debug.stepSize),
+    riskMode: debug.riskMode || null,
+    riskValue: maybeNumber(debug.riskPctOfFreeQuote),
+    slPrice: maybeNumber(debug.slPrice),
+    tpPrice: maybeNumber(debug.tpPrice),
+    sizingStatus: audit.status ? String(audit.status).toLowerCase() : null,
+    sizingRejectReason: debug.rejectedReason || null
+  };
+}
+
+function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, audit, linkedOrder = null) {
   const symbol = alert?.symbol || signal?.symbol || signal?.payload?.symbol || signal?.payload?.raw?.symbol || null;
   const side = normalizeSide(alert?.side || signal?.side || signal?.payload?.side || signal?.payload?.raw?.side);
   const signalTimestamp =
@@ -445,6 +498,8 @@ function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, 
   const requestTimestamp = toIso(signal?.createdAt);
   const signalAction = side || '—';
   const errorMessage = resolveReportErrorMessage(signal, audit);
+  const orderId = resolveReportOrderId(signal, audit);
+  const sizingSummary = extractSizingSummaryFromOrder(linkedOrder) || extractSizingSummaryFromAudit(audit);
 
   return {
     key: signal.id,
@@ -475,14 +530,15 @@ function mapReportRow(signal, alert, integrationMeta, matchType, positionAfter, 
       type: signal.type || signal?.payload?.type || signal?.payload?.raw?.type || null,
       amount: signal.amount ?? null,
       quantity: resolveReportQuantity(signal, audit),
-      orderId: resolveReportOrderId(signal, audit),
+      orderId,
       errorMessage,
       positionAfter: positionAfter || {
         estimatedBaseQty: null,
         state: 'UNKNOWN'
       }
     },
-    sizing: extractSizingFromAudit(audit)
+    sizing: extractSizingFromAudit(audit),
+    sizingSummary
   };
 }
 
@@ -644,6 +700,42 @@ export async function getWorkspaceOrderReport({
     }
   });
 
+  const venueOrderIds = Array.from(
+    new Set(
+      signals
+        .map((signal) => resolveReportOrderId(signal, auditBySignalId[signal.id] || null))
+        .filter(Boolean)
+    )
+  );
+  const orders = venueOrderIds.length
+    ? await prisma.order.findMany({
+        where: {
+          venueOrderId: { in: venueOrderIds }
+        },
+        select: {
+          id: true,
+          venueOrderId: true,
+          quoteSpend: true,
+          qtyRaw: true,
+          qtyFinal: true,
+          refPrice: true,
+          minNotional: true,
+          stepSize: true,
+          riskMode: true,
+          riskValue: true,
+          slPrice: true,
+          tpPrice: true,
+          sizingStatus: true,
+          sizingRejectReason: true
+        }
+      })
+    : [];
+  const orderByVenueId = orders.reduce((acc, order) => {
+    if (!order.venueOrderId) return acc;
+    acc[order.venueOrderId] = order;
+    return acc;
+  }, {});
+
   const positionBySignalId = {};
   let runningPositionQty = 0;
   const matchedAsc = [...matchedRows].sort((a, b) => {
@@ -668,14 +760,20 @@ export async function getWorkspaceOrderReport({
   });
 
   const items = matchedRows.map((row) =>
-    mapReportRow(
-      row.signal,
-      row.alert,
-      integrationMap[row.signal.integrationId],
-      row.matchType,
-      positionBySignalId[row.signal.id],
-      auditBySignalId[row.signal.id] || null
-    )
+    {
+      const linkedAudit = auditBySignalId[row.signal.id] || null;
+      const venueOrderId = resolveReportOrderId(row.signal, linkedAudit);
+      const linkedOrder = venueOrderId ? orderByVenueId[venueOrderId] || null : null;
+      return mapReportRow(
+        row.signal,
+        row.alert,
+        integrationMap[row.signal.integrationId],
+        row.matchType,
+        positionBySignalId[row.signal.id],
+        linkedAudit,
+        linkedOrder
+      );
+    }
   );
 
   const summary = items.reduce(
