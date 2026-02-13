@@ -43,9 +43,48 @@ function tradeStatusBadge(status?: string | null) {
   return 'border-slate-300/30 bg-slate-500/20 text-slate-100';
 }
 
+function toDateInputValue(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseDateInput(value: string) {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function isSameCalendarDate(input: string | null | undefined, target: Date | null) {
+  if (!input || !target) return false;
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) return false;
+  return (
+    date.getFullYear() === target.getFullYear() &&
+    date.getMonth() === target.getMonth() &&
+    date.getDate() === target.getDate()
+  );
+}
+
+function summarizeRows(rows: OrderReportRow[]) {
+  return rows.reduce(
+    (acc, row) => {
+      const status = String(row.exchange?.tradeStatus || '').toLowerCase();
+      if (status === 'executed') acc.executed += 1;
+      else if (status === 'rejected') acc.rejected += 1;
+      else if (status === 'pending') acc.pending += 1;
+      else if (status === 'retried') acc.retried += 1;
+      if (status === 'unmatched' || String(row.matchType || '').toLowerCase() === 'unmatched') acc.unmatched += 1;
+      return acc;
+    },
+    { executed: 0, rejected: 0, pending: 0, retried: 0, unmatched: 0 }
+  );
+}
+
 export default function SignalExchangeReportsPage() {
   const [symbol, setSymbol] = useState('BTCUSDC');
   const [integrationId, setIntegrationId] = useState('');
+  const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(new Date()));
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(true);
   const [integrationsError, setIntegrationsError] = useState('');
@@ -61,6 +100,7 @@ export default function SignalExchangeReportsPage() {
   const [reportError, setReportError] = useState('');
   const [reportUpdatedAt, setReportUpdatedAt] = useState<string | null>(null);
   const [selectedSizingRow, setSelectedSizingRow] = useState<OrderReportRow | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   const refreshReport = useCallback(async () => {
     if (!symbol.trim()) {
@@ -138,40 +178,73 @@ export default function SignalExchangeReportsPage() {
     refreshReport();
   }, [integrationId, refreshReport]);
 
+  const visibleDate = useMemo(() => parseDateInput(selectedDate), [selectedDate]);
+  const filteredRows = useMemo(() => {
+    if (!visibleDate) return reportRows;
+    return reportRows.filter((row) => {
+      const signalTime = row.signal?.timestamp || null;
+      const executionTime = row.exchange?.executionTimestamp || null;
+      return isSameCalendarDate(signalTime, visibleDate) || isSameCalendarDate(executionTime, visibleDate);
+    });
+  }, [reportRows, visibleDate]);
+
+  const filteredSummary = useMemo(() => summarizeRows(filteredRows), [filteredRows]);
+
+  const activeSummary = useMemo(
+    () => (visibleDate ? filteredSummary : reportSummary),
+    [filteredSummary, reportSummary, visibleDate]
+  );
+
+  const handleDeleteVisibleRows = useCallback(() => {
+    const confirmed = window.confirm('Delete current visible rows from this view?');
+    if (!confirmed) return;
+    setDeleteLoading(true);
+    const nextRows = reportRows.filter((row) => {
+      if (!visibleDate) return false;
+      const signalTime = row.signal?.timestamp || null;
+      const executionTime = row.exchange?.executionTimestamp || null;
+      return !(isSameCalendarDate(signalTime, visibleDate) || isSameCalendarDate(executionTime, visibleDate));
+    });
+    setReportRows(nextRows);
+    setReportSummary(summarizeRows(nextRows));
+    setSelectedSizingRow(null);
+    setDeleteLoading(false);
+  }, [reportRows, visibleDate]);
+
   const reportCards = useMemo(
     () => [
       {
         key: 'executed',
         label: 'Executed',
-        value: reportSummary.executed,
+        value: activeSummary.executed,
         chip: 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100'
       },
       {
         key: 'rejected',
         label: 'Rejected',
-        value: reportSummary.rejected,
+        value: activeSummary.rejected,
         chip: 'border-rose-300/40 bg-rose-500/20 text-rose-100'
       },
       {
         key: 'pending',
         label: 'Pending',
-        value: reportSummary.pending,
+        value: activeSummary.pending,
         chip: 'border-sky-300/40 bg-sky-500/20 text-sky-100'
       },
       {
         key: 'retried',
         label: 'Retried',
-        value: reportSummary.retried,
+        value: activeSummary.retried,
         chip: 'border-amber-300/40 bg-amber-500/20 text-amber-100'
       },
       {
         key: 'unmatched',
         label: 'Unmatched',
-        value: reportSummary.unmatched,
+        value: activeSummary.unmatched,
         chip: 'border-slate-300/30 bg-slate-500/20 text-slate-100'
       }
     ],
-    [reportSummary]
+    [activeSummary]
   );
 
   return (
@@ -206,7 +279,7 @@ export default function SignalExchangeReportsPage() {
       </nav>
 
       <article className="card-shell space-y-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <label className="space-y-1 text-xs uppercase tracking-[0.14em] text-gray-400">
             Symbol
             <input
@@ -231,19 +304,58 @@ export default function SignalExchangeReportsPage() {
               ))}
             </select>
           </label>
-          <div className="flex items-end">
-            <button
-              type="button"
-              onClick={refreshReport}
-              disabled={reportLoading}
-              className="btn btn-secondary btn-small btn-rect disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {reportLoading ? 'Refreshing...' : 'Refresh report'}
-            </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                <line x1="16" y1="2.5" x2="16" y2="6"></line>
+                <line x1="8" y1="2.5" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+            </span>
+            <input
+              type="date"
+              className="rounded-lg border border-white/10 bg-white/5 py-1.5 pl-8 pr-3 text-xs text-gray-200 focus:border-primary-300 focus:outline-none"
+              value={selectedDate}
+              onChange={(event) => setSelectedDate(event.target.value)}
+            />
           </div>
+          <button
+            type="button"
+            onClick={refreshReport}
+            disabled={reportLoading}
+            className="btn btn-secondary btn-small btn-rect disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {reportLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteVisibleRows}
+            disabled={deleteLoading || filteredRows.length === 0}
+            className="btn btn-danger btn-small btn-rect disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleteLoading ? 'Deleting…' : 'Delete'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedDate(toDateInputValue(new Date()))}
+            className="btn btn-secondary btn-small btn-rect"
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedDate('')}
+            className="btn btn-secondary btn-small btn-rect"
+          >
+            All Dates
+          </button>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
           <p>Updated: {formatDate(reportUpdatedAt)}</p>
+          <p>Rows: {filteredRows.length}</p>
           {integrationsLoading && <p className="text-gray-400">Loading connected exchanges…</p>}
           {!integrationsLoading && integrations.length === 0 && (
             <p className="text-gray-400">No connected exchange found. Connect MEXC in Integrations first.</p>
@@ -263,20 +375,28 @@ export default function SignalExchangeReportsPage() {
         </div>
         {reportError && <p className="text-sm text-rose-300">{reportError}</p>}
         <div className="space-y-4">
-          <div className="rounded-2xl border border-white/8 bg-white/5">
+          <div className="rounded-xl bg-white/[0.03]">
             <div className="border-b border-white/10 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-gray-400">TradingView signals</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">TradingView signals</p>
             </div>
-            <div className="max-h-[420px] overflow-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-[#151a2f]">
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                    <th className="px-3 py-2">Alert ID</th>
-                    <th className="px-3 py-2">Signal</th>
-                    <th className="px-3 py-2">Timestamp</th>
-                    <th className="px-3 py-2">Symbol</th>
-                    <th className="px-3 py-2">Side</th>
-                    <th className="px-3 py-2">Sent</th>
+            <div className="max-h-[440px] overflow-auto rounded-b-xl">
+              <table className="min-w-[980px] w-full table-fixed text-[13px] leading-5">
+                <colgroup>
+                  <col style={{ width: '20%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '22%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '12%' }} />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-white/5">
+                  <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <th className="px-3 py-2.5">Alert ID</th>
+                    <th className="px-3 py-2.5">Signal</th>
+                    <th className="px-3 py-2.5">Timestamp</th>
+                    <th className="px-3 py-2.5">Symbol</th>
+                    <th className="px-3 py-2.5">Side</th>
+                    <th className="px-3 py-2.5">Sent</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
@@ -287,24 +407,24 @@ export default function SignalExchangeReportsPage() {
                       </td>
                     </tr>
                   )}
-                  {!reportLoading && reportRows.length === 0 && (
+                  {!reportLoading && filteredRows.length === 0 && (
                     <tr>
                       <td className="px-3 py-3 text-gray-500" colSpan={6}>
-                        No signal rows yet.
+                        No signal rows for this date.
                       </td>
                     </tr>
                   )}
                   {!reportLoading &&
-                    reportRows.map((row) => (
+                    filteredRows.map((row) => (
                       <tr key={`signal-${row.key}`} className="border-t border-white/5">
-                        <td className="px-3 py-2 font-mono text-xs text-sky-200">{row.signal.id || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.audit?.signal || row.signal.side || '—'}</td>
-                        <td className="px-3 py-2 text-xs">{formatDate(row.signal.timestamp)}</td>
-                        <td className="px-3 py-2 font-semibold">{row.signal.symbol || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.signal.side || '—'}</td>
-                        <td className="px-3 py-2 text-xs">
+                        <td className="px-3 py-2.5 font-mono text-[12px] text-sky-200">{row.signal.id || '—'}</td>
+                        <td className="px-3 py-2.5 uppercase">{row.audit?.signal || row.signal.side || '—'}</td>
+                        <td className="px-3 py-2.5 text-[12px]">{formatDate(row.signal.timestamp)}</td>
+                        <td className="px-3 py-2.5 font-semibold">{row.signal.symbol || '—'}</td>
+                        <td className="px-3 py-2.5 uppercase">{row.signal.side || '—'}</td>
+                        <td className="px-3 py-2.5 text-[12px]">
                           <span
-                            className={`inline-flex rounded-md border px-2 py-1 uppercase tracking-[0.14em] ${
+                            className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
                               row.audit?.sentToExchange
                                 ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100'
                                 : 'border-slate-300/30 bg-slate-500/20 text-slate-200'
@@ -320,28 +440,44 @@ export default function SignalExchangeReportsPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/8 bg-white/5">
+          <div className="rounded-xl bg-white/[0.03]">
             <div className="border-b border-white/10 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-gray-400">Exchange report</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Exchange report</p>
             </div>
-            <div className="max-h-[420px] overflow-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-[#151a2f]">
-                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-400">
-                    <th className="px-3 py-2">Trade status</th>
-                    <th className="px-3 py-2">Execution time</th>
-                    <th className="px-3 py-2">Side</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Amount</th>
-                    <th className="px-3 py-2">Quantity</th>
-                    <th className="px-3 py-2">Qty (Rounded)</th>
-                    <th className="px-3 py-2">Price Used</th>
-                    <th className="px-3 py-2">Spend (BUY)</th>
-                    <th className="px-3 py-2">Rejection Reason</th>
-                    <th className="px-3 py-2">Order ID</th>
-                    <th className="px-3 py-2">Position after</th>
-                    <th className="px-3 py-2">Error reason</th>
-                    <th className="px-3 py-2">Sizing</th>
+            <div className="max-h-[440px] overflow-auto rounded-b-xl">
+              <table className="min-w-[1760px] w-full table-fixed text-[13px] leading-5">
+                <colgroup>
+                  <col style={{ width: '110px' }} />
+                  <col style={{ width: '170px' }} />
+                  <col style={{ width: '78px' }} />
+                  <col style={{ width: '84px' }} />
+                  <col style={{ width: '96px' }} />
+                  <col style={{ width: '96px' }} />
+                  <col style={{ width: '118px' }} />
+                  <col style={{ width: '104px' }} />
+                  <col style={{ width: '112px' }} />
+                  <col style={{ width: '180px' }} />
+                  <col style={{ width: '150px' }} />
+                  <col style={{ width: '130px' }} />
+                  <col style={{ width: '220px' }} />
+                  <col style={{ width: '74px' }} />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-white/5">
+                  <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <th className="px-3 py-2.5">Trade status</th>
+                    <th className="px-3 py-2.5">Execution time</th>
+                    <th className="px-3 py-2.5">Side</th>
+                    <th className="px-3 py-2.5">Type</th>
+                    <th className="px-3 py-2.5">Amount</th>
+                    <th className="px-3 py-2.5">Quantity</th>
+                    <th className="px-3 py-2.5">Qty (Rounded)</th>
+                    <th className="px-3 py-2.5">Price Used</th>
+                    <th className="px-3 py-2.5">Spend (BUY)</th>
+                    <th className="px-3 py-2.5">Rejection Reason</th>
+                    <th className="px-3 py-2.5">Order ID</th>
+                    <th className="px-3 py-2.5">Position after</th>
+                    <th className="px-3 py-2.5">Error reason</th>
+                    <th className="px-3 py-2.5">Sizing</th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-200">
@@ -352,47 +488,47 @@ export default function SignalExchangeReportsPage() {
                       </td>
                     </tr>
                   )}
-                  {!reportLoading && reportRows.length === 0 && (
+                  {!reportLoading && filteredRows.length === 0 && (
                     <tr>
                       <td className="px-3 py-3 text-gray-500" colSpan={14}>
-                        No exchange rows yet.
+                        No exchange rows for this date.
                       </td>
                     </tr>
                   )}
                   {!reportLoading &&
-                    reportRows.map((row) => (
+                    filteredRows.map((row) => (
                       <tr key={`exchange-${row.key}`} className="border-t border-white/5">
-                        <td className="px-3 py-2 uppercase">
-                          <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-[0.08em] ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
+                        <td className="px-3 py-2.5 uppercase">
+                          <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-[0.06em] ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
                             {row.exchange.tradeStatus || '—'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-xs">{formatDate(row.exchange.executionTimestamp)}</td>
-                        <td className="px-3 py-2 uppercase">{row.exchange.side || '—'}</td>
-                        <td className="px-3 py-2 uppercase">{row.exchange.type || '—'}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.exchange.amount, 4)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
-                        <td className="px-3 py-2">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2.5 text-[12px]">{formatDate(row.exchange.executionTimestamp)}</td>
+                        <td className="px-3 py-2.5 uppercase">{row.exchange.side || '—'}</td>
+                        <td className="px-3 py-2.5 uppercase">{row.exchange.type || '—'}</td>
+                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.amount, 4)}</td>
+                        <td className="px-3 py-2.5">{formatNullableDecimal(row.exchange.quantity, 4)}</td>
+                        <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.qtyRounded ?? null, 6)}</td>
+                        <td className="px-3 py-2.5">{formatNullableDecimal(row.sizing?.computedPrice ?? null, 4)}</td>
+                        <td className="px-3 py-2.5">
                           {row.exchange.side === 'BUY'
                             ? formatNullableDecimal(row.sizing?.quoteSpendComputed ?? null, 4)
                             : '—'}
                         </td>
-                        <td className="px-3 py-2 text-xs text-rose-200">
+                        <td className="px-3 py-2.5 text-[12px] text-rose-200">
                           {row.sizing?.rejectedReason || '—'}
                         </td>
-                        <td className="px-3 py-2 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
-                        <td className="px-3 py-2 text-xs">
+                        <td className="px-3 py-2.5 font-mono text-[11px]">{row.exchange.orderId || '—'}</td>
+                        <td className="px-3 py-2.5 text-[12px]">
                           {row.exchange.positionAfter?.state || 'UNKNOWN'}
                           {row.exchange.positionAfter?.estimatedBaseQty !== null &&
                             row.exchange.positionAfter?.estimatedBaseQty !== undefined &&
                             ` (${formatNullableDecimal(row.exchange.positionAfter?.estimatedBaseQty, 6)})`}
                         </td>
-                        <td className="max-w-[260px] px-3 py-2 text-xs text-rose-200" title={row.exchange.errorMessage || ''}>
+                        <td className="max-w-[260px] truncate px-3 py-2.5 text-[12px] text-rose-200" title={row.exchange.errorMessage || ''}>
                           {row.exchange.errorMessage || '—'}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2.5">
                           {row.sizing?.sizingDebug ? (
                             <button
                               type="button"
