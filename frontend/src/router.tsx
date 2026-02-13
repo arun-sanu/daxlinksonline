@@ -57,6 +57,7 @@ export function AppRouter() {
         { path: 'platform/sizing/details', element: <Navigate to="/platform/orders/sizing/details" replace /> },
         { path: 'platform/sizing/reports', element: <Navigate to="/platform/orders/sizing/reports" replace /> },
         { path: 'platform/integrations/:exchangeId', element: <ExchangeIntegrationPage /> },
+        { path: 'platform/integrations/:exchangeId/bots', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/connectivity', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/data', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/settings', element: <ExchangeIntegrationPage /> },

@@ -9,6 +9,8 @@ import {
   testIntegration,
   updateIntegrationCredential
 } from '../../api/integrations';
+import { listBots, listMarketBots, listRentals } from '../../api/tradeBots';
+import type { Bot, MarketBotSummary, Rental } from '../../api/types';
 
 type ExchangeConfig = {
   name: string;
@@ -54,7 +56,36 @@ type SavedCredential = {
 };
 
 type ConnectivityLog = { id: string; status: string; message: string; createdAt: string };
-type TabKey = 'overview' | 'connectivity' | 'data' | 'settings';
+type TradeBotRow = Bot & {
+  latestVersion?: { id?: string | null; status?: string | null; language?: string | null } | null;
+  counts?: { versions?: number; instances?: number; rentals?: number; orders?: number };
+};
+
+type TabKey = 'overview' | 'bots' | 'connectivity' | 'data' | 'settings';
+
+const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
+
+function getWorkspaceId() {
+  try {
+    return localStorage.getItem('workspaceId') || '';
+  } catch {
+    return '';
+  }
+}
+
+function setWorkspaceId(value: string) {
+  try {
+    localStorage.setItem('workspaceId', value);
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function versionText(bot: TradeBotRow) {
+  if (bot.latestVersion?.id) return bot.latestVersion.id;
+  if (bot.latestVersionId) return bot.latestVersionId;
+  return 'No version';
+}
 
 export default function ExchangeIntegrationPage() {
   const { exchangeId } = useParams<{ exchangeId: string }>();
@@ -62,6 +93,7 @@ export default function ExchangeIntegrationPage() {
   const navigate = useNavigate();
   const config = exchangeId ? EXCHANGES[exchangeId] : null;
   const isDataTab = location.pathname.endsWith('/data');
+  const isBotsTab = location.pathname.endsWith('/bots');
   const isConnectivityTab = location.pathname.endsWith('/connectivity');
   const isSettingsTab = location.pathname.endsWith('/settings');
 
@@ -88,8 +120,43 @@ export default function ExchangeIntegrationPage() {
   const [auditTrailEnabled, setAuditTrailEnabled] = useState(true);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [defaultEnvironment, setDefaultEnvironment] = useState('live');
+  const [workspaceInput, setWorkspaceInput] = useState(() => getWorkspaceId() || DEFAULT_WORKSPACE_ID);
+  const [bots, setBots] = useState<TradeBotRow[]>([]);
+  const [marketBots, setMarketBots] = useState<MarketBotSummary[]>([]);
+  const [rentals, setRentals] = useState<Rental[]>([]);
+  const [loadingBots, setLoadingBots] = useState(false);
+  const [botsError, setBotsError] = useState('');
+  const [botQuery, setBotQuery] = useState('');
+  const [lastBotsLoadedAt, setLastBotsLoadedAt] = useState<string | null>(null);
 
   const title = useMemo(() => (config ? `${config.name} Integration` : 'Integration'), [config]);
+  const activeWorkspace = useMemo(() => getWorkspaceId() || '', [workspaceInput, lastBotsLoadedAt]);
+  const filteredBots = useMemo(() => {
+    const q = botQuery.trim().toLowerCase();
+    if (!q) return bots;
+    return bots.filter((bot) => {
+      const text = [bot.name, bot.kind, bot.description || '', bot.latestVersion?.status || '', bot.latestVersion?.language || '']
+        .join(' ')
+        .toLowerCase();
+      return text.includes(q);
+    });
+  }, [bots, botQuery]);
+  const activeRentals = useMemo(
+    () =>
+      rentals.filter((rental) => {
+        const status = (rental.status || '').toLowerCase();
+        return status === 'active' || status === 'running';
+      }),
+    [rentals]
+  );
+  const exchangeRentals = useMemo(
+    () => rentals.filter((rental) => (rental.exchangeAccount?.venue || '').toLowerCase() === (exchangeId || '').toLowerCase()),
+    [rentals, exchangeId]
+  );
+  const totalInstances = useMemo(
+    () => bots.reduce((sum, bot) => sum + Number(bot.counts?.instances || 0), 0),
+    [bots]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -115,6 +182,29 @@ export default function ExchangeIntegrationPage() {
       mounted = false;
     };
   }, [config, exchangeId]);
+
+  const loadBots = async () => {
+    setLoadingBots(true);
+    setBotsError('');
+    try {
+      const [botsRes, marketRes, rentalsRes] = await Promise.all([listBots(), listMarketBots(), listRentals()]);
+      setBots((botsRes.items || []) as TradeBotRow[]);
+      setMarketBots(marketRes.items || []);
+      setRentals(rentalsRes.items || []);
+      setLastBotsLoadedAt(new Date().toISOString());
+    } catch (err: any) {
+      setBotsError(err?.message || 'Failed to load trade bots');
+      setBots([]);
+      setMarketBots([]);
+      setRentals([]);
+    } finally {
+      setLoadingBots(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBots();
+  }, [exchangeId]);
 
   if (!config) {
     return (
@@ -198,6 +288,13 @@ export default function ExchangeIntegrationPage() {
     } finally {
       setTesting(false);
     }
+  }
+
+  async function handleApplyWorkspace() {
+    const next = workspaceInput.trim();
+    if (!next) return;
+    setWorkspaceId(next);
+    await loadBots();
   }
 
   function canUnlockSecrets() {
@@ -295,7 +392,7 @@ export default function ExchangeIntegrationPage() {
     URL.revokeObjectURL(url);
   }
 
-  const activeTab = isDataTab ? 'data' : isConnectivityTab ? 'connectivity' : isSettingsTab ? 'settings' : 'overview';
+  const activeTab = isBotsTab ? 'bots' : isDataTab ? 'data' : isConnectivityTab ? 'connectivity' : isSettingsTab ? 'settings' : 'overview';
   const basePath = `/platform/integrations/${exchangeId}`;
   const venueLabel = config.name || 'Exchange';
 
@@ -317,7 +414,40 @@ export default function ExchangeIntegrationPage() {
         />
       )}
 
-      {activeTab === 'overview' && null}
+      {activeTab === 'overview' && (
+        <IntegrationOverviewSection
+          exchangeName={config.name}
+          integrationStatus={integrationStatus}
+          linkedCredentials={savedCreds.length}
+          botsCount={bots.length}
+          exchangeRentalsCount={exchangeRentals.length}
+          basePath={basePath}
+        />
+      )}
+
+      {activeTab === 'bots' && (
+        <ExchangeTradeBotsSection
+          exchangeName={config.name}
+          exchangeId={exchangeId || ''}
+          workspaceInput={workspaceInput}
+          setWorkspaceInput={setWorkspaceInput}
+          activeWorkspace={activeWorkspace}
+          bots={filteredBots}
+          marketBots={marketBots}
+          rentals={rentals}
+          exchangeRentals={exchangeRentals}
+          loadingBots={loadingBots}
+          botsError={botsError}
+          botQuery={botQuery}
+          setBotQuery={setBotQuery}
+          totalInstances={totalInstances}
+          activeRentalsCount={activeRentals.length}
+          lastBotsLoadedAt={lastBotsLoadedAt}
+          onApplyWorkspace={handleApplyWorkspace}
+          onRefresh={loadBots}
+          onUseProvidedWorkspace={() => setWorkspaceInput(DEFAULT_WORKSPACE_ID)}
+        />
+      )}
 
       {activeTab === 'connectivity' && (
         <div className="grid gap-6 lg:grid-cols-2 items-start">
@@ -705,6 +835,13 @@ function TabHeader({
       icon: <img src="/icons/hub.svg" alt="Overview" className="h-6 w-6 opacity-80" style={{ filter: 'invert(1) brightness(0.85)' }} />
     },
     {
+      key: 'bots',
+      code: 'BT',
+      label: 'Trade Bots',
+      to: `${basePath}/bots`,
+      icon: <img src="/icons/smart-toy.svg" alt="Trade Bots" className="h-6 w-6 opacity-80" style={{ filter: 'invert(1) brightness(0.85)' }} />
+    },
+    {
       key: 'connectivity',
       code: 'CN',
       label: 'Connectivity',
@@ -966,6 +1103,313 @@ function DataSection({
         )}
       </div>
     </section>
+  );
+}
+
+function IntegrationOverviewSection({
+  exchangeName,
+  integrationStatus,
+  linkedCredentials,
+  botsCount,
+  exchangeRentalsCount,
+  basePath
+}: {
+  exchangeName: string;
+  integrationStatus: string | null;
+  linkedCredentials: number;
+  botsCount: number;
+  exchangeRentalsCount: number;
+  basePath: string;
+}) {
+  const status = (integrationStatus || 'pending').toLowerCase();
+  const statusLabel = integrationStatus || 'pending';
+  const statusClass =
+    status === 'connected'
+      ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+      : status === 'error'
+        ? 'border-rose-400/40 bg-rose-500/10 text-rose-200'
+        : 'border-amber-300/40 bg-amber-500/10 text-amber-100';
+
+  return (
+    <section className="space-y-6">
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-2">
+            <p className="section-label">Integration control</p>
+            <h3 className="text-2xl font-semibold text-main">{exchangeName} execution lane</h3>
+            <p className="text-sm text-gray-300 max-w-3xl">
+              Trade bot deployment now lives directly under this exchange integration. Use the Bots tab to manage workspace bots,
+              marketplace visibility, and rentals for this venue.
+            </p>
+          </div>
+          <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${statusClass}`}>
+            {statusLabel}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <StatCardSimple label="Linked credentials" value={String(linkedCredentials)} helper="Secured key pairs" />
+          <StatCardSimple label="Workspace bots" value={String(botsCount)} helper="Available in this workspace" />
+          <StatCardSimple label="Venue rentals" value={String(exchangeRentalsCount)} helper="Mapped to this exchange" />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Link to={`${basePath}/bots`} className="btn btn-white-animated btn-small">
+            Open Trade Bots
+          </Link>
+          <Link to={`${basePath}/connectivity`} className="btn btn-secondary btn-small">
+            View Connectivity
+          </Link>
+          <Link to={`${basePath}/data`} className="text-xs uppercase tracking-[0.22em] text-gray-400">
+            Manage credentials →
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExchangeTradeBotsSection({
+  exchangeName,
+  exchangeId,
+  workspaceInput,
+  setWorkspaceInput,
+  activeWorkspace,
+  bots,
+  marketBots,
+  rentals,
+  exchangeRentals,
+  loadingBots,
+  botsError,
+  botQuery,
+  setBotQuery,
+  totalInstances,
+  activeRentalsCount,
+  lastBotsLoadedAt,
+  onApplyWorkspace,
+  onRefresh,
+  onUseProvidedWorkspace
+}: {
+  exchangeName: string;
+  exchangeId: string;
+  workspaceInput: string;
+  setWorkspaceInput: (value: string) => void;
+  activeWorkspace: string;
+  bots: TradeBotRow[];
+  marketBots: MarketBotSummary[];
+  rentals: Rental[];
+  exchangeRentals: Rental[];
+  loadingBots: boolean;
+  botsError: string;
+  botQuery: string;
+  setBotQuery: (value: string) => void;
+  totalInstances: number;
+  activeRentalsCount: number;
+  lastBotsLoadedAt: string | null;
+  onApplyWorkspace: () => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onUseProvidedWorkspace: () => void;
+}) {
+  return (
+    <section className="space-y-6">
+      <section className="relative overflow-hidden rounded-3xl border border-sky-300/20 bg-gradient-to-br from-[#07152f] via-[#0d1f3d] to-[#0b2c4e] p-5 shadow-[0_18px_70px_rgba(14,130,255,0.2)]">
+        <div className="pointer-events-none absolute -right-14 -top-16 h-48 w-48 rounded-full bg-sky-400/15 blur-3xl" />
+        <div className="pointer-events-none absolute -left-14 bottom-[-74px] h-40 w-40 rounded-full bg-blue-300/12 blur-3xl" />
+        <div className="relative space-y-4">
+          <header className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.26em] text-sky-100">Integrations · {exchangeName} · Trade Bots</p>
+            <h2 className="text-2xl font-semibold text-white">Workspace bots and marketplace execution</h2>
+            <p className="text-sm text-sky-100/85 max-w-3xl">
+              All bot controls are scoped under this exchange page. Choose workspace, inspect live bot inventory, and track rentals tied to {exchangeName}.
+            </p>
+          </header>
+          <div className="grid gap-3 md:grid-cols-4">
+            <BotMetric title="Workspace Bots" value={String(bots.length)} />
+            <BotMetric title="Instances" value={String(totalInstances)} />
+            <BotMetric title="Marketplace Bots" value={String(marketBots.length)} />
+            <BotMetric title="Active Rentals" value={String(activeRentalsCount)} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_auto]">
+            <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.14em] text-sky-100/80">
+              Workspace ID
+              <input
+                className="rounded-xl border border-white/20 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-sky-300/70"
+                value={workspaceInput}
+                onChange={(event) => setWorkspaceInput(event.target.value)}
+                placeholder="workspace UUID"
+              />
+            </label>
+            <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-sky-100/85">
+              <p className="uppercase tracking-[0.16em] text-sky-200/70">Current workspace</p>
+              <p className="mt-1 break-all font-mono text-[11px]">{activeWorkspace || 'not-set'}</p>
+              <button
+                type="button"
+                className="mt-2 rounded-lg border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-sky-100"
+                onClick={onUseProvidedWorkspace}
+              >
+                Use Provided Workspace
+              </button>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={onApplyWorkspace}
+                className="h-[42px] rounded-xl border border-sky-300/45 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 hover:bg-sky-500/35"
+              >
+                Apply + Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="card-shell space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="section-label">Workspace Bots</p>
+            <p className="text-sm text-gray-300">Live data from `/api/v1/trade-bots/:workspaceId/bots`.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100"
+              placeholder="Search bot name/status"
+              value={botQuery}
+              onChange={(event) => setBotQuery(event.target.value)}
+            />
+            <button
+              type="button"
+              className="rounded-xl border border-white/15 px-3 py-2 text-xs uppercase tracking-[0.18em] text-gray-200"
+              onClick={onRefresh}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {botsError && (
+          <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+            {botsError}
+          </div>
+        )}
+
+        {loadingBots && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
+        {!loadingBots && !botsError && bots.length === 0 && (
+          <p className="text-sm text-gray-400">No bots found for this workspace.</p>
+        )}
+
+        {!loadingBots && bots.length > 0 && (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {bots.map((bot) => (
+              <article
+                key={bot.id}
+                className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-sky-300/40 hover:bg-sky-500/10"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-semibold text-white">{bot.name}</h3>
+                    <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
+                  </div>
+                  <span className="rounded-lg border border-sky-300/35 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-sky-100">
+                    {bot.latestVersion?.status || 'unknown'}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-gray-300">{bot.description || 'No description'}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
+                  <BotInfo label="Version" value={versionText(bot)} mono />
+                  <BotInfo label="Updated" value={formatDate(bot.updatedAt)} />
+                  <BotInfo label="Instances" value={String(bot.counts?.instances || 0)} />
+                  <BotInfo label="Orders" value={String(bot.counts?.orders || 0)} />
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[11px] text-gray-500">
+          Last loaded: {formatDate(lastBotsLoadedAt)} • Workspace: {activeWorkspace || 'not-set'} • Exchange: {exchangeId.toUpperCase()}
+        </p>
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="card-shell space-y-3">
+          <div>
+            <p className="section-label">Marketplace Snapshot</p>
+            <p className="text-sm text-gray-300">Published bots visible to this workspace.</p>
+          </div>
+          {marketBots.length === 0 ? (
+            <p className="text-sm text-gray-400">No marketplace bots available.</p>
+          ) : (
+            <div className="space-y-2">
+              {marketBots.map((bot) => (
+                <div key={bot.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-white">{bot.name}</p>
+                    <p className="text-xs text-gray-400">{bot.workspace?.name || '—'}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-300">
+                    Plans: {bot.plans?.length || 0} • Updated: {formatDate(bot.updatedAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          <Link
+            to="/market"
+            className="inline-flex rounded-xl border border-sky-300/40 bg-sky-500/15 px-3 py-2 text-xs uppercase tracking-[0.16em] text-sky-100"
+          >
+            Open Marketplace
+          </Link>
+        </section>
+
+        <section className="card-shell space-y-3">
+          <div>
+            <p className="section-label">Rental Status</p>
+            <p className="text-sm text-gray-300">Rentals filtered to {exchangeName} where exchange account metadata is available.</p>
+          </div>
+          {rentals.length === 0 ? (
+            <p className="text-sm text-gray-400">No rentals found for this workspace.</p>
+          ) : exchangeRentals.length === 0 ? (
+            <p className="text-sm text-gray-400">No rentals currently mapped to this exchange.</p>
+          ) : (
+            <div className="space-y-2">
+              {exchangeRentals.slice(0, 6).map((rental) => (
+                <div key={rental.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-white">{rental.bot?.name || rental.botId}</p>
+                    <span className="text-xs uppercase tracking-[0.14em] text-gray-300">{rental.status}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Expires {formatDate(rental.expiresAt)} • Instance {rental.botInstanceId || 'provisioning'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          <Link
+            to="/market/rentals"
+            className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-gray-200"
+          >
+            Open Rentals
+          </Link>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function BotMetric({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs text-sky-100">
+      <p className="uppercase tracking-[0.16em] text-sky-200/80">{title}</p>
+      <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function BotInfo({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">{label}</p>
+      <p className={mono ? 'mt-1 font-mono text-[11px] text-gray-100' : 'mt-1 text-[11px] text-gray-100'}>{value}</p>
+    </div>
   );
 }
 
