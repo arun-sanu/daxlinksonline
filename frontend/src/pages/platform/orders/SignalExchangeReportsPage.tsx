@@ -175,7 +175,7 @@ export default function SignalExchangeReportsPage() {
   );
 
   return (
-    <div className="layout-container pt-16 pb-24 space-y-6">
+    <div className="layout-container orders-page reports-page pt-16 pb-24 space-y-6">
       <header className="space-y-2">
         <p className="section-label">Platform · Orders · Reports</p>
         <h1 className="headline text-3xl">Signal vs Exchange reports</h1>
@@ -262,7 +262,7 @@ export default function SignalExchangeReportsPage() {
           ))}
         </div>
         {reportError && <p className="text-sm text-rose-300">{reportError}</p>}
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-4">
           <div className="rounded-2xl border border-white/8 bg-white/5">
             <div className="border-b border-white/10 px-4 py-3">
               <p className="text-xs uppercase tracking-[0.18em] text-gray-400">TradingView signals</p>
@@ -363,7 +363,7 @@ export default function SignalExchangeReportsPage() {
                     reportRows.map((row) => (
                       <tr key={`exchange-${row.key}`} className="border-t border-white/5">
                         <td className="px-3 py-2 uppercase">
-                          <span className={`inline-flex rounded-md border px-2 py-1 ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
+                          <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none tracking-[0.08em] ${tradeStatusBadge(row.exchange.tradeStatus)} ${tradeStatusClass(row.exchange.tradeStatus)}`}>
                             {row.exchange.tradeStatus || '—'}
                           </span>
                         </td>
@@ -415,24 +415,20 @@ export default function SignalExchangeReportsPage() {
       </article>
 
       {selectedSizingRow?.sizing?.sizingDebug && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-4xl">
-            <SizingDebugCard
-              sizingDebug={selectedSizingRow.sizing.sizingDebug}
-              title="Sizing details"
-              subtitle={`${selectedSizingRow.signal?.symbol || '—'} · ${selectedSizingRow.exchange?.side || '—'} · ${selectedSizingRow.exchange?.tradeStatus || '—'}`}
-              extra={(
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small btn-rect"
-                  onClick={() => setSelectedSizingRow(null)}
-                >
-                  Close
-                </button>
-              )}
-            />
-          </div>
-        </div>
+        <SizingDebugCard
+          sizingDebug={selectedSizingRow.sizing.sizingDebug}
+          title="Sizing details"
+          subtitle={`${selectedSizingRow.signal?.symbol || '—'} · ${selectedSizingRow.exchange?.side || '—'} · ${selectedSizingRow.exchange?.tradeStatus || '—'}`}
+          extra={(
+            <button
+              type="button"
+              className="btn btn-secondary btn-small btn-rect"
+              onClick={() => setSelectedSizingRow(null)}
+            >
+              Close
+            </button>
+          )}
+        />
       )}
     </div>
   );
