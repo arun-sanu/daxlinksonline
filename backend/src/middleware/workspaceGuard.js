@@ -13,7 +13,11 @@ export async function guard(req, res, next) {
       where: { id: workspaceId }
     });
 
-    if (!ws || (ws.ownerId && ws.ownerId !== req.user.id)) {
+    const isSuperAdmin = Boolean(req.user?.isSuperAdmin);
+    if (!ws) {
+      return res.status(403).json({ error: 'Not your workspace' });
+    }
+    if (!isSuperAdmin && ws.ownerId && ws.ownerId !== req.user.id) {
       return res.status(403).json({ error: 'Not your workspace' });
     }
 
