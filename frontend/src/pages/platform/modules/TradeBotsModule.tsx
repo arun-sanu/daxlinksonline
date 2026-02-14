@@ -470,7 +470,7 @@ export default function TradeBotsModule() {
             <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
             <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
           </div>
-          <ConnectivityMindmap bots={bots} />
+          <ConnectivityMindmap bots={bots} botLinks={botLinks} />
         </section>
       )}
 
@@ -803,7 +803,9 @@ export default function TradeBotsModule() {
 
 type BotConnectivityStatus = 'online' | 'idle' | 'issue';
 
-function botConnectivityStatus(bot: TradeBotRow): BotConnectivityStatus {
+function botConnectivityStatus(bot: TradeBotRow, link?: BotConnectivityLink): BotConnectivityStatus {
+  const hasBotConnectivityLink = Boolean(link?.webhookUrl && link?.integrationId);
+  if (hasBotConnectivityLink) return 'online';
   const status = String(bot.latestVersion?.status || '').toLowerCase();
   const instances = Number(bot.counts?.instances || 0);
   if (['error', 'failed', 'rejected', 'disabled'].includes(status)) return 'issue';
@@ -823,19 +825,34 @@ function statusLabel(status: BotConnectivityStatus) {
   return 'idle';
 }
 
-function ConnectivityMindmap({ bots }: { bots: TradeBotRow[] }) {
-  const nodes = bots.slice(0, 6).map((bot) => ({
-    id: bot.id,
-    name: bot.name,
-    status: botConnectivityStatus(bot)
-  }));
+function ConnectivityMindmap({
+  bots,
+  botLinks
+}: {
+  bots: TradeBotRow[];
+  botLinks: Record<string, BotConnectivityLink>;
+}) {
+  const nodes = bots
+    .map((bot) => {
+      const link = botLinks[bot.id];
+      const connected = Boolean(link?.webhookUrl && link?.integrationId);
+      return {
+        id: bot.id,
+        name: bot.name,
+        connected,
+        status: botConnectivityStatus(bot, link)
+      };
+    })
+    .sort((a, b) => Number(b.connected) - Number(a.connected))
+    .slice(0, 6);
+  const connectedCount = nodes.filter((node) => node.connected).length;
 
   return (
     <div className="card-shell space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="section-label">Connectivity Map</p>
-          <p className="text-sm text-gray-300">Quick topology view for bot connectivity and readiness.</p>
+          <p className="text-sm text-gray-300">Quick topology view for bot connectivity and readiness. {connectedCount} linked bot(s) visible.</p>
         </div>
       </div>
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
