@@ -755,7 +755,7 @@ export default function TradeBotsModule() {
                 <h3 className="text-2xl font-semibold text-main">{selectedBot.name}</h3>
                 <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <div className="rounded-xl border border-white/15 bg-black/45 p-3">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
                     <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
@@ -776,6 +776,24 @@ export default function TradeBotsModule() {
                     <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
                       {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
                     </span>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Market filters</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {marketFilters ? `minNotional ${formatDecimal(marketFilters.minNotional)}` : 'not pulled'}
+                    </p>
+                    <p className="text-[11px] text-gray-400">
+                      {marketFilters ? `step ${formatDecimal(marketFilters.stepSize, 12)}` : 'link integration + pull'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Available balance</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {symbolAssets.quoteAsset || 'quote'} {formatDecimal(quoteAssetBalance?.free)}
+                    </p>
+                    <p className="text-[11px] text-gray-400">
+                      {symbolAssets.baseAsset || 'base'} {formatDecimal(baseAssetBalance?.free)}
+                    </p>
                   </div>
                 </div>
               </div>
