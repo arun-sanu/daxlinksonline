@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { listBots, listMarketBots, listRentals } from '../../../api/tradeBots';
-import type { Bot, MarketBotSummary, Rental } from '../../../api/types';
+import { listBots, listRentals } from '../../../api/tradeBots';
+import type { Bot, Rental } from '../../../api/types';
 
 type TradeBotRow = Bot & {
   latestVersion?: { id?: string | null; status?: string | null; language?: string | null } | null;
@@ -45,10 +45,10 @@ export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [workspaceInput, setWorkspaceInput] = useState(() => getWorkspaceId() || DEFAULT_WORKSPACE_ID);
   const [bots, setBots] = useState<TradeBotRow[]>([]);
-  const [marketBots, setMarketBots] = useState<MarketBotSummary[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [botsError, setBotsError] = useState('');
+  const [rentalsError, setRentalsError] = useState('');
   const [query, setQuery] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [automationEnabled, setAutomationEnabled] = useState(true);
@@ -80,34 +80,46 @@ export default function TradeBotsModule() {
     [rentals]
   );
 
-  const load = async () => {
+  const load = async (targetWorkspaceId?: string) => {
+    const ws = (targetWorkspaceId || workspaceInput || '').trim() || DEFAULT_WORKSPACE_ID;
+    setWorkspaceId(ws);
     setLoading(true);
-    setError('');
-    try {
-      const [botsRes, marketRes, rentalsRes] = await Promise.all([listBots(), listMarketBots(), listRentals()]);
-      setBots((botsRes.items || []) as TradeBotRow[]);
-      setMarketBots(marketRes.items || []);
-      setRentals(rentalsRes.items || []);
-      setLastLoadedAt(new Date().toISOString());
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load trade bot module data.');
+    setBotsError('');
+    setRentalsError('');
+    const [botsResult, rentalsResult] = await Promise.allSettled([listBots(), listRentals()]);
+
+    if (botsResult.status === 'fulfilled') {
+      setBots((botsResult.value.items || []) as TradeBotRow[]);
+    } else {
       setBots([]);
-      setMarketBots([]);
-      setRentals([]);
-    } finally {
-      setLoading(false);
+      setBotsError(botsResult.reason?.message || 'Failed to load workspace bots.');
     }
+
+    if (rentalsResult.status === 'fulfilled') {
+      setRentals(rentalsResult.value.items || []);
+    } else {
+      setRentals([]);
+      setRentalsError(rentalsResult.reason?.message || 'Failed to load rentals.');
+    }
+
+    setLastLoadedAt(new Date().toISOString());
+    setLoading(false);
   };
 
   useEffect(() => {
-    load();
+    const existing = getWorkspaceId();
+    const ws = existing || workspaceInput || DEFAULT_WORKSPACE_ID;
+    if (!existing) {
+      setWorkspaceId(ws);
+    }
+    load(ws);
   }, []);
 
   const handleApplyWorkspace = async () => {
     const next = workspaceInput.trim();
     if (!next) return;
     setWorkspaceId(next);
-    await load();
+    await load(next);
   };
 
   const tabs: { key: TabKey; label: string; icon: string }[] = [
@@ -123,7 +135,6 @@ export default function TradeBotsModule() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="section-label">Trade Bots · Global</p>
-            <h2 className="headline text-3xl">Trade Bots Integration</h2>
             <p className="text-sm text-gray-300 max-w-3xl">
               Workspace bots, marketplace listings, and rentals in the same visual language as exchange integration pages.
             </p>
@@ -161,11 +172,12 @@ export default function TradeBotsModule() {
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Workspace Bots" value={String(bots.length)} helper="Loaded bots" />
         <MetricCard label="Active Instances" value={String(totalInstances)} helper="Across versions" />
-        <MetricCard label="Marketplace" value={String(marketBots.length)} helper="Published bots" />
+        <MetricCard label="Total Rentals" value={String(rentals.length)} helper="Workspace rentals" />
         <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
       </section>
 
-      {error && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</div>}
+      {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
+      {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
 
       {activeTab === 'overview' && (
         <section className="card-shell space-y-4">
@@ -184,7 +196,7 @@ export default function TradeBotsModule() {
             <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
           </div>
           <p className="text-sm text-gray-300">
-            Use the tabs above to manage workspace bots, inspect marketplace listings, and review rentals in detail.
+            Use the tabs above to manage workspace bots and review rentals. Marketplace stays on the dedicated Market page.
           </p>
         </section>
       )}
@@ -242,7 +254,7 @@ export default function TradeBotsModule() {
           </div>
 
           {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
-          {!loading && filteredBots.length === 0 && !error && <p className="text-sm text-gray-400">No bots found for this workspace.</p>}
+          {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found for this workspace.</p>}
           {!loading && filteredBots.length > 0 && (
             <div className="grid gap-3 lg:grid-cols-2">
               {filteredBots.map((bot) => (
@@ -277,31 +289,16 @@ export default function TradeBotsModule() {
         <section className="card-shell space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="section-label">Marketplace Snapshot</p>
-              <p className="text-sm text-gray-300">Published bots currently visible to this workspace.</p>
+              <p className="section-label">Marketplace</p>
+              <p className="text-sm text-gray-300">Marketplace is managed on its dedicated page.</p>
             </div>
             <Link to="/market" className="btn btn-white-animated btn-small">
               Open Marketplace
             </Link>
           </div>
-          {loading && <p className="text-sm text-gray-400">Loading marketplace bots...</p>}
-          {!loading && marketBots.length === 0 && <p className="text-sm text-gray-400">No marketplace bots available.</p>}
-          {!loading && marketBots.length > 0 && (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {marketBots.map((bot) => (
-                <div key={bot.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold text-white">{bot.name}</p>
-                    <p className="text-xs text-gray-400">{bot.workspace?.name || '—'}</p>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-300">
-                    Plans: {bot.plans?.length || 0} • Updated: {formatDate(bot.updatedAt)}
-                  </p>
-                  <p className="mt-2 text-xs text-gray-400">{bot.description || 'No description provided.'}</p>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-300">
+            Open <span className="text-primary-200">Market</span> to browse and rent published bots.
+          </div>
         </section>
       )}
 
