@@ -25,6 +25,27 @@ type PreviewSide = 'buy' | 'sell';
 type ReferencePriceSource = 'last' | 'mark' | 'mid';
 type SignalSource = 'tradingview' | 'internal' | 'api';
 
+type PineInputSetting = {
+  key: string;
+  type: string;
+  title: string | null;
+  defaultValue: string | number | boolean | null;
+  raw: string;
+};
+
+type PineScriptAnalysis = {
+  scriptType: 'strategy' | 'indicator' | 'unknown';
+  name: string | null;
+  interval: string | null;
+  indicators: string[];
+  functions: string[];
+  actions: string[];
+  indicatorSettings: PineInputSetting[];
+  notes: string[];
+  sourceDigest: string;
+  generatedAt: string;
+};
+
 type BotTradingRules = {
   symbol: string;
   executionFunction: ExecutionFunction;
@@ -56,6 +77,7 @@ type BotTradingRules = {
   dailyLossCapEnabled: boolean;
   dailyLossLimitPct: number;
   dailyResetTimeUtc: string;
+  pineAnalysis: PineScriptAnalysis | null;
 };
 
 const DEFAULT_TRADING_RULES: BotTradingRules = {
@@ -88,7 +110,8 @@ const DEFAULT_TRADING_RULES: BotTradingRules = {
   cancelIfNotFilledSec: 20,
   dailyLossCapEnabled: false,
   dailyLossLimitPct: 5,
-  dailyResetTimeUtc: '00:00'
+  dailyResetTimeUtc: '00:00',
+  pineAnalysis: null
 };
 
 function getWorkspaceId() {
@@ -228,6 +251,96 @@ function normalizeNumber(value: unknown, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function sanitizePineInputSettings(value: unknown): PineInputSetting[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      if (!row || typeof row !== 'object') return null;
+      const key = String((row as any).key || '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, 120);
+      if (!key) return null;
+      const type = String((row as any).type || 'unknown').trim().slice(0, 60);
+      const titleRaw = (row as any).title;
+      const title = titleRaw === null || titleRaw === undefined ? null : String(titleRaw).trim().slice(0, 180);
+      const defaultValueRaw = (row as any).defaultValue;
+      const defaultValue =
+        typeof defaultValueRaw === 'number' || typeof defaultValueRaw === 'boolean' || typeof defaultValueRaw === 'string'
+          ? defaultValueRaw
+          : null;
+      const raw = String((row as any).raw || '').slice(0, 240);
+      return {
+        key,
+        type,
+        title,
+        defaultValue,
+        raw
+      };
+    })
+    .filter(Boolean) as PineInputSetting[];
+}
+
+function sanitizePineAnalysis(value: unknown): PineScriptAnalysis | null {
+  if (!value || typeof value !== 'object') return null;
+  const scriptTypeRaw = String((value as any).scriptType || 'unknown').trim().toLowerCase();
+  const scriptType: PineScriptAnalysis['scriptType'] =
+    scriptTypeRaw === 'strategy' || scriptTypeRaw === 'indicator' ? (scriptTypeRaw as PineScriptAnalysis['scriptType']) : 'unknown';
+  const nameRaw = (value as any).name;
+  const name = nameRaw === null || nameRaw === undefined ? null : String(nameRaw).trim().slice(0, 180);
+  const intervalRaw = (value as any).interval;
+  const interval = intervalRaw === null || intervalRaw === undefined ? null : normalizeTimeframe(String(intervalRaw));
+  const indicators = Array.isArray((value as any).indicators)
+    ? Array.from(
+        new Set(
+          (value as any).indicators
+            .map((entry: unknown) => String(entry || '').trim().toLowerCase())
+            .filter(Boolean)
+        )
+      ).slice(0, 80)
+    : [];
+  const functions = Array.isArray((value as any).functions)
+    ? Array.from(
+        new Set(
+          (value as any).functions
+            .map((entry: unknown) => String(entry || '').trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 80)
+    : [];
+  const actions = Array.isArray((value as any).actions)
+    ? Array.from(
+        new Set(
+          (value as any).actions
+            .map((entry: unknown) => String(entry || '').trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 80)
+    : [];
+  const notes = Array.isArray((value as any).notes)
+    ? (value as any).notes
+        .map((entry: unknown) => String(entry || '').trim())
+        .filter(Boolean)
+        .slice(0, 40)
+    : [];
+  const sourceDigest = String((value as any).sourceDigest || '').trim().slice(0, 64);
+  const generatedAtRaw = String((value as any).generatedAt || '').trim();
+  const generatedAt = generatedAtRaw && !Number.isNaN(new Date(generatedAtRaw).getTime()) ? generatedAtRaw : new Date().toISOString();
+
+  return {
+    scriptType,
+    name,
+    interval,
+    indicators,
+    functions,
+    actions,
+    indicatorSettings: sanitizePineInputSettings((value as any).indicatorSettings),
+    notes,
+    sourceDigest: sourceDigest || hashSignalKey(`${scriptType}:${name || ''}:${interval || ''}`).slice(4),
+    generatedAt
+  };
+}
+
 function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined): BotTradingRules {
   const merged = {
     ...DEFAULT_TRADING_RULES,
@@ -288,7 +401,8 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
     dailyResetTimeUtc:
       /^\d{2}:\d{2}$/.test(String(merged.dailyResetTimeUtc || '').trim())
         ? String(merged.dailyResetTimeUtc).trim()
-        : DEFAULT_TRADING_RULES.dailyResetTimeUtc
+        : DEFAULT_TRADING_RULES.dailyResetTimeUtc,
+    pineAnalysis: sanitizePineAnalysis(merged.pineAnalysis)
   };
 }
 
@@ -376,6 +490,250 @@ function hashSignalKey(seed: string) {
   return `sig_${normalized.toString(16).padStart(8, '0')}`;
 }
 
+function splitPineArgs(body: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (quote) {
+      current += ch;
+      if (ch === quote && body[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === '\'' || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) args.push(trimmed);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  const tail = current.trim();
+  if (tail) args.push(tail);
+  return args;
+}
+
+function parsePineArgParts(rawArgs: string): { positional: string[]; named: Record<string, string> } {
+  const parts = splitPineArgs(rawArgs);
+  const positional: string[] = [];
+  const named: Record<string, string> = {};
+
+  for (const part of parts) {
+    const eqIndex = part.indexOf('=');
+    if (eqIndex > 0) {
+      const key = part.slice(0, eqIndex).trim();
+      const value = part.slice(eqIndex + 1).trim();
+      if (key) {
+        named[key] = value;
+        continue;
+      }
+    }
+    positional.push(part.trim());
+  }
+  return { positional, named };
+}
+
+function stripPineQuotes(value: string) {
+  const raw = String(value || '').trim();
+  if (!raw) return raw;
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith('\'') && raw.endsWith('\''))) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+function parsePineLiteral(value: string): string | number | boolean | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (/^(true|false)$/i.test(raw)) return /^true$/i.test(raw);
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) return numeric;
+  return stripPineQuotes(raw);
+}
+
+function extractPineInputSettings(source: string): PineInputSetting[] {
+  const settings: PineInputSetting[] = [];
+  const lineRegex = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*input(?:\.([A-Za-z_][A-Za-z0-9_]*))?\s*\((.*)\)\s*$/gm;
+  let match: RegExpExecArray | null = null;
+  while ((match = lineRegex.exec(source))) {
+    const key = String(match[1] || '').trim();
+    const type = String(match[2] || 'generic').trim().toLowerCase();
+    const argsRaw = String(match[3] || '').trim();
+    const { positional, named } = parsePineArgParts(argsRaw);
+    const titleRaw = named.title || named.label || positional.find((part) => /^["']/.test(part)) || null;
+    const defRaw = named.defval || named.default || positional.find((part) => !/^["']/.test(part)) || null;
+    settings.push({
+      key,
+      type,
+      title: titleRaw ? stripPineQuotes(titleRaw) : null,
+      defaultValue: defRaw ? parsePineLiteral(defRaw) : null,
+      raw: match[0].trim()
+    });
+  }
+  return settings;
+}
+
+function extractPineHeader(source: string): {
+  scriptType: PineScriptAnalysis['scriptType'];
+  name: string | null;
+  interval: string | null;
+} {
+  const headerMatch = source.match(/^\s*(strategy|indicator)\s*\(([\s\S]*?)\)\s*$/m);
+  if (!headerMatch) {
+    return { scriptType: 'unknown', name: null, interval: null };
+  }
+  const scriptType = String(headerMatch[1]).toLowerCase() === 'strategy' ? 'strategy' : 'indicator';
+  const argsRaw = String(headerMatch[2] || '');
+  const { positional, named } = parsePineArgParts(argsRaw);
+  const nameRaw = named.title || positional[0] || null;
+  const timeframeRaw = named.timeframe || named.resolution || null;
+  const interval = timeframeRaw ? normalizeTimeframe(stripPineQuotes(timeframeRaw)) : null;
+  return {
+    scriptType,
+    name: nameRaw ? stripPineQuotes(nameRaw) : null,
+    interval
+  };
+}
+
+function extractPineIndicators(source: string): string[] {
+  const indicators = new Set<string>();
+  const regex = /\bta\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(source))) {
+    indicators.add(String(match[1] || '').trim().toLowerCase());
+  }
+  return Array.from(indicators);
+}
+
+function extractPineFunctions(source: string): string[] {
+  const functions = new Set<string>();
+  const customFnRegex = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*=>/gm;
+  let custom: RegExpExecArray | null = null;
+  while ((custom = customFnRegex.exec(source))) {
+    functions.add(String(custom[1] || '').trim());
+  }
+  const builtInRegex = /\b(math|ta|str|array|request|timeframe)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let builtIn: RegExpExecArray | null = null;
+  while ((builtIn = builtInRegex.exec(source))) {
+    functions.add(`${builtIn[1]}.${builtIn[2]}`);
+  }
+  return Array.from(functions);
+}
+
+function extractPineActions(source: string): string[] {
+  const actions = new Set<string>();
+  const regex = /\bstrategy\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(source))) {
+    actions.add(String(match[1] || '').trim().toLowerCase());
+  }
+  return Array.from(actions);
+}
+
+function findPineNumericSetting(settings: PineInputSetting[], patterns: RegExp[]) {
+  for (const item of settings) {
+    const haystack = `${item.key} ${item.title || ''}`.toLowerCase();
+    if (!patterns.some((pattern) => pattern.test(haystack))) continue;
+    if (typeof item.defaultValue === 'number' && Number.isFinite(item.defaultValue)) {
+      return item.defaultValue;
+    }
+  }
+  return null;
+}
+
+function deriveRulesPatchFromPineAnalysis(analysis: PineScriptAnalysis): Partial<BotTradingRules> {
+  const patch: Partial<BotTradingRules> = {
+    pineAnalysis: analysis
+  };
+
+  if (analysis.interval) {
+    patch.signalTimeframe = normalizeTimeframe(analysis.interval);
+  }
+
+  const slPct = findPineNumericSetting(analysis.indicatorSettings, [/stop.*loss/, /\bsl\b/, /loss.*pct/, /sl.*percent/]);
+  const tpPct = findPineNumericSetting(analysis.indicatorSettings, [/take.*profit/, /\btp\b/, /profit.*pct/, /tp.*percent/]);
+  const rr = findPineNumericSetting(analysis.indicatorSettings, [/risk.*reward/, /\brr\b/, /reward.*risk/]);
+  const atrLength = findPineNumericSetting(analysis.indicatorSettings, [/atr.*length/, /\batr.*len\b/, /\blen.*atr\b/]);
+  const atrMultiplier = findPineNumericSetting(analysis.indicatorSettings, [/atr.*mult/, /mult.*atr/, /atr.*factor/]);
+  const dailyLoss = findPineNumericSetting(analysis.indicatorSettings, [/daily.*loss/, /max.*daily.*loss/, /loss.*cap/]);
+  const reinvestment = findPineNumericSetting(analysis.indicatorSettings, [/reinvest/, /investment/, /capital.*alloc/, /equity.*pct/]);
+
+  if (analysis.indicators.includes('atr') && (atrMultiplier || atrLength)) {
+    patch.slType = 'atr_multiplier';
+    if (atrLength && atrLength >= 2) patch.slAtrLength = Math.floor(atrLength);
+    if (atrMultiplier && atrMultiplier > 0) patch.slAtrMultiplier = atrMultiplier;
+  } else if (slPct && slPct > 0) {
+    patch.slType = 'percent';
+    patch.slValue = slPct;
+  }
+
+  if (tpPct && tpPct > 0) {
+    patch.tpType = 'percent';
+    patch.tpValue = tpPct;
+  } else if (rr && rr > 0) {
+    patch.tpType = 'rr';
+    patch.tpValue = rr;
+  }
+
+  if (dailyLoss && dailyLoss > 0) {
+    patch.dailyLossCapEnabled = true;
+    patch.dailyLossLimitPct = dailyLoss;
+  }
+
+  if (reinvestment && reinvestment > 0) {
+    patch.sizingMode = 'balance_pct';
+    patch.allocationValue = Math.max(0, Math.min(100, reinvestment));
+    patch.reinvestmentPct = Math.max(0, Math.min(100, reinvestment));
+  }
+
+  return patch;
+}
+
+function analyzePineScriptSource(source: string): PineScriptAnalysis {
+  const clean = String(source || '').replace(/\r\n/g, '\n').trim();
+  const header = extractPineHeader(clean);
+  const inputSettings = extractPineInputSettings(clean);
+  const indicators = extractPineIndicators(clean);
+  const functions = extractPineFunctions(clean);
+  const actions = extractPineActions(clean);
+  const notes: string[] = [];
+
+  if (!header.name) notes.push('Strategy/indicator title not found.');
+  if (!header.interval) notes.push('No explicit timeframe in script header. Set Signal Timeframe manually if needed.');
+  if (!inputSettings.length) notes.push('No input.* parameters detected.');
+  if (!indicators.length) notes.push('No ta.* indicators detected.');
+
+  return {
+    scriptType: header.scriptType,
+    name: header.name,
+    interval: header.interval,
+    indicators,
+    functions,
+    actions,
+    indicatorSettings: inputSettings,
+    notes,
+    sourceDigest: hashSignalKey(clean).slice(4),
+    generatedAt: new Date().toISOString()
+  };
+}
+
 export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [bots, setBots] = useState<TradeBotRow[]>([]);
@@ -402,6 +760,8 @@ export default function TradeBotsModule() {
   const [exchangeSnapshot, setExchangeSnapshot] = useState<OrderCheckSnapshot | null>(null);
   const [tradingDetailsLoading, setTradingDetailsLoading] = useState(false);
   const [tradingDetailsError, setTradingDetailsError] = useState('');
+  const [pineScriptSource, setPineScriptSource] = useState('');
+  const [pineScriptFileName, setPineScriptFileName] = useState('');
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -460,6 +820,7 @@ export default function TradeBotsModule() {
   const integrationCredentials = integrationDetail?.credentials || [];
   const integrationLogs = integrationDetail?.logs || [];
   const activeRules = botRulesDraft || selectedBotRules;
+  const activePineAnalysis = activeRules?.pineAnalysis || null;
   const signalKeySeed = useMemo(() => {
     if (!activeRules) return '';
     return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
@@ -653,6 +1014,17 @@ export default function TradeBotsModule() {
       },
       meta: {
         signalKeySeed,
+        pineScript: rules.pineAnalysis
+          ? {
+              scriptType: rules.pineAnalysis.scriptType,
+              name: rules.pineAnalysis.name,
+              interval: rules.pineAnalysis.interval,
+              indicators: rules.pineAnalysis.indicators,
+              functions: rules.pineAnalysis.functions,
+              actions: rules.pineAnalysis.actions,
+              indicatorSettings: rules.pineAnalysis.indicatorSettings
+            }
+          : null,
         botId: selectedBot?.id || null,
         integrationId: selectedBotLink.integrationId || null,
         exchangeAccountId: selectedBotLink.exchangeAccountId || null,
@@ -854,6 +1226,8 @@ export default function TradeBotsModule() {
     setTradingDetailsError('');
     setTradingDetailsLoading(false);
     setBotRulesDraft(null);
+    setPineScriptSource('');
+    setPineScriptFileName('');
   };
 
   const loadConnectivityContext = async (botId?: string) => {
@@ -931,6 +1305,51 @@ export default function TradeBotsModule() {
   const handleRefreshTradingDetails = async () => {
     if (!selectedBotLink.integrationId) return;
     await loadTradingDetails(selectedBotLink.integrationId);
+  };
+
+  const handlePineScriptFileSelected = async (event: any) => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setPineScriptSource(String(text || ''));
+      setPineScriptFileName(String(file.name || 'pinescript'));
+      setModalError('');
+      setModalMessage(`Loaded PineScript file: ${file.name}`);
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to read PineScript file.');
+    } finally {
+      if (event?.target) event.target.value = '';
+    }
+  };
+
+  const handleAnalyzePineScript = () => {
+    const source = String(pineScriptSource || '').trim();
+    if (!source) {
+      setModalError('Paste or upload a PineScript before analysis.');
+      return null;
+    }
+    try {
+      const analysis = analyzePineScriptSource(source);
+      updateBotRulesDraft({ pineAnalysis: analysis });
+      setModalError('');
+      setModalMessage(
+        `PineScript analyzed (${analysis.scriptType}${analysis.name ? `: ${analysis.name}` : ''}).`
+      );
+      return analysis;
+    } catch (error: any) {
+      setModalError(error?.message || 'Unable to analyze PineScript.');
+      return null;
+    }
+  };
+
+  const handleApplyPineToRules = () => {
+    const analyzed = handleAnalyzePineScript();
+    if (!analyzed) return;
+    const patch = deriveRulesPatchFromPineAnalysis(analyzed);
+    updateBotRulesDraft(patch);
+    setModalError('');
+    setModalMessage('PineScript insights applied to rule draft. Click "Save Rules" to persist.');
   };
 
   const handleRulesSave = async () => {
@@ -1503,6 +1922,128 @@ export default function TradeBotsModule() {
                   </div>
                 </section>
               </div>
+
+              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">PineScript import</p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Upload or paste PineScript to detect indicators, settings, functions, interval, and auto-fill bot rule draft values.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleAnalyzePineScript}>
+                      Analyze Script
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleApplyPineToRules}>
+                      Apply To Rules
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => {
+                        setPineScriptSource('');
+                        setPineScriptFileName('');
+                        updateBotRulesDraft({ pineAnalysis: null });
+                      }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Upload PineScript (.pine/.txt)
+                      <input
+                        type="file"
+                        accept=".pine,.txt,.pinescript"
+                        onChange={handlePineScriptFileSelected}
+                        className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-200 outline-none file:mr-2 file:rounded file:border-0 file:bg-primary-500/20 file:px-2 file:py-1 file:text-[11px] file:text-primary-100"
+                      />
+                    </label>
+                    {pineScriptFileName && <p className="text-[11px] text-gray-400">Loaded file: {pineScriptFileName}</p>}
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      PineScript Source
+                      <textarea
+                        value={pineScriptSource}
+                        onChange={(event) => setPineScriptSource(event.target.value)}
+                        placeholder="//@version=5 strategy(...)"
+                        className="mt-1 h-52 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-2 text-xs text-gray-100 outline-none"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="space-y-2">
+                    {!activePineAnalysis && (
+                      <div className="rounded-lg border border-white/15 bg-black/35 p-2 text-xs text-gray-400">
+                        No PineScript analysis yet. Upload/paste script and click <span className="text-gray-200">Analyze Script</span>.
+                      </div>
+                    )}
+
+                    {activePineAnalysis && (
+                      <>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <InfoTile label="Script Type" value={activePineAnalysis.scriptType.toUpperCase()} />
+                          <InfoTile label="Script Name" value={activePineAnalysis.name || '—'} />
+                          <InfoTile label="Interval" value={activePineAnalysis.interval || '—'} />
+                          <InfoTile label="Analyzed At" value={formatDate(activePineAnalysis.generatedAt)} />
+                        </div>
+
+                        <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Indicators</p>
+                          <p className="mt-1 text-xs text-gray-200 break-words">
+                            {activePineAnalysis.indicators.length ? activePineAnalysis.indicators.join(', ') : 'none'}
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Functions</p>
+                          <p className="mt-1 text-xs text-gray-200 break-words">
+                            {activePineAnalysis.functions.length ? activePineAnalysis.functions.join(', ') : 'none'}
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Strategy Actions</p>
+                          <p className="mt-1 text-xs text-gray-200 break-words">
+                            {activePineAnalysis.actions.length ? activePineAnalysis.actions.join(', ') : 'none'}
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Indicator Settings / Inputs</p>
+                          <div className="mt-1 max-h-32 overflow-auto space-y-1 pr-1">
+                            {activePineAnalysis.indicatorSettings.length === 0 && (
+                              <p className="text-xs text-gray-400">No input.* settings detected.</p>
+                            )}
+                            {activePineAnalysis.indicatorSettings.map((setting) => (
+                              <div key={`${setting.key}:${setting.type}`} className="flex items-center justify-between gap-2 text-[11px] text-gray-200">
+                                <p className="truncate">{setting.title || setting.key}</p>
+                                <p className="shrink-0 font-mono text-gray-400">
+                                  {setting.type} = {setting.defaultValue === null ? 'null' : String(setting.defaultValue)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {activePineAnalysis.notes.length > 0 && (
+                          <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 p-2">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-amber-200">Analysis Notes</p>
+                            <div className="mt-1 space-y-1 text-xs text-amber-100">
+                              {activePineAnalysis.notes.map((note, idx) => (
+                                <p key={`${idx}:${note}`}>{note}</p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </section>
 
               <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
