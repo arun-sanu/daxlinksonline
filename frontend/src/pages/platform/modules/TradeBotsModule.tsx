@@ -625,7 +625,7 @@ export default function TradeBotsModule() {
       {selectedBot && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-5 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
           <div
-            className="w-full max-w-6xl overflow-hidden rounded-3xl border border-white/20 bg-white/[0.07] shadow-[0_40px_100px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+            className="w-full max-w-6xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
