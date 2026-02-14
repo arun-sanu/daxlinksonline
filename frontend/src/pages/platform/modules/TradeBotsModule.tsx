@@ -15,7 +15,51 @@ type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
+const BOT_RULES_STORAGE_KEY = 'dax_trade_bot_rules_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
+
+type ExecutionFunction = 'live_trading' | 'paper_trading' | 'signal_only';
+type RiskMode = 'balance_pct' | 'fixed_quote';
+type StopType = 'none' | 'percent' | 'absolute' | 'rr';
+type PreviewSide = 'buy' | 'sell';
+
+type BotTradingRules = {
+  symbol: string;
+  executionFunction: ExecutionFunction;
+  orderType: 'market' | 'limit';
+  limitPrice: number | null;
+  riskMode: RiskMode;
+  riskValue: number;
+  minQuoteSpend: number;
+  maxQuoteSpend: number;
+  slType: StopType;
+  slValue: number | null;
+  tpType: StopType;
+  tpValue: number | null;
+  previewSide: PreviewSide;
+  cooldownSeconds: number;
+  maxOpenOrdersPerSymbol: number;
+  dailyLossCapEnabled: boolean;
+};
+
+const DEFAULT_TRADING_RULES: BotTradingRules = {
+  symbol: 'BTCUSDC',
+  executionFunction: 'live_trading',
+  orderType: 'market',
+  limitPrice: null,
+  riskMode: 'balance_pct',
+  riskValue: 1,
+  minQuoteSpend: 1.05,
+  maxQuoteSpend: 50,
+  slType: 'percent',
+  slValue: 2,
+  tpType: 'rr',
+  tpValue: 3,
+  previewSide: 'buy',
+  cooldownSeconds: 30,
+  maxOpenOrdersPerSymbol: 5,
+  dailyLossCapEnabled: false
+};
 
 function getWorkspaceId() {
   try {
@@ -106,6 +150,81 @@ function writeBotLinks(next: Record<string, BotConnectivityLink>) {
   }
 }
 
+function createDefaultTradingRules(symbol = 'BTCUSDC'): BotTradingRules {
+  return {
+    ...DEFAULT_TRADING_RULES,
+    symbol: normalizeSymbol(symbol) || DEFAULT_TRADING_RULES.symbol
+  };
+}
+
+function normalizeNumber(value: unknown, fallback: number) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined): BotTradingRules {
+  const merged = {
+    ...DEFAULT_TRADING_RULES,
+    ...(rules || {})
+  };
+  const minQuoteSpend = Math.max(0, normalizeNumber(merged.minQuoteSpend, DEFAULT_TRADING_RULES.minQuoteSpend));
+  const maxQuoteSpendRaw = Math.max(0, normalizeNumber(merged.maxQuoteSpend, DEFAULT_TRADING_RULES.maxQuoteSpend));
+  const maxQuoteSpend = Math.max(maxQuoteSpendRaw, minQuoteSpend);
+  const orderType = merged.orderType === 'limit' ? 'limit' : 'market';
+  const limitPrice = orderType === 'limit' ? Math.max(0, normalizeNumber(merged.limitPrice, 0)) || null : null;
+  const slType: StopType = ['none', 'percent', 'absolute', 'rr'].includes(String(merged.slType)) ? (merged.slType as StopType) : 'none';
+  const tpType: StopType = ['none', 'percent', 'absolute', 'rr'].includes(String(merged.tpType)) ? (merged.tpType as StopType) : 'none';
+  const riskMode: RiskMode = merged.riskMode === 'fixed_quote' ? 'fixed_quote' : 'balance_pct';
+  const executionFunction: ExecutionFunction =
+    merged.executionFunction === 'paper_trading' || merged.executionFunction === 'signal_only'
+      ? merged.executionFunction
+      : 'live_trading';
+  const previewSide: PreviewSide = merged.previewSide === 'sell' ? 'sell' : 'buy';
+
+  return {
+    symbol: normalizeSymbol(merged.symbol) || DEFAULT_TRADING_RULES.symbol,
+    executionFunction,
+    orderType,
+    limitPrice,
+    riskMode,
+    riskValue: Math.max(0, normalizeNumber(merged.riskValue, DEFAULT_TRADING_RULES.riskValue)),
+    minQuoteSpend,
+    maxQuoteSpend,
+    slType,
+    slValue: slType === 'none' ? null : Math.max(0, normalizeNumber(merged.slValue, 0)) || null,
+    tpType,
+    tpValue: tpType === 'none' ? null : Math.max(0, normalizeNumber(merged.tpValue, 0)) || null,
+    previewSide,
+    cooldownSeconds: Math.max(0, Math.floor(normalizeNumber(merged.cooldownSeconds, DEFAULT_TRADING_RULES.cooldownSeconds))),
+    maxOpenOrdersPerSymbol: Math.max(0, Math.floor(normalizeNumber(merged.maxOpenOrdersPerSymbol, DEFAULT_TRADING_RULES.maxOpenOrdersPerSymbol))),
+    dailyLossCapEnabled: Boolean(merged.dailyLossCapEnabled)
+  };
+}
+
+function readBotTradingRulesMap(): Record<string, BotTradingRules> {
+  try {
+    const raw = localStorage.getItem(BOT_RULES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, BotTradingRules> = {};
+    for (const [botId, value] of Object.entries(parsed)) {
+      out[botId] = sanitizeTradingRules(value as Partial<BotTradingRules>);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeBotTradingRulesMap(next: Record<string, BotTradingRules>) {
+  try {
+    localStorage.setItem(BOT_RULES_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage failures
+  }
+}
+
 function normalizeBotName(name: string) {
   if (String(name || '').trim().toLowerCase() === 'trade-exec-bot') {
     return BOT_CANONICAL_NAME;
@@ -150,6 +269,12 @@ function estimatedBandwidthKbps(bot: TradeBotRow | null, connectedEndpoints: num
   return `${estimate.toFixed(1)} kbps`;
 }
 
+function roundDownToStep(value: number, stepSize: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (!Number.isFinite(stepSize) || stepSize <= 0) return value;
+  return Math.floor(value / stepSize) * stepSize;
+}
+
 export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [bots, setBots] = useState<TradeBotRow[]>([]);
@@ -169,8 +294,10 @@ export default function TradeBotsModule() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [testingIntegrationId, setTestingIntegrationId] = useState<string | null>(null);
   const [botLinks, setBotLinks] = useState<Record<string, BotConnectivityLink>>(() => readBotLinks());
+  const [botRulesMap, setBotRulesMap] = useState<Record<string, BotTradingRules>>(() => readBotTradingRulesMap());
   const [integrationDetail, setIntegrationDetail] = useState<IntegrationDetail>(null);
   const [tradingSymbol, setTradingSymbol] = useState('BTCUSDC');
+  const [botRulesDraft, setBotRulesDraft] = useState<BotTradingRules | null>(null);
   const [exchangeSnapshot, setExchangeSnapshot] = useState<OrderCheckSnapshot | null>(null);
   const [tradingDetailsLoading, setTradingDetailsLoading] = useState(false);
   const [tradingDetailsError, setTradingDetailsError] = useState('');
@@ -179,6 +306,11 @@ export default function TradeBotsModule() {
     if (!selectedBot) return {};
     return botLinks[selectedBot.id] || {};
   }, [botLinks, selectedBot]);
+
+  const selectedBotRules = useMemo(() => {
+    if (!selectedBot) return createDefaultTradingRules(tradingSymbol);
+    return botRulesMap[selectedBot.id] || createDefaultTradingRules(tradingSymbol);
+  }, [botRulesMap, selectedBot, tradingSymbol]);
 
   const webhookUrls = useMemo(() => collectWebhookUrls(webhookProfile), [webhookProfile]);
 
@@ -224,6 +356,94 @@ export default function TradeBotsModule() {
   const tradesSummary = exchangeSnapshot?.didTradeHappen?.source?.myTrades?.data || null;
   const integrationCredentials = integrationDetail?.credentials || [];
   const integrationLogs = integrationDetail?.logs || [];
+  const activeRules = botRulesDraft || selectedBotRules;
+  const rulesPreview = useMemo(() => {
+    const rules = activeRules;
+    if (!rules) return null;
+
+    const freeQuote = Number(quoteAssetBalance?.free || 0);
+    const freeBase = Number(baseAssetBalance?.free || 0);
+    const refPrice = Number(marketTicker?.price || 0);
+    const stepSize = Number(marketFilters?.stepSize || 0);
+    const exchangeMinNotional = Number(marketFilters?.minNotional || 0);
+    const minQuoteSpend = Math.max(0, Number(rules.minQuoteSpend || 0));
+    const maxQuoteSpend = Math.max(minQuoteSpend, Number(rules.maxQuoteSpend || 0));
+    const riskValue = Math.max(0, Number(rules.riskValue || 0));
+
+    const quoteSpendRaw = rules.riskMode === 'balance_pct' ? freeQuote * (riskValue / 100) : riskValue;
+    const quoteSpend = Math.max(minQuoteSpend, Math.min(maxQuoteSpend, quoteSpendRaw));
+    const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
+    const qtyFinal = roundDownToStep(qtyRaw, stepSize);
+    const notionalAfterRounding = qtyFinal * (refPrice || 0);
+    const effectiveMinNotional = Math.max(exchangeMinNotional, minQuoteSpend);
+
+    let status: 'ready' | 'warning' | 'rejected' = 'ready';
+    let reason = '';
+    if (!refPrice || refPrice <= 0) {
+      status = 'rejected';
+      reason = 'No reference price';
+    } else if (qtyFinal <= 0) {
+      status = 'rejected';
+      reason = 'Quantity becomes zero after rounding';
+    } else if (notionalAfterRounding < effectiveMinNotional) {
+      status = 'rejected';
+      reason = 'Notional after rounding is below min notional';
+    } else if (rules.riskMode === 'fixed_quote' && quoteSpend > freeQuote) {
+      status = 'warning';
+      reason = 'Fixed quote spend is above free quote balance';
+    } else if (rules.previewSide === 'sell' && qtyFinal > freeBase) {
+      status = 'warning';
+      reason = 'Sell quantity is above free base balance';
+    }
+
+    const side = rules.previewSide;
+    const slValue = Number(rules.slValue || 0);
+    const tpValue = Number(rules.tpValue || 0);
+    let slPrice: number | null = null;
+    if (rules.slType === 'percent' && refPrice > 0 && slValue > 0) {
+      const pct = slValue / 100;
+      slPrice = side === 'buy' ? refPrice * (1 - pct) : refPrice * (1 + pct);
+    } else if (rules.slType === 'absolute' && slValue > 0) {
+      slPrice = slValue;
+    }
+
+    let tpPrice: number | null = null;
+    if (rules.tpType === 'percent' && refPrice > 0 && tpValue > 0) {
+      const pct = tpValue / 100;
+      tpPrice = side === 'buy' ? refPrice * (1 + pct) : refPrice * (1 - pct);
+    } else if (rules.tpType === 'absolute' && tpValue > 0) {
+      tpPrice = tpValue;
+    } else if (rules.tpType === 'rr' && slPrice && refPrice > 0 && tpValue > 0) {
+      const riskDistance = Math.abs(refPrice - slPrice);
+      tpPrice = side === 'buy' ? refPrice + riskDistance * tpValue : refPrice - riskDistance * tpValue;
+    }
+
+    return {
+      status,
+      reason,
+      freeQuote,
+      freeBase,
+      refPrice,
+      stepSize,
+      exchangeMinNotional,
+      effectiveMinNotional,
+      quoteSpendRaw,
+      quoteSpend,
+      qtyRaw,
+      qtyFinal,
+      notionalAfterRounding,
+      slPrice,
+      tpPrice
+    };
+  }, [
+    baseAssetBalance?.free,
+    botRulesDraft,
+    marketFilters?.minNotional,
+    marketFilters?.stepSize,
+    marketTicker?.price,
+    quoteAssetBalance?.free,
+    activeRules
+  ]);
 
   const filteredBots = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -304,11 +524,28 @@ export default function TradeBotsModule() {
     });
   };
 
+  const upsertBotRules = (botId: string, nextRules: BotTradingRules) => {
+    setBotRulesMap((prev) => {
+      const next = {
+        ...prev,
+        [botId]: sanitizeTradingRules(nextRules)
+      };
+      writeBotTradingRulesMap(next);
+      return next;
+    });
+  };
+
+  const updateBotRulesDraft = (patch: Partial<BotTradingRules>) => {
+    setBotRulesDraft((prev) => sanitizeTradingRules({ ...(prev || selectedBotRules), ...patch }));
+  };
+
   const openBotPopup = (bot: TradeBotRow) => {
     setSelectedBot(bot);
     setModalError('');
     setModalMessage('');
-    setTradingSymbol('BTCUSDC');
+    const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRules());
+    setBotRulesDraft(initialRules);
+    setTradingSymbol(initialRules.symbol);
   };
 
   const closeBotPopup = () => {
@@ -323,6 +560,7 @@ export default function TradeBotsModule() {
     setExchangeSnapshot(null);
     setTradingDetailsError('');
     setTradingDetailsLoading(false);
+    setBotRulesDraft(null);
   };
 
   const loadConnectivityContext = async (botId?: string) => {
@@ -398,10 +636,37 @@ export default function TradeBotsModule() {
     await loadTradingDetails(selectedBotLink.integrationId);
   };
 
+  const handleRulesSave = () => {
+    if (!selectedBot || !botRulesDraft) return;
+    const sanitized = sanitizeTradingRules(botRulesDraft);
+    upsertBotRules(selectedBot.id, sanitized);
+    setBotRulesDraft(sanitized);
+    setTradingSymbol(sanitized.symbol);
+    setModalError('');
+    setModalMessage('Sizing, risk, SL/TP, and function rules saved for this bot.');
+  };
+
+  const handleRulesReset = () => {
+    if (!selectedBot) return;
+    const fallback = createDefaultTradingRules(tradingSymbol || DEFAULT_TRADING_RULES.symbol);
+    setBotRulesDraft(fallback);
+    setTradingSymbol(fallback.symbol);
+    setModalError('');
+    setModalMessage('Trading rules reset to defaults. Save to apply.');
+  };
+
   useEffect(() => {
     if (!selectedBot) return;
     loadConnectivityContext(selectedBot.id);
   }, [selectedBot?.id]);
+
+  useEffect(() => {
+    if (!selectedBot) return;
+    if (botRulesDraft) return;
+    const initialRules = sanitizeTradingRules(botRulesMap[selectedBot.id] || createDefaultTradingRules(tradingSymbol));
+    setBotRulesDraft(initialRules);
+    setTradingSymbol(initialRules.symbol);
+  }, [botRulesDraft, botRulesMap, selectedBot, tradingSymbol]);
 
   useEffect(() => {
     if (!selectedBot) return;
@@ -427,6 +692,7 @@ export default function TradeBotsModule() {
       setExchangeSnapshot(null);
       setTradingDetailsError('');
       setTradingDetailsLoading(false);
+      setBotRulesDraft(null);
     }
   }, [activeTab]);
 
@@ -929,6 +1195,220 @@ export default function TradeBotsModule() {
               <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
+                    <p className="text-sm font-semibold text-white">Trading rules and function</p>
+                    <p className="mt-1 text-xs text-gray-400">Adjust sizing details, risk rules, stop loss, and take profit behavior per bot.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesReset}>
+                      Reset Defaults
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
+                      Save Rules
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Function
+                    <select
+                      value={activeRules.executionFunction}
+                      onChange={(event) => updateBotRulesDraft({ executionFunction: event.target.value as ExecutionFunction })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="live_trading">Live trading</option>
+                      <option value="paper_trading">Paper trading</option>
+                      <option value="signal_only">Signal only</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Preview Side
+                    <select
+                      value={activeRules.previewSide}
+                      onChange={(event) => updateBotRulesDraft({ previewSide: event.target.value as PreviewSide })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="buy">Buy</option>
+                      <option value="sell">Sell</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Order Type
+                    <select
+                      value={activeRules.orderType}
+                      onChange={(event) => updateBotRulesDraft({ orderType: event.target.value as 'market' | 'limit' })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="market">Market</option>
+                      <option value="limit">Limit</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Limit Price
+                    <input
+                      type="number"
+                      step="0.00000001"
+                      value={activeRules.limitPrice ?? ''}
+                      disabled={activeRules.orderType !== 'limit'}
+                      onChange={(event) => updateBotRulesDraft({ limitPrice: event.target.value ? Number(event.target.value) : null })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Risk Mode
+                    <select
+                      value={activeRules.riskMode}
+                      onChange={(event) => updateBotRulesDraft({ riskMode: event.target.value as RiskMode })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="balance_pct">Balance %</option>
+                      <option value="fixed_quote">Fixed quote</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Risk Value
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={activeRules.riskValue}
+                      onChange={(event) => updateBotRulesDraft({ riskValue: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Min Quote Spend
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={activeRules.minQuoteSpend}
+                      onChange={(event) => updateBotRulesDraft({ minQuoteSpend: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Max Quote Spend
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={activeRules.maxQuoteSpend}
+                      onChange={(event) => updateBotRulesDraft({ maxQuoteSpend: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Stop Loss Type
+                    <select
+                      value={activeRules.slType}
+                      onChange={(event) => updateBotRulesDraft({ slType: event.target.value as StopType })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="none">None</option>
+                      <option value="percent">Percent</option>
+                      <option value="absolute">Absolute</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Stop Loss Value
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={activeRules.slValue ?? ''}
+                      disabled={activeRules.slType === 'none'}
+                      onChange={(event) => updateBotRulesDraft({ slValue: event.target.value ? Number(event.target.value) : null })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Take Profit Type
+                    <select
+                      value={activeRules.tpType}
+                      onChange={(event) => updateBotRulesDraft({ tpType: event.target.value as StopType })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="none">None</option>
+                      <option value="percent">Percent</option>
+                      <option value="absolute">Absolute</option>
+                      <option value="rr">Risk:Reward</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Take Profit Value
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={activeRules.tpValue ?? ''}
+                      disabled={activeRules.tpType === 'none'}
+                      onChange={(event) => updateBotRulesDraft({ tpValue: event.target.value ? Number(event.target.value) : null })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Cooldown Seconds
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={activeRules.cooldownSeconds}
+                      onChange={(event) => updateBotRulesDraft({ cooldownSeconds: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Max Open Orders / Symbol
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={activeRules.maxOpenOrdersPerSymbol}
+                      onChange={(event) => updateBotRulesDraft({ maxOpenOrdersPerSymbol: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Daily Loss Cap
+                    <select
+                      value={activeRules.dailyLossCapEnabled ? 'enabled' : 'disabled'}
+                      onChange={(event) => updateBotRulesDraft({ dailyLossCapEnabled: event.target.value === 'enabled' })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="disabled">Disabled</option>
+                      <option value="enabled">Enabled</option>
+                    </select>
+                  </label>
+                </div>
+
+                {rulesPreview && (
+                  <div className="mt-3 space-y-2">
+                    <div
+                      className={`rounded-lg border px-3 py-2 text-xs ${
+                        rulesPreview.status === 'ready'
+                          ? 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
+                          : rulesPreview.status === 'warning'
+                            ? 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+                            : 'border-rose-300/35 bg-rose-500/10 text-rose-100'
+                      }`}
+                    >
+                      Preview status: {rulesPreview.status.toUpperCase()}
+                      {rulesPreview.reason ? ` · ${rulesPreview.reason}` : ''}
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+                      <InfoTile label="Quote Spend" value={formatDecimal(rulesPreview.quoteSpend)} />
+                      <InfoTile label="Qty Raw" value={formatDecimal(rulesPreview.qtyRaw, 10)} />
+                      <InfoTile label="Qty Final" value={formatDecimal(rulesPreview.qtyFinal, 10)} />
+                      <InfoTile label="Notional" value={formatDecimal(rulesPreview.notionalAfterRounding)} />
+                      <InfoTile label="SL Price" value={formatDecimal(rulesPreview.slPrice)} />
+                      <InfoTile label="TP Price" value={formatDecimal(rulesPreview.tpPrice)} />
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
                     <p className="text-sm font-semibold text-white">Exchange trading details</p>
                     <p className="mt-1 text-xs text-gray-400">
                       Live trading prerequisites pulled from the linked exchange integration: balances, symbol filters, and execution readiness.
@@ -937,7 +1417,11 @@ export default function TradeBotsModule() {
                   <div className="flex items-center gap-2">
                     <input
                       value={tradingSymbol}
-                      onChange={(event) => setTradingSymbol(normalizeSymbol(event.target.value))}
+                      onChange={(event) => {
+                        const symbol = normalizeSymbol(event.target.value);
+                        setTradingSymbol(symbol);
+                        updateBotRulesDraft({ symbol });
+                      }}
                       placeholder="BTCUSDC"
                       className="w-36 rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none transition focus:border-primary-300/60"
                     />
