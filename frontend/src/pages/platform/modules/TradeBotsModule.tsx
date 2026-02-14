@@ -846,6 +846,7 @@ function ConnectivityMindmap({
     .sort((a, b) => Number(b.connected) - Number(a.connected))
     .slice(0, 6);
   const connectedCount = nodes.filter((node) => node.connected).length;
+  const connectedNodes = nodes.filter((node) => node.connected);
 
   return (
     <div className="card-shell space-y-3">
@@ -861,6 +862,20 @@ function ConnectivityMindmap({
             Trade Bot Hub
           </div>
         </div>
+        {connectedNodes.length > 0 && (
+          <div className="mt-4 space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-400">Execution Path</p>
+            {connectedNodes.slice(0, 3).map((node) => (
+              <div key={`path-${node.id}`} className="flex flex-wrap items-center gap-2 text-xs">
+                <FlowChip label="DaxLinks Router" />
+                <span className="text-gray-500">→</span>
+                <FlowChip label={node.name} active />
+                <span className="text-gray-500">→</span>
+                <FlowChip label="Exchange" />
+              </div>
+            ))}
+          </div>
+        )}
         {nodes.length === 0 && <p className="mt-4 text-center text-sm text-gray-400">No bots loaded to draw connectivity.</p>}
         {nodes.length > 0 && (
           <div className="relative mt-5">
@@ -882,6 +897,20 @@ function ConnectivityMindmap({
         )}
       </div>
     </div>
+  );
+}
+
+function FlowChip({ label, active = false }: { label: string; active?: boolean }) {
+  return (
+    <span
+      className={
+        active
+          ? 'rounded-full border border-primary-300/45 bg-primary-500/20 px-2.5 py-1 text-[11px] font-semibold text-primary-100'
+          : 'rounded-full border border-white/15 bg-black/30 px-2.5 py-1 text-[11px] text-gray-200'
+      }
+    >
+      {label}
+    </span>
   );
 }
 

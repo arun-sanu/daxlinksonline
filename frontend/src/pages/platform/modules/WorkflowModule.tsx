@@ -109,6 +109,7 @@ type WorkflowNode = {
   label: string;
   type: NodeType;
   role: NodeRole;
+  isBridgeBot?: boolean;
   position: { x: number; y: number };
   status: StatusColor;
   health?: 'healthy' | 'warning' | 'critical' | 'pending' | 'inactive' | 'muted';
@@ -560,7 +561,8 @@ function layoutNodes(nodes: WorkflowNode[]): WorkflowNode[] {
   const minY = 120;
   const maxY = CANVAS_HEIGHT - 120;
   const left = nodesArr.filter((n) => n.role === 'source');
-  const right = nodesArr.filter((n) => n.role === 'destination');
+  const rightBridge = nodesArr.filter((n) => n.role === 'destination' && n.isBridgeBot);
+  const right = nodesArr.filter((n) => n.role === 'destination' && !n.isBridgeBot);
 
   function computePositions(list: WorkflowNode[], x: number) {
     if (!list.length) return [];
@@ -577,11 +579,13 @@ function layoutNodes(nodes: WorkflowNode[]): WorkflowNode[] {
   }
 
   const placedLeft = computePositions(left, centerX - horizontalOffset);
+  const placedBridge = computePositions(rightBridge, centerX + Math.round(horizontalOffset * 0.52));
   const placedRight = computePositions(right, centerX + horizontalOffset);
   try {
     const placedNodes = nodesArr.map((n) => {
       if (n.role === 'server') return { ...n, position: { x: centerX, y: centerY } };
-      const placed = placedLeft.find((p) => p.id === n.id) || placedRight.find((p) => p.id === n.id) || null;
+      const placed =
+        placedLeft.find((p) => p.id === n.id) || placedBridge.find((p) => p.id === n.id) || placedRight.find((p) => p.id === n.id) || null;
       return placed ?? n;
     });
     console.log('[WM] Placed nodes:', placedNodes);
@@ -953,8 +957,15 @@ export default function WorkflowModule() {
     setToast({ message, tone });
   };
 
-  function buildNodes(webhooks: any[], bots: any[], integrations: any[], connectedCatalog: ConnectedBotCatalogItem[] = []): WorkflowNode[] {
+  function buildNodes(
+    webhooks: any[],
+    bots: any[],
+    integrations: any[],
+    connectedCatalog: ConnectedBotCatalogItem[] = [],
+    connectedLinks: ConnectedBotWorkflowLink[] = []
+  ): WorkflowNode[] {
     const server: WorkflowNode = { id: SERVER_ID, label: 'DaxLinks Router', type: 'logic', role: 'server', status: 'green', position: { x: CENTER.x, y: CENTER.y } };
+    const connectedSet = new Set(connectedLinks.map((link) => link.botId));
     const botMap = new Map<string, any>();
     for (const bot of toArray(bots)) {
       if (!bot?.id) continue;
@@ -980,7 +991,19 @@ export default function WorkflowModule() {
         subdomain: w.subdomain || '',
         dnsRecords: Array.isArray(w.dnsRecords) ? w.dnsRecords : []
       })),
-      ...mergedBots.map((b) => ({ id: b.id, label: normalizeBotName(b.name || 'Bot'), type: 'bot', role: 'source', status: 'green', position: { x: 0, y: 0 }, description: b.description || '' }))
+      ...mergedBots.map((b) => {
+        const connected = connectedSet.has(String(b.id));
+        return {
+          id: b.id,
+          label: normalizeBotName(b.name || 'Bot'),
+          type: 'bot',
+          role: connected ? 'destination' : 'source',
+          isBridgeBot: connected,
+          status: 'green',
+          position: { x: 0, y: 0 },
+          description: b.description || ''
+        } as WorkflowNode;
+      })
     ];
     const dst: WorkflowNode[] = integrations.map((i) => ({
       id: i.id,
@@ -1071,7 +1094,7 @@ export default function WorkflowModule() {
         addEdge({
           id: `edge-connected-${link.botId}-ingress`,
           sourceNodeId: webhookNode.id,
-          targetNodeId: link.botId,
+          targetNodeId: SERVER_ID,
           edgeType: 'analyze',
           statusColor: 'green',
           severity: 'info',
@@ -1082,9 +1105,9 @@ export default function WorkflowModule() {
       }
       addEdge({
         id: `edge-connected-${link.botId}-src`,
-        sourceNodeId: link.botId,
-        targetNodeId: SERVER_ID,
-        edgeType: 'analyze',
+        sourceNodeId: SERVER_ID,
+        targetNodeId: link.botId,
+        edgeType: 'process',
         statusColor: 'green',
         severity: 'info',
         status: 'connected_success',
@@ -1094,7 +1117,7 @@ export default function WorkflowModule() {
       if (integrationNode) {
         addEdge({
           id: `edge-connected-${link.botId}-${link.integrationId}-dst`,
-          sourceNodeId: SERVER_ID,
+          sourceNodeId: link.botId,
           targetNodeId: link.integrationId,
           edgeType: 'execute',
           statusColor: 'green',
@@ -1139,7 +1162,7 @@ export default function WorkflowModule() {
         if (!mounted) return;
         setConnectedBotLinks(connectedLinks);
         setConnectedBotCatalog(connectedCatalog);
-        const nodesBuilt = buildNodes(toArray(webhooks), toArray(bots), toArray(integrations), connectedCatalog);
+        const nodesBuilt = buildNodes(toArray(webhooks), toArray(bots), toArray(integrations), connectedCatalog, connectedLinks);
         console.log('[WM] Nodes loaded:', nodesBuilt);
         const edgesBuilt = buildEdges(nodesBuilt, rulesResp, eventsResp, connectedLinks);
         const nodesWithHealth = applyNodeHealth(nodesBuilt, edgesBuilt, eventsResp);
@@ -1328,7 +1351,7 @@ export default function WorkflowModule() {
       const [nodesRespRaw] = await Promise.all([fetchWorkflowNodes(workspaceId)]);
       const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
       const { webhooks = [], bots = [], integrations = [] } = nodesResp || {};
-      const nodesBuilt = buildNodes(webhooks || [], bots || [], integrations || [], connectedBotCatalog);
+      const nodesBuilt = buildNodes(webhooks || [], bots || [], integrations || [], connectedBotCatalog, connectedBotLinks);
       const safeRuleList = Array.isArray(rules) ? rules : [];
       const edgesBuilt = buildEdges(nodesBuilt, safeRuleList, events, connectedBotLinks);
       const nodesWithHealth = applyNodeHealth(nodesBuilt, edgesBuilt, events);
