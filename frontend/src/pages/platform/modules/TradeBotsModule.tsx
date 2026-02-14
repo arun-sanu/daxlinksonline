@@ -623,12 +623,12 @@ export default function TradeBotsModule() {
       )}
 
       {selectedBot && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-6 backdrop-blur-md" role="dialog" aria-modal="true" onClick={closeBotPopup}>
           <div
             className="w-full max-w-6xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/15 px-5 py-4">
               <div className="max-w-4xl space-y-3">
                 <div>
                 <p className="section-label">Bot Connectivity</p>
@@ -636,22 +636,22 @@ export default function TradeBotsModule() {
                 <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
                     <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
                     <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
                     <p className="text-[11px] text-gray-400">estimated telemetry</p>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
                     <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
                       {tradingViewConnected ? 'connected' : 'not linked'}
                     </span>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
                     <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
                       {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
@@ -669,7 +669,7 @@ export default function TradeBotsModule() {
               {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
 
               <div className="grid gap-3 xl:grid-cols-3">
-                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">TradingView ingress</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
@@ -682,7 +682,7 @@ export default function TradeBotsModule() {
                     {webhookUrls.map((url) => {
                       const linked = selectedBotLink.webhookUrl === url;
                       return (
-                        <div key={url} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                        <div key={url} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <p className="break-all font-mono text-[11px] text-gray-200">{url}</p>
                           <div className="mt-2 flex items-center justify-between gap-2">
                             <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${connectivityBadgeClass(linked)}`}>
@@ -705,7 +705,7 @@ export default function TradeBotsModule() {
                   </button>
                 </section>
 
-                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">Exchange integrations</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
@@ -719,7 +719,7 @@ export default function TradeBotsModule() {
                       const linked = selectedBotLink.integrationId === integration.id;
                       const healthy = integrationIsHealthy(integration.status);
                       return (
-                        <div key={integration.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                        <div key={integration.id} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <p className="text-sm font-semibold text-gray-100">{integration.label || integration.exchange}</p>
@@ -755,7 +755,7 @@ export default function TradeBotsModule() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <p className="text-sm font-semibold text-white">Exchange accounts</p>
                   <p className="mt-1 text-xs text-gray-400">Optional account link used by bot runtime in this workspace.</p>
                   <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
@@ -763,7 +763,7 @@ export default function TradeBotsModule() {
                     {exchangeAccounts.map((account) => {
                       const linked = selectedBotLink.exchangeAccountId === account.id;
                       return (
-                        <div key={account.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                        <div key={account.id} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <p className="text-sm font-semibold text-gray-100">{account.name}</p>
                           <p className="text-[11px] uppercase tracking-[0.14em] text-gray-400">
                             {account.venue} {account.isSandbox ? '· sandbox' : '· live'}
@@ -782,13 +782,13 @@ export default function TradeBotsModule() {
                       );
                     })}
                   </div>
-                  <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2 text-[11px] text-gray-300">
+                  <div className="mt-3 rounded-lg border border-white/15 bg-black/35 p-2 text-[11px] text-gray-300">
                     Linked account: {linkedExchangeAccount ? `${linkedExchangeAccount.name} (${linkedExchangeAccount.venue})` : 'none'}
                   </div>
                 </section>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 bg-black/45 p-3 text-xs text-gray-300">
                 <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>
                 <p>Linked exchange integration: {linkedIntegration?.label || linkedIntegration?.exchange || 'none'}</p>
               </div>
