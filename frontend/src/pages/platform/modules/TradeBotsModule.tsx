@@ -8,7 +8,7 @@ type TradeBotRow = Bot & {
   counts?: { versions?: number; instances?: number; rentals?: number; orders?: number };
 };
 
-type TabKey = 'overview' | 'workspace' | 'marketplace' | 'rentals';
+type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 
@@ -43,7 +43,6 @@ function versionText(bot: TradeBotRow) {
 
 export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
-  const [workspaceInput, setWorkspaceInput] = useState(() => getWorkspaceId() || DEFAULT_WORKSPACE_ID);
   const [bots, setBots] = useState<TradeBotRow[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,8 +51,6 @@ export default function TradeBotsModule() {
   const [query, setQuery] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [automationEnabled, setAutomationEnabled] = useState(true);
-
-  const activeWorkspace = useMemo(() => getWorkspaceId() || '', [workspaceInput, lastLoadedAt]);
 
   const filteredBots = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -80,8 +77,8 @@ export default function TradeBotsModule() {
     [rentals]
   );
 
-  const load = async (targetWorkspaceId?: string) => {
-    const ws = (targetWorkspaceId || workspaceInput || '').trim() || DEFAULT_WORKSPACE_ID;
+  const load = async () => {
+    const ws = getWorkspaceId().trim() || DEFAULT_WORKSPACE_ID;
     setWorkspaceId(ws);
     setLoading(true);
     setBotsError('');
@@ -108,29 +105,23 @@ export default function TradeBotsModule() {
 
   useEffect(() => {
     const existing = getWorkspaceId();
-    const ws = existing || workspaceInput || DEFAULT_WORKSPACE_ID;
+    const ws = existing || DEFAULT_WORKSPACE_ID;
     if (!existing) {
       setWorkspaceId(ws);
     }
-    load(ws);
+    load();
   }, []);
-
-  const handleApplyWorkspace = async () => {
-    const next = workspaceInput.trim();
-    if (!next) return;
-    setWorkspaceId(next);
-    await load(next);
-  };
 
   const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'overview', label: 'Overview', icon: '/icons/hub.svg' },
-    { key: 'workspace', label: 'Workspace', icon: '/icons/smart-toy.svg' },
+    { key: 'bots', label: 'Bots', icon: '/icons/smart-toy.svg' },
     { key: 'marketplace', label: 'Marketplace', icon: '/icons/account-balance.svg' },
-    { key: 'rentals', label: 'Rentals', icon: '/icons/route.svg' }
+    { key: 'rentals', label: 'Rentals', icon: '/icons/route.svg' },
+    { key: 'logs-reports', label: 'Logs + Reports', icon: '/icons/hub.svg' }
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="trade-bots-page space-y-6">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -169,76 +160,44 @@ export default function TradeBotsModule() {
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="Workspace Bots" value={String(bots.length)} helper="Loaded bots" />
-        <MetricCard label="Active Instances" value={String(totalInstances)} helper="Across versions" />
-        <MetricCard label="Total Rentals" value={String(rentals.length)} helper="Workspace rentals" />
-        <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
-      </section>
-
       {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
       {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
 
       {activeTab === 'overview' && (
-        <section className="card-shell space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="section-label">Control Plane</p>
-              <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
-            </div>
-            <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-              Refresh
-            </button>
+        <section className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
+            <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
+            <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
+            <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <StatCard label="Workspace" value={activeWorkspace || 'not-set'} mono />
-            <StatCard label="Active rentals" value={String(activeRentals.length)} />
-            <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
-          </div>
-          <p className="text-sm text-gray-300">
-            Use the tabs above to manage workspace bots and review rentals. Marketplace stays on the dedicated Market page.
-          </p>
+          <ConnectivityMindmap bots={bots} />
         </section>
       )}
 
-      {activeTab === 'workspace' && (
+      {activeTab === 'bots' && (
         <section className="card-shell space-y-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
-            <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.14em] text-gray-300">
-              Workspace ID
-              <input
-                className="rounded-xl border border-white/20 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-primary-300/70"
-                value={workspaceInput}
-                onChange={(event) => setWorkspaceInput(event.target.value)}
-                placeholder="workspace UUID"
-              />
-            </label>
-            <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-gray-200">
-              <p className="uppercase tracking-[0.16em] text-gray-400">Current workspace</p>
-              <p className="mt-1 break-all font-mono text-[11px]">{activeWorkspace || 'not-set'}</p>
-              <button
-                type="button"
-                className="mt-2 rounded-lg border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-100"
-                onClick={() => setWorkspaceInput(DEFAULT_WORKSPACE_ID)}
-              >
-                Use Provided Workspace
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Control Plane</p>
+                <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
+              </div>
+              <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                Refresh
               </button>
             </div>
-            <div className="flex items-end">
-              <button
-                type="button"
-                onClick={handleApplyWorkspace}
-                className="h-[42px] rounded-xl border border-primary-300/45 bg-primary-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary-100 hover:bg-primary-500/35"
-              >
-                Apply + Reload
-              </button>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <StatCard label="Active rentals" value={String(activeRentals.length)} />
+              <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
+              <StatCard label="Automation" value={automationEnabled ? 'enabled' : 'disabled'} />
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="section-label">Workspace Bots</p>
-              <p className="text-sm text-gray-300">Data source: `/api/v1/trade-bots/:workspaceId/bots`</p>
+              <p className="section-label">Bots</p>
+              <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness.</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -254,7 +213,7 @@ export default function TradeBotsModule() {
           </div>
 
           {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
-          {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found for this workspace.</p>}
+          {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found.</p>}
           {!loading && filteredBots.length > 0 && (
             <div className="grid gap-3 lg:grid-cols-2">
               {filteredBots.map((bot) => (
@@ -314,7 +273,7 @@ export default function TradeBotsModule() {
             </Link>
           </div>
           {loading && <p className="text-sm text-gray-400">Loading rentals...</p>}
-          {!loading && rentals.length === 0 && <p className="text-sm text-gray-400">No rentals found for this workspace.</p>}
+          {!loading && rentals.length === 0 && <p className="text-sm text-gray-400">No rentals found.</p>}
           {!loading && rentals.length > 0 && (
             <div className="space-y-2">
               {rentals.slice(0, 10).map((rental) => (
@@ -333,6 +292,101 @@ export default function TradeBotsModule() {
           )}
         </section>
       )}
+
+      {activeTab === 'logs-reports' && (
+        <section className="card-shell space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="section-label">Logs And Reports</p>
+              <p className="text-sm text-gray-300">Open execution telemetry and sizing reports for diagnostics.</p>
+            </div>
+            <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+              Refresh
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Link to="/platform/orders/reports" className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40">
+              Signal/Exchange Reports
+            </Link>
+            <Link to="/platform/orders/sizing/details" className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40">
+              Sizing Details
+            </Link>
+            <Link to="/platform/orders/sizing/reports" className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40">
+              Sizing Reports
+            </Link>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
+            Last sync: {formatDate(lastLoadedAt)} {botsError || rentalsError ? '• check alert banners for fetch errors.' : '• no load errors detected.'}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+type BotConnectivityStatus = 'online' | 'idle' | 'issue';
+
+function botConnectivityStatus(bot: TradeBotRow): BotConnectivityStatus {
+  const status = String(bot.latestVersion?.status || '').toLowerCase();
+  const instances = Number(bot.counts?.instances || 0);
+  if (['error', 'failed', 'rejected', 'disabled'].includes(status)) return 'issue';
+  if (instances > 0 || ['published', 'approved', 'running', 'active', 'connected'].includes(status)) return 'online';
+  return 'idle';
+}
+
+function statusPill(status: BotConnectivityStatus) {
+  if (status === 'online') return 'bg-emerald-400';
+  if (status === 'issue') return 'bg-rose-400';
+  return 'bg-amber-300';
+}
+
+function statusLabel(status: BotConnectivityStatus) {
+  if (status === 'online') return 'connected';
+  if (status === 'issue') return 'issue';
+  return 'idle';
+}
+
+function ConnectivityMindmap({ bots }: { bots: TradeBotRow[] }) {
+  const nodes = bots.slice(0, 6).map((bot) => ({
+    id: bot.id,
+    name: bot.name,
+    status: botConnectivityStatus(bot)
+  }));
+
+  return (
+    <div className="card-shell space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="section-label">Connectivity Map</p>
+          <p className="text-sm text-gray-300">Quick topology view for bot connectivity and readiness.</p>
+        </div>
+      </div>
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="flex justify-center">
+          <div className="rounded-xl border border-primary-300/40 bg-primary-500/15 px-4 py-2 text-sm font-semibold text-primary-100">
+            Trade Bot Hub
+          </div>
+        </div>
+        {nodes.length === 0 && <p className="mt-4 text-center text-sm text-gray-400">No bots loaded to draw connectivity.</p>}
+        {nodes.length > 0 && (
+          <div className="relative mt-5">
+            <span className="pointer-events-none absolute left-1/2 top-0 h-4 w-px -translate-x-1/2 bg-primary-300/50"></span>
+            <span className="pointer-events-none absolute left-[8%] right-[8%] top-4 h-px bg-primary-300/35"></span>
+            <div className="grid gap-3 pt-5 sm:grid-cols-2 lg:grid-cols-3">
+              {nodes.map((node) => (
+                <div key={node.id} className="relative rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <span className="pointer-events-none absolute -top-5 left-1/2 h-5 w-px -translate-x-1/2 bg-primary-300/35"></span>
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${statusPill(node.status)}`}></span>
+                    <p className="truncate text-sm font-semibold text-gray-100">{node.name}</p>
+                  </div>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-gray-400">{statusLabel(node.status)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
