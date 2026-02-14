@@ -10,6 +10,7 @@ import {
   handleCreateTradeBotInstance,
   handleCreateTradeBotWithUpload,
   handleGetTradeBot,
+  handleGetTradeBotRuntimeConfig,
   handleListMarketBots,
   handleListWorkspaceRentals,
   handleGetTradeBotMonitoring,
@@ -19,6 +20,7 @@ import {
   handleListTradeBotLanguages,
   handleListTradeBotOrders,
   handleListTradeBots,
+  handleUpsertTradeBotRuntimeConfig,
   handleUploadTradeBotVersion
 } from '../../controllers/tradeBotsController.js';
 import { requireAuth } from '../../middleware/auth.js';
@@ -45,6 +47,8 @@ router.get('/:workspaceId/market', handleListMarketBots);
 router.post('/:workspaceId/bots', handleCreateTradeBot);
 router.post('/:workspaceId/bots/upload', upload.single('file'), handleCreateTradeBotWithUpload);
 router.get('/:workspaceId/bots/:botId', handleGetTradeBot);
+router.get('/:workspaceId/bots/:botId/runtime-config', handleGetTradeBotRuntimeConfig);
+router.put('/:workspaceId/bots/:botId/runtime-config', handleUpsertTradeBotRuntimeConfig);
 router.post('/:workspaceId/bots/:botId/rent', handleRentMarketBot);
 router.post('/:workspaceId/bots/:botId/versions/upload', upload.single('file'), handleUploadTradeBotVersion);
 router.get('/:workspaceId/bots/:botId/instances', handleListTradeBotInstances);

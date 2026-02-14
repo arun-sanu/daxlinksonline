@@ -322,6 +322,7 @@ export async function executePreparedSignal(signalId) {
           })
         : await computeMexcBaseQuantityForSignal({
             workspaceId: integration.workspaceId,
+            integrationId: integration.id,
             symbol,
             side,
             client: mexcClient
@@ -379,7 +380,7 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
-        sizingSource: usingPayloadSizing ? 'signal_payload' : 'backend_workflow',
+        sizingSource: usingPayloadSizing ? 'signal_payload' : 'trade_bot_runtime',
         quantity: sizing.qtyRounded,
         qtyRaw: sizing.qtyRaw,
         computedPrice: sizing.computedPrice,

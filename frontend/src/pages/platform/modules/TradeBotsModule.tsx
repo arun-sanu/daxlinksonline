@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { listBots, listExchangeAccounts, listRentals } from '../../../api/tradeBots';
+import { getTradeBotRuntimeConfig, listBots, listExchangeAccounts, listRentals, saveTradeBotRuntimeConfig } from '../../../api/tradeBots';
 import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
 import { fetchIntegrationDetail, listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
@@ -725,30 +725,107 @@ export default function TradeBotsModule() {
     load();
   }, []);
 
-  const upsertBotLink = (botId: string, patch: BotConnectivityLink) => {
-    setBotLinks((prev) => {
-      const next = {
-        ...prev,
-        [botId]: {
-          ...(prev[botId] || {}),
-          ...patch,
-          updatedAt: new Date().toISOString()
-        }
+  const applyRuntimeConfigFromBackend = (botId: string, payload: { links?: BotConnectivityLink | null; rules?: Partial<BotTradingRules> | null }) => {
+    const links = payload.links || null;
+    const rules = payload.rules || null;
+
+    if (links) {
+      const normalizedLinks: BotConnectivityLink = {
+        webhookUrl: links.webhookUrl || null,
+        integrationId: links.integrationId || null,
+        exchangeAccountId: links.exchangeAccountId || null,
+        updatedAt: links.updatedAt || new Date().toISOString()
       };
-      writeBotLinks(next);
-      return next;
+      setBotLinks((prev) => {
+        const next = {
+          ...prev,
+          [botId]: normalizedLinks
+        };
+        writeBotLinks(next);
+        return next;
+      });
+    }
+
+    if (rules && typeof rules === 'object') {
+      const sanitizedRules = sanitizeTradingRules(rules);
+      setBotRulesMap((prev) => {
+        const next = {
+          ...prev,
+          [botId]: sanitizedRules
+        };
+        writeBotTradingRulesMap(next);
+        return next;
+      });
+      if (selectedBot?.id === botId) {
+        setBotRulesDraft(sanitizedRules);
+        setTradingSymbol(sanitizedRules.symbol);
+      }
+    }
+  };
+
+  const syncRuntimeConfigFromBackend = async (botId: string) => {
+    const runtime = await getTradeBotRuntimeConfig(botId);
+    if (!runtime) return;
+    applyRuntimeConfigFromBackend(botId, {
+      links: runtime.links || null,
+      rules: runtime.rules || null
     });
   };
 
-  const upsertBotRules = (botId: string, nextRules: BotTradingRules) => {
-    setBotRulesMap((prev) => {
-      const next = {
-        ...prev,
-        [botId]: sanitizeTradingRules(nextRules)
-      };
-      writeBotTradingRulesMap(next);
-      return next;
+  const persistRuntimeConfigForBot = async (
+    botId: string,
+    overrides?: {
+      links?: BotConnectivityLink | null;
+      rules?: BotTradingRules | null;
+    }
+  ) => {
+    const nextLinks = overrides && Object.prototype.hasOwnProperty.call(overrides, 'links')
+      ? overrides.links || {}
+      : botLinks[botId] || {};
+    const nextRules = overrides && Object.prototype.hasOwnProperty.call(overrides, 'rules')
+      ? overrides.rules
+      : botRulesMap[botId] || createDefaultTradingRules(tradingSymbol);
+    const sanitizedRules = sanitizeTradingRules(nextRules || createDefaultTradingRules(tradingSymbol));
+
+    const saved = await saveTradeBotRuntimeConfig(botId, {
+      links: nextLinks,
+      rules: sanitizedRules
     });
+
+    if (!saved) {
+      setModalError('Failed to persist bot runtime configuration to backend.');
+      return false;
+    }
+
+    applyRuntimeConfigFromBackend(botId, {
+      links: saved.links || null,
+      rules: saved.rules || null
+    });
+    return true;
+  };
+
+  const upsertBotLink = (botId: string, patch: BotConnectivityLink) => {
+    const next = {
+      ...botLinks,
+      [botId]: {
+        ...(botLinks[botId] || {}),
+        ...patch,
+        updatedAt: new Date().toISOString()
+      }
+    };
+    setBotLinks(next);
+    writeBotLinks(next);
+    return next[botId];
+  };
+
+  const upsertBotRules = (botId: string, nextRules: BotTradingRules) => {
+    const next = {
+      ...botRulesMap,
+      [botId]: sanitizeTradingRules(nextRules)
+    };
+    setBotRulesMap(next);
+    writeBotTradingRulesMap(next);
+    return next[botId];
   };
 
   const updateBotRulesDraft = (patch: Partial<BotTradingRules>) => {
@@ -860,6 +937,10 @@ export default function TradeBotsModule() {
     if (!selectedBot || !botRulesDraft) return;
     const sanitized = sanitizeTradingRules(botRulesDraft);
     upsertBotRules(selectedBot.id, sanitized);
+    const persisted = await persistRuntimeConfigForBot(selectedBot.id, {
+      rules: sanitized
+    });
+    if (!persisted) return;
     setBotRulesDraft(sanitized);
     setTradingSymbol(sanitized.symbol);
     if (selectedBotLink.integrationId) {
@@ -880,7 +961,8 @@ export default function TradeBotsModule() {
 
   useEffect(() => {
     if (!selectedBot) return;
-    loadConnectivityContext(selectedBot.id);
+    void loadConnectivityContext(selectedBot.id);
+    void syncRuntimeConfigFromBackend(selectedBot.id);
   }, [selectedBot?.id]);
 
   useEffect(() => {
@@ -937,7 +1019,9 @@ export default function TradeBotsModule() {
       setWebhookProfile(assigned);
       const urls = collectWebhookUrls(assigned);
       if (urls.length > 0) {
-        upsertBotLink(selectedBot.id, { webhookUrl: urls[0] });
+        const links = upsertBotLink(selectedBot.id, { webhookUrl: urls[0] });
+        const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+        if (!persisted) return;
       }
       setModalMessage(urls.length > 0 ? 'TradingView ingress assigned and linked.' : 'TradingView ingress assigned.');
     } catch (error: any) {
@@ -970,14 +1054,16 @@ export default function TradeBotsModule() {
 
   const handleLinkWebhook = (url: string) => {
     if (!selectedBot) return;
-    upsertBotLink(selectedBot.id, { webhookUrl: url });
+    const links = upsertBotLink(selectedBot.id, { webhookUrl: url });
+    void persistRuntimeConfigForBot(selectedBot.id, { links });
     setModalError('');
     setModalMessage('TradingView ingress linked.');
   };
 
   const handleLinkIntegration = (integrationId: string) => {
     if (!selectedBot) return;
-    upsertBotLink(selectedBot.id, { integrationId });
+    const links = upsertBotLink(selectedBot.id, { integrationId });
+    void persistRuntimeConfigForBot(selectedBot.id, { links });
     setModalError('');
     setModalMessage('Exchange integration linked.');
     loadTradingDetails(integrationId);
@@ -985,7 +1071,8 @@ export default function TradeBotsModule() {
 
   const handleLinkExchangeAccount = (exchangeAccountId: string) => {
     if (!selectedBot) return;
-    upsertBotLink(selectedBot.id, { exchangeAccountId });
+    const links = upsertBotLink(selectedBot.id, { exchangeAccountId });
+    void persistRuntimeConfigForBot(selectedBot.id, { links });
     setModalError('');
     setModalMessage('Exchange account linked.');
   };
@@ -997,7 +1084,9 @@ export default function TradeBotsModule() {
     setModalMessage('');
     try {
       const result = await testIntegration(integrationId);
-      upsertBotLink(selectedBot.id, { integrationId });
+      const links = upsertBotLink(selectedBot.id, { integrationId });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
       setIntegrations((prev) =>
         prev.map((integration) =>
           integration.id === integrationId

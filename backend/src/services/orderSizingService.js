@@ -83,18 +83,17 @@ export function roundUpToStep(value, stepSize) {
   return Number(ceiled.toFixed(Math.max(0, decimals)));
 }
 
-export function normalizeBaseSizingConfig(rawConfig = {}, env = process.env) {
+export function normalizeBaseSizingConfig(rawConfig = {}) {
   const baseRule = rawConfig?.baseQtyRule && typeof rawConfig.baseQtyRule === 'object' ? rawConfig.baseQtyRule : rawConfig;
-  const mode = String(rawConfig?.sizingMode || rawConfig?.mode || env.TV_SIZING_MODE || '').trim().toUpperCase();
+  const mode = String(rawConfig?.sizingMode || rawConfig?.mode || '').trim().toUpperCase();
   if (mode && mode !== 'BASE') {
     throw new SizingConfigError(`Unsupported sizingMode "${mode}". Only BASE mode is supported.`);
   }
-  const fixedBaseQty = asNumber(baseRule?.fixedBaseQty ?? env.TV_FIXED_BASE_QTY);
-  const riskPctOfFreeQuote = asNumber(baseRule?.riskPctOfFreeQuote ?? env.TV_RISK_PCT_FREE_QUOTE);
+  const fixedBaseQty = asNumber(baseRule?.fixedBaseQty);
+  const riskPctOfFreeQuote = asNumber(baseRule?.riskPctOfFreeQuote);
   const minQuoteSpend = asNumber(
     baseRule?.minQuoteSpend ??
-    rawConfig?.minQuoteSpend ??
-    env.TV_MIN_QUOTE_SPEND
+    rawConfig?.minQuoteSpend
   );
   const sellMode = normalizeSellMode(baseRule?.sellMode ?? rawConfig?.sellMode);
   const sellFixedBaseQty = asNumber(
@@ -112,7 +111,7 @@ export function normalizeBaseSizingConfig(rawConfig = {}, env = process.env) {
   const hasRiskPct = riskPctOfFreeQuote !== null && riskPctOfFreeQuote > 0;
   if (!hasFixed && !hasRiskPct) {
     throw new SizingConfigError(
-      'Missing sizing configuration. Configure fixedBaseQty or riskPctOfFreeQuote (DB workflow config or env).'
+      'Missing sizing configuration. Configure Trade Bots runtime sizing for the linked integration.'
     );
   }
 
@@ -364,12 +363,105 @@ export async function resolveWorkspaceSizingConfig(workspaceId) {
   return normalizeBaseSizingConfig(dbConfig || {});
 }
 
-export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, side = null, client }) {
-  const sizing = await resolveWorkspaceSizingConfig(workspaceId);
-  const [account, ticker, filters] = await Promise.all([
+function clamp(value, min, max) {
+  const n = asNumber(value);
+  if (n === null) return null;
+  const minNum = asNumber(min);
+  const maxNum = asNumber(max);
+  let out = n;
+  if (minNum !== null) out = Math.max(out, minNum);
+  if (maxNum !== null) out = Math.min(out, maxNum);
+  return out;
+}
+
+function normalizeReferencePriceSource(value) {
+  const normalized = String(value || 'last').trim().toLowerCase();
+  if (normalized === 'mark' || normalized === 'mid' || normalized === 'last') return normalized;
+  return 'last';
+}
+
+function normalizeRuntimeSizingMode(value) {
+  const normalized = String(value || 'balance_pct').trim().toLowerCase();
+  if (['balance_pct', 'fixed_quote', 'risk_per_trade_pct', 'volatility_adjusted'].includes(normalized)) {
+    return normalized;
+  }
+  return 'balance_pct';
+}
+
+function extractTradeBotRuntimeSizingForIntegration(workflowConfig = {}, integrationId) {
+  const wantedIntegrationId = String(integrationId || '').trim();
+  if (!wantedIntegrationId) return null;
+  const runtimeConfigs = workflowConfig?.tradeBots?.runtimeConfigs;
+  if (!runtimeConfigs || typeof runtimeConfigs !== 'object' || Array.isArray(runtimeConfigs)) return null;
+
+  for (const [botId, entry] of Object.entries(runtimeConfigs)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const linkedIntegrationId = String(entry?.links?.integrationId || '').trim();
+    if (!linkedIntegrationId) continue;
+    if (linkedIntegrationId !== wantedIntegrationId) continue;
+    const rules = entry?.rules && typeof entry.rules === 'object' ? entry.rules : null;
+    if (!rules) continue;
+    return {
+      botId,
+      rules
+    };
+  }
+  return null;
+}
+
+function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
+  if (!rawRules || typeof rawRules !== 'object') {
+    throw new SizingConfigError('Missing Trade Bot runtime rules for sizing.');
+  }
+  const sizingMode = normalizeRuntimeSizingMode(rawRules?.sizingMode);
+  const allocationValue = asNumber(rawRules?.allocationValue);
+  if (allocationValue === null || allocationValue < 0) {
+    throw new SizingConfigError('Trade Bot allocationValue is required and must be >= 0.');
+  }
+  const reinvestmentPctRaw = asNumber(rawRules?.reinvestmentPct);
+  const reinvestmentPct = reinvestmentPctRaw === null ? 100 : Math.max(0, Math.min(100, reinvestmentPctRaw));
+  const minQuoteSpendRaw = asNumber(rawRules?.minQuoteSpend);
+  const maxQuoteSpendRaw = asNumber(rawRules?.maxQuoteSpend);
+  const minQuoteSpend = minQuoteSpendRaw !== null && minQuoteSpendRaw > 0 ? minQuoteSpendRaw : 0;
+  const maxQuoteSpend = maxQuoteSpendRaw !== null && maxQuoteSpendRaw > 0 ? Math.max(maxQuoteSpendRaw, minQuoteSpend) : null;
+
+  return {
+    sizingMode,
+    allocationValue,
+    reinvestmentPct,
+    minQuoteSpend,
+    maxQuoteSpend,
+    referencePriceSource: normalizeReferencePriceSource(rawRules?.referencePriceSource)
+  };
+}
+
+async function resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrationId) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true, workflowConfig: true }
+  });
+  if (!workspace) {
+    throw new SizingConfigError('Workspace not found while resolving Trade Bot runtime sizing config.');
+  }
+  const runtimeMatch = extractTradeBotRuntimeSizingForIntegration(workspace.workflowConfig || {}, integrationId);
+  if (!runtimeMatch || !runtimeMatch.rules) {
+    throw new SizingConfigError(
+      'No Trade Bot runtime sizing config linked to this integration. Configure sizing in Trade Bots.'
+    );
+  }
+  return {
+    botId: runtimeMatch.botId,
+    sizing: normalizeTradeBotRuntimeSizingConfig(runtimeMatch.rules)
+  };
+}
+
+export async function computeMexcBaseQuantityForSignal({ workspaceId, integrationId, symbol, side = null, client }) {
+  const [{ botId, sizing }, account, ticker, filters, bookTicker] = await Promise.all([
+    resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrationId),
     client.getAccount(),
     client.getTickerPrice(symbol),
-    client.getSymbolFilters(symbol)
+    client.getSymbolFilters(symbol),
+    typeof client.getBookTicker === 'function' ? client.getBookTicker(symbol).catch(() => null) : Promise.resolve(null)
   ]);
 
   const normalizedSymbol = String(symbol || '').toUpperCase();
@@ -382,73 +474,120 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, si
     : null;
   const freeQuote = asNumber(quoteBalance?.free) || 0;
   const freeBase = asNumber(baseBalance?.free) || 0;
-  const computedPrice = asNumber(ticker?.price);
+  const lastPrice = asNumber(ticker?.price);
+  const markPrice = asNumber(bookTicker?.mark) || asNumber(bookTicker?.mid) || lastPrice;
+  const midPrice = asNumber(bookTicker?.mid) || markPrice || lastPrice;
+  const computedPrice =
+    sizing.referencePriceSource === 'mark'
+      ? markPrice
+      : sizing.referencePriceSource === 'mid'
+        ? midPrice
+        : lastPrice || markPrice || midPrice;
   const stepSize = asNumber(filters?.stepSize) || 0;
   const minQty = asNumber(filters?.minQty) || 0;
   const minNotional = asNumber(filters?.minNotional) || 0;
   const normalizedSide = side ? String(side).toUpperCase() : null;
+  const stepSizeNum = toFiniteOrZero(stepSize);
+  const minQtyNum = toFiniteOrZero(minQty);
+  const minNotionalNum = toFiniteOrZero(minNotional);
 
-  const sizingDebugBase = {
+  const sizingDebug = {
     symbol: normalizedSymbol || null,
     side: normalizedSide,
+    botId: botId || null,
     freeBase,
     freeQuote,
     priceUsed: computedPrice,
+    lastPrice,
+    markPrice,
+    midPrice,
     sizingMode: sizing.sizingMode,
-    fixedBaseQty: sizing.fixedBaseQty,
-    riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
+    allocationValue: sizing.allocationValue,
+    reinvestmentPct: sizing.reinvestmentPct,
+    referencePriceSource: sizing.referencePriceSource,
     minQuoteSpend: sizing.minQuoteSpend,
-    sellMode: sizing.sellMode,
-    sellFixedBaseQty: sizing.sellFixedBaseQty,
-    sellPctOfFreeBase: sizing.sellPctOfFreeBase,
-    stepSize,
-    minQty,
-    minNotional
+    maxQuoteSpend: sizing.maxQuoteSpend,
+    stepSize: stepSizeNum,
+    minQty: minQtyNum,
+    minNotional: minNotionalNum,
+    qtyRaw: null,
+    qtyAfterStepRounding: null,
+    quoteSpendComputed: null,
+    notionalAfterRounding: null,
+    effectiveMinNotional: null,
+    rejectedReason: null
   };
 
-  let quantity;
-  try {
-    if (normalizedSide === 'SELL') {
-      quantity = computeSellQuantityFromInputs({
-        freeBase,
-        sellMode: sizing.sellMode,
-        sellFixedBaseQty: sizing.sellFixedBaseQty,
-        sellPctOfFreeBase: sizing.sellPctOfFreeBase,
-        price: computedPrice,
-        stepSize,
-        minNotional,
-        minQty,
-        sizingDebugBase
-      });
-    } else {
-      quantity = computeBaseQuantityFromInputs({
-        fixedBaseQty: sizing.fixedBaseQty,
-        riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
-        minQuoteSpend: sizing.minQuoteSpend,
-        freeQuote,
-        price: computedPrice,
-        stepSize,
-        minNotional,
-        minQty,
-        sizingDebugBase
-      });
-    }
-  } catch (error) {
-    if (error instanceof SizingConfigError && !error.sizingDebug) {
-      error.sizingDebug = {
-        ...sizingDebugBase,
-        qtyRaw: null,
-        quoteSpendComputed: null,
-        qtyAfterStepRounding: null,
-        notionalAfterRounding: null,
-        rejectedReason: 'sizing_error'
-      };
-    }
-    throw error;
+  if (!computedPrice || computedPrice <= 0) {
+    throwSizingError('Cannot compute quantity without a valid market price.', sizingDebug, 'invalid_price');
+  }
+
+  let quoteSpendRaw;
+  if (sizing.sizingMode === 'fixed_quote') {
+    quoteSpendRaw = sizing.allocationValue;
+  } else {
+    const pctSpend = freeQuote * (sizing.allocationValue / 100);
+    const reinvestmentFactor = Math.max(0, Math.min(1, sizing.reinvestmentPct / 100));
+    quoteSpendRaw = pctSpend * reinvestmentFactor;
+  }
+  const quoteSpendComputed = clamp(quoteSpendRaw, sizing.minQuoteSpend, sizing.maxQuoteSpend);
+  if (!quoteSpendComputed || quoteSpendComputed <= 0) {
+    throwSizingError('Trade Bot quote spend resolves to zero.', sizingDebug, 'invalid_quote_spend');
+  }
+
+  if (normalizedSide !== 'SELL' && quoteSpendComputed > freeQuote + 1e-12) {
+    throwSizingError(
+      `Configured quote spend ${quoteSpendComputed} exceeds available quote balance ${freeQuote}.`,
+      sizingDebug,
+      'insufficient_quote_for_requested_qty'
+    );
+  }
+
+  const qtyRaw = quoteSpendComputed / computedPrice;
+  const qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
+  const notional = qtyRounded * computedPrice;
+  const effectiveMinNotional = Math.max(minNotionalNum, sizing.minQuoteSpend || 0);
+
+  sizingDebug.qtyRaw = asNumber(qtyRaw);
+  sizingDebug.quoteSpendComputed = asNullableNumber(quoteSpendComputed);
+  sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
+  sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
+  sizingDebug.effectiveMinNotional = effectiveMinNotional;
+
+  if (!qtyRounded || qtyRounded <= 0) {
+    throwSizingError(
+      'Computed quantity is zero after applying step size rounding.',
+      sizingDebug,
+      'below_step_size'
+    );
+  }
+  if (minQtyNum > 0 && qtyRounded < minQtyNum) {
+    throwSizingError(
+      `Quantity ${qtyRounded} is below exchange minQty ${minQtyNum}.`,
+      sizingDebug,
+      'below_min_qty'
+    );
+  }
+  if (effectiveMinNotional > 0 && notional < effectiveMinNotional) {
+    throwSizingError(
+      `Order value ${notional} is below effective minNotional ${effectiveMinNotional}.`,
+      sizingDebug,
+      'below_min_notional'
+    );
+  }
+  if (normalizedSide === 'SELL' && qtyRounded > freeBase + 1e-12) {
+    throwSizingError(
+      `Configured sell quantity ${qtyRounded} exceeds available base balance ${freeBase}.`,
+      sizingDebug,
+      'insufficient_base_for_requested_qty'
+    );
   }
 
   return {
-    ...quantity,
+    qtyRaw,
+    qtyRounded,
+    notional,
+    quoteSpendComputed,
     freeQuote,
     freeBase,
     computedPrice,
@@ -458,7 +597,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, symbol, si
     minQty,
     minNotional,
     sizing,
-    sizingDebug: quantity.sizingDebug
+    sizingDebug
   };
 }
 

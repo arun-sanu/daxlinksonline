@@ -83,6 +83,42 @@ function createWorkflowNodeId(botId) {
   return `bot:${botId}`;
 }
 
+function normalizeRuntimeLink(value = null) {
+  const links = value && typeof value === 'object' ? value : {};
+  const webhookUrlRaw = links?.webhookUrl;
+  const integrationIdRaw = links?.integrationId;
+  const exchangeAccountIdRaw = links?.exchangeAccountId;
+
+  const webhookUrl = webhookUrlRaw === null || webhookUrlRaw === undefined || webhookUrlRaw === ''
+    ? null
+    : String(webhookUrlRaw).trim();
+  const integrationId = integrationIdRaw === null || integrationIdRaw === undefined || integrationIdRaw === ''
+    ? null
+    : String(integrationIdRaw).trim();
+  const exchangeAccountId = exchangeAccountIdRaw === null || exchangeAccountIdRaw === undefined || exchangeAccountIdRaw === ''
+    ? null
+    : String(exchangeAccountIdRaw).trim();
+  const updatedAt = links?.updatedAt ? String(links.updatedAt) : null;
+
+  return {
+    webhookUrl,
+    integrationId,
+    exchangeAccountId,
+    updatedAt
+  };
+}
+
+function normalizeRuntimeRules(value = null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function extractRuntimeConfigMap(workflowConfig = {}) {
+  const map = workflowConfig?.tradeBots?.runtimeConfigs;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+  return map;
+}
+
 function normalizeInstanceStatus(value) {
   const normalized = String(value || 'stopped')
     .trim()
@@ -450,6 +486,63 @@ export async function getTradeBotDetail(workspaceId, botId) {
       workflow: `/api/v1/trade-bots/${workspaceId}/bots/${bot.id}/workflow`,
       workflowNodeId: nodeId
     }
+  };
+}
+
+export async function getTradeBotRuntimeConfig(workspaceId, botId) {
+  await assertBotInWorkspace(workspaceId, botId);
+  const cfg = await getWorkspaceWorkflowConfig(workspaceId);
+  const runtimeMap = extractRuntimeConfigMap(cfg);
+  const current = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
+  const links = normalizeRuntimeLink(current.links || null);
+  const rules = normalizeRuntimeRules(current.rules || null);
+
+  return {
+    workspaceId,
+    botId,
+    links,
+    rules,
+    updatedAt: current.updatedAt || links.updatedAt || null
+  };
+}
+
+export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = {}) {
+  await assertBotInWorkspace(workspaceId, botId);
+  const cfg = await getWorkspaceWorkflowConfig(workspaceId);
+  const runtimeMap = extractRuntimeConfigMap(cfg);
+  const previous = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
+
+  const nextLinks = Object.prototype.hasOwnProperty.call(payload, 'links')
+    ? normalizeRuntimeLink(payload.links || null)
+    : normalizeRuntimeLink(previous.links || null);
+  const nextRules = Object.prototype.hasOwnProperty.call(payload, 'rules')
+    ? normalizeRuntimeRules(payload.rules || null)
+    : normalizeRuntimeRules(previous.rules || null);
+
+  const nextEntry = {
+    links: nextLinks,
+    rules: nextRules,
+    updatedAt: new Date().toISOString()
+  };
+
+  const nextRuntimeMap = {
+    ...runtimeMap,
+    [botId]: nextEntry
+  };
+
+  const nextConfig = {
+    ...cfg,
+    tradeBots: {
+      ...(cfg.tradeBots && typeof cfg.tradeBots === 'object' ? cfg.tradeBots : {}),
+      runtimeConfigs: nextRuntimeMap
+    }
+  };
+
+  await saveWorkspaceWorkflowConfig(workspaceId, nextConfig);
+  return {
+    workspaceId,
+    botId,
+    ...nextEntry
   };
 }
 

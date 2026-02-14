@@ -149,6 +149,20 @@ export function createMexcSpotClient({
       };
     },
 
+    async getBookTicker(symbol) {
+      const payload = await publicRequest('/api/v3/ticker/bookTicker', { symbol: String(symbol || '').toUpperCase() });
+      const bid = asNumber(payload?.bidPrice);
+      const ask = asNumber(payload?.askPrice);
+      const mid = bid && ask ? (bid + ask) / 2 : null;
+      return {
+        symbol: payload?.symbol || String(symbol || '').toUpperCase(),
+        bid: bid || null,
+        ask: ask || null,
+        mid,
+        mark: mid
+      };
+    },
+
     async getExchangeInfo(symbol) {
       return publicRequest('/api/v3/exchangeInfo', { symbol: String(symbol || '').toUpperCase() });
     },

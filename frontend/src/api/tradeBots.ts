@@ -25,6 +25,19 @@ export type VersionScanResult = {
   sbom?: any;
 };
 
+export type TradeBotRuntimeConfig = {
+  workspaceId: string;
+  botId: string;
+  links: {
+    webhookUrl?: string | null;
+    integrationId?: string | null;
+    exchangeAccountId?: string | null;
+    updatedAt?: string | null;
+  };
+  rules: Record<string, any> | null;
+  updatedAt?: string | null;
+};
+
 function getWorkspaceId() {
   return localStorage.getItem('workspaceId') || '00000000-0000-0000-0000-000000000000';
 }
@@ -375,5 +388,28 @@ export async function listRentals(): Promise<ListResponse<Rental>> {
   } catch {
     return { items: [] };
   }
+}
+
+export async function getTradeBotRuntimeConfig(botId: string): Promise<TradeBotRuntimeConfig | null> {
+  const ws = getWorkspaceId();
+  const url = `/api/v1/trade-bots/${ws}/bots/${botId}/runtime-config`;
+  return fetchJson<TradeBotRuntimeConfig>(url, undefined, 'Failed to load bot runtime config').catch(() => null);
+}
+
+export async function saveTradeBotRuntimeConfig(
+  botId: string,
+  payload: Partial<Pick<TradeBotRuntimeConfig, 'links' | 'rules'>>
+): Promise<TradeBotRuntimeConfig | null> {
+  const ws = getWorkspaceId();
+  const url = `/api/v1/trade-bots/${ws}/bots/${botId}/runtime-config`;
+  return fetchJson<TradeBotRuntimeConfig>(
+    url,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(payload || {})
+    },
+    'Failed to save bot runtime config'
+  ).catch(() => null);
 }
 import { withApiBase } from './client';

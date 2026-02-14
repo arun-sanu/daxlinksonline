@@ -4,6 +4,7 @@ import {
   createTradeBot,
   createTradeBotInstance,
   getTradeBotDetail,
+  getTradeBotRuntimeConfig,
   getTradeBotMonitoring,
   getTradeBotWorkflowLink,
   listMarketBots,
@@ -14,6 +15,7 @@ import {
   listTradeBots,
   normalizeBotLanguage,
   rentMarketBot,
+  upsertTradeBotRuntimeConfig,
   uploadTradeBotVersion
 } from '../services/tradeBotsService.js';
 import { recordAudit } from '../services/auditService.js';
@@ -78,6 +80,22 @@ const rentPayloadSchema = z.object({
     .regex(/^[A-Z0-9/_-]{4,30}$/)
     .optional()
 });
+
+const runtimeLinksSchema = z.object({
+  webhookUrl: z.string().trim().max(2048).nullable().optional(),
+  integrationId: z.string().trim().max(128).nullable().optional(),
+  exchangeAccountId: z.string().trim().max(128).nullable().optional(),
+  updatedAt: z.string().trim().max(64).nullable().optional()
+});
+
+const runtimeConfigPatchSchema = z
+  .object({
+    links: runtimeLinksSchema.optional(),
+    rules: z.record(z.any()).nullable().optional()
+  })
+  .refine((value) => Object.prototype.hasOwnProperty.call(value, 'links') || Object.prototype.hasOwnProperty.call(value, 'rules'), {
+    message: 'links or rules is required'
+  });
 
 function parseBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -199,6 +217,29 @@ export async function handleGetTradeBot(req, res, next) {
     const { workspaceId, botId } = botParamSchema.parse(req.params || {});
     const bot = await getTradeBotDetail(workspaceId, botId);
     res.json(bot);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleGetTradeBotRuntimeConfig(req, res, next) {
+  try {
+    const { workspaceId, botId } = botParamSchema.parse(req.params || {});
+    const runtime = await getTradeBotRuntimeConfig(workspaceId, botId);
+    res.json(runtime);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleUpsertTradeBotRuntimeConfig(req, res, next) {
+  try {
+    const { workspaceId, botId } = botParamSchema.parse(req.params || {});
+    const payload = runtimeConfigPatchSchema.parse(req.body || {});
+    const runtime = await upsertTradeBotRuntimeConfig(workspaceId, botId, payload);
+    res.json(runtime);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
