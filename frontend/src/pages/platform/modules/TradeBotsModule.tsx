@@ -104,6 +104,10 @@ function integrationIsHealthy(status?: string | null) {
   return ['ok', 'connected', 'active', 'enabled', 'healthy', 'ready', 'success'].some((token) => text.includes(token));
 }
 
+function connectivityBadgeClass(connected: boolean) {
+  return connected ? 'border-emerald-300/35 bg-emerald-500/15 text-emerald-100' : 'border-amber-300/30 bg-amber-500/15 text-amber-100';
+}
+
 function estimatedBandwidthKbps(bot: TradeBotRow | null, connectedEndpoints: number) {
   if (!bot || connectedEndpoints <= 0) return '0.0 kbps';
   const instances = Number(bot.counts?.instances || 0);
@@ -470,7 +474,7 @@ export default function TradeBotsModule() {
         </section>
       )}
 
-      {activeTab === 'bots' && !selectedBot && (
+      {activeTab === 'bots' && (
         <section className="card-shell space-y-4">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -538,165 +542,6 @@ export default function TradeBotsModule() {
               ))}
             </div>
           )}
-        </section>
-      )}
-
-      {activeTab === 'bots' && selectedBot && (
-        <section className="space-y-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="section-label">Bot Connectivity</p>
-              <h2 className="text-3xl font-semibold text-main">{selectedBot.name}</h2>
-              <p className="mt-1 text-sm text-gray-300">Full-page connectivity control for TradingView ingress, exchange links, and runtime checks.</p>
-            </div>
-            <button type="button" className="btn btn-secondary btn-small" onClick={closeBotPopup}>
-              ← Back To Bots
-            </button>
-          </div>
-
-          {modalError && <div className="border border-rose-400/35 bg-rose-500/12 px-4 py-3 text-sm text-rose-100">{modalError}</div>}
-          {modalMessage && <div className="border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">{modalMessage}</div>}
-
-          <div className="flex flex-wrap items-center gap-2 border-y border-white/10 py-3 text-xs uppercase tracking-[0.12em] text-gray-300">
-            <span>Status:</span>
-            <span className="text-white">{overallConnectivityStatus}</span>
-            <span className="text-gray-500">•</span>
-            <span>Bandwidth:</span>
-            <span className="text-white">{connectivityBandwidth}</span>
-            <span className="text-gray-500">•</span>
-            <span>TradingView:</span>
-            <span className={tradingViewConnected ? 'text-emerald-200' : 'text-amber-200'}>{tradingViewConnected ? 'Connected' : 'Not Linked'}</span>
-            <span className="text-gray-500">•</span>
-            <span>Exchange:</span>
-            <span className={exchangeConnected ? 'text-emerald-200' : 'text-amber-200'}>
-              {exchangeConnected ? linkedIntegration?.exchange || 'Connected' : 'Not Linked'}
-            </span>
-          </div>
-
-          <div className="grid gap-8 xl:grid-cols-3">
-            <section className="space-y-3 xl:border-r xl:border-white/10 xl:pr-6">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-white">TradingView ingress</p>
-                <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
-                  Assign
-                </button>
-              </div>
-              <p className="text-xs text-gray-400">Available webhook URLs for TradingView alerts.</p>
-              <div className="max-h-72 overflow-auto border-y border-white/10 py-1">
-                {webhookUrls.length === 0 && <p className="px-1 py-2 text-xs text-gray-400">No ingress URLs assigned yet.</p>}
-                {webhookUrls.map((url) => {
-                  const linked = selectedBotLink.webhookUrl === url;
-                  return (
-                    <div key={url} className="flex items-start justify-between gap-2 border-b border-white/10 px-1 py-2 last:border-b-0">
-                      <div className="min-w-0">
-                        <p className="break-all font-mono text-[11px] text-gray-200">{url}</p>
-                        <p className={`mt-1 text-[10px] uppercase tracking-[0.12em] ${linked ? 'text-emerald-200' : 'text-gray-500'}`}>
-                          {linked ? 'linked' : 'available'}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="rounded border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary-100"
-                        onClick={() => handleLinkWebhook(url)}
-                      >
-                        Link
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <button type="button" className="btn btn-secondary btn-small" onClick={handleVerifyIngress} disabled={modalLoading}>
-                Check Connectivity
-              </button>
-            </section>
-
-            <section className="space-y-3 xl:border-r xl:border-white/10 xl:pr-6">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-white">Exchange integrations</p>
-                <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
-                  Refresh
-                </button>
-              </div>
-              <p className="text-xs text-gray-400">Link integration and run connection test.</p>
-              <div className="max-h-72 overflow-auto border-y border-white/10 py-1">
-                {integrations.length === 0 && <p className="px-1 py-2 text-xs text-gray-400">No exchange integrations found.</p>}
-                {integrations.map((integration) => {
-                  const linked = selectedBotLink.integrationId === integration.id;
-                  const healthy = integrationIsHealthy(integration.status);
-                  return (
-                    <div key={integration.id} className="border-b border-white/10 px-1 py-2 last:border-b-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-100">{integration.label || integration.exchange}</p>
-                          <p className="text-[11px] uppercase tracking-[0.12em] text-gray-400">
-                            {integration.exchange} · {integration.environment}
-                          </p>
-                        </div>
-                        <span className={healthy ? 'text-[10px] uppercase tracking-[0.12em] text-emerald-200' : 'text-[10px] uppercase tracking-[0.12em] text-amber-200'}>
-                          {integration.status || 'unknown'}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[11px] text-gray-400">Last tested {formatDate(integration.lastTestedAt || null)}</p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary-100"
-                          onClick={() => handleLinkIntegration(integration.id)}
-                        >
-                          {linked ? 'Linked' : 'Link'}
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => handleTestIntegration(integration.id)}
-                          disabled={testingIntegrationId === integration.id}
-                        >
-                          {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="space-y-3">
-              <p className="text-sm font-semibold text-white">Exchange accounts</p>
-              <p className="text-xs text-gray-400">Optional account link used by bot runtime in this workspace.</p>
-              <div className="max-h-72 overflow-auto border-y border-white/10 py-1">
-                {exchangeAccounts.length === 0 && <p className="px-1 py-2 text-xs text-gray-400">No exchange accounts configured.</p>}
-                {exchangeAccounts.map((account) => {
-                  const linked = selectedBotLink.exchangeAccountId === account.id;
-                  return (
-                    <div key={account.id} className="flex items-start justify-between gap-2 border-b border-white/10 px-1 py-2 last:border-b-0">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-100">{account.name}</p>
-                        <p className="text-[11px] uppercase tracking-[0.12em] text-gray-400">
-                          {account.venue} {account.isSandbox ? '· sandbox' : '· live'}
-                        </p>
-                        <p className="text-[11px] text-gray-500">Updated {formatDate(account.updatedAt)}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="rounded border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary-100"
-                        onClick={() => handleLinkExchangeAccount(account.id)}
-                      >
-                        {linked ? 'Linked' : 'Link'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-gray-300">
-                Linked account: {linkedExchangeAccount ? `${linkedExchangeAccount.name} (${linkedExchangeAccount.venue})` : 'none'}
-              </p>
-            </section>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs text-gray-300">
-            <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>
-            <p>Linked exchange integration: {linkedIntegration?.label || linkedIntegration?.exchange || 'none'}</p>
-          </div>
         </section>
       )}
 
@@ -775,6 +620,180 @@ export default function TradeBotsModule() {
             Last sync: {formatDate(lastLoadedAt)} {botsError || rentalsError ? '• check alert banners for fetch errors.' : '• no load errors detected.'}
           </div>
         </section>
+      )}
+
+      {selectedBot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-5 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
+          <div
+            className="w-full max-w-6xl overflow-hidden rounded-3xl border border-white/20 bg-white/[0.07] shadow-[0_40px_100px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="section-label">Bot Connectivity</p>
+                <h3 className="text-2xl font-semibold text-main">{selectedBot.name}</h3>
+                <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-small" onClick={closeBotPopup}>
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              {modalError && <div className="rounded-xl border border-rose-400/35 bg-rose-500/12 p-3 text-sm text-rose-100">{modalError}</div>}
+              {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
+
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
+                  <p className="text-[11px] text-gray-400">estimated telemetry</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
+                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
+                    {tradingViewConnected ? 'connected' : 'not linked'}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
+                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
+                    {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-3 xl:grid-cols-3">
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">TradingView ingress</p>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
+                      Assign
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Available webhook URLs for TradingView alerts.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {webhookUrls.length === 0 && <p className="text-xs text-gray-400">No ingress URLs assigned yet.</p>}
+                    {webhookUrls.map((url) => {
+                      const linked = selectedBotLink.webhookUrl === url;
+                      return (
+                        <div key={url} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <p className="break-all font-mono text-[11px] text-gray-200">{url}</p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${connectivityBadgeClass(linked)}`}>
+                              {linked ? 'linked' : 'available'}
+                            </span>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkWebhook(url)}
+                            >
+                              Link
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button type="button" className="mt-3 btn btn-secondary btn-small" onClick={handleVerifyIngress} disabled={modalLoading}>
+                    Check Connectivity
+                  </button>
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">Exchange integrations</p>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
+                      Refresh
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Link any exchange integration and run a connection test.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {integrations.length === 0 && <p className="text-xs text-gray-400">No exchange integrations found.</p>}
+                    {integrations.map((integration) => {
+                      const linked = selectedBotLink.integrationId === integration.id;
+                      const healthy = integrationIsHealthy(integration.status);
+                      return (
+                        <div key={integration.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-100">{integration.label || integration.exchange}</p>
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-gray-400">
+                                {integration.exchange} · {integration.environment}
+                              </p>
+                            </div>
+                            <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${connectivityBadgeClass(healthy)}`}>
+                              {integration.status || 'unknown'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-gray-400">Last tested {formatDate(integration.lastTestedAt || null)}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkIntegration(integration.id)}
+                            >
+                              {linked ? 'Linked' : 'Link'}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleTestIntegration(integration.id)}
+                              disabled={testingIntegrationId === integration.id}
+                            >
+                              {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="text-sm font-semibold text-white">Exchange accounts</p>
+                  <p className="mt-1 text-xs text-gray-400">Optional account link used by bot runtime in this workspace.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {exchangeAccounts.length === 0 && <p className="text-xs text-gray-400">No exchange accounts configured.</p>}
+                    {exchangeAccounts.map((account) => {
+                      const linked = selectedBotLink.exchangeAccountId === account.id;
+                      return (
+                        <div key={account.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <p className="text-sm font-semibold text-gray-100">{account.name}</p>
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-400">
+                            {account.venue} {account.isSandbox ? '· sandbox' : '· live'}
+                          </p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <p className="text-[11px] text-gray-400">Updated {formatDate(account.updatedAt)}</p>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkExchangeAccount(account.id)}
+                            >
+                              {linked ? 'Linked' : 'Link'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2 text-[11px] text-gray-300">
+                    Linked account: {linkedExchangeAccount ? `${linkedExchangeAccount.name} (${linkedExchangeAccount.venue})` : 'none'}
+                  </div>
+                </section>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
+                <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>
+                <p>Linked exchange integration: {linkedIntegration?.label || linkedIntegration?.exchange || 'none'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
