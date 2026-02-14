@@ -623,16 +623,41 @@ export default function TradeBotsModule() {
       )}
 
       {selectedBot && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-5 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
           <div
             className="w-full max-w-6xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
-              <div>
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
+              <div className="max-w-4xl space-y-3">
+                <div>
                 <p className="section-label">Bot Connectivity</p>
                 <h3 className="text-2xl font-semibold text-main">{selectedBot.name}</h3>
                 <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
+                    <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
+                    <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
+                    <p className="text-[11px] text-gray-400">estimated telemetry</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
+                    <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
+                      {tradingViewConnected ? 'connected' : 'not linked'}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
+                    <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
+                      {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
+                    </span>
+                  </div>
+                </div>
               </div>
               <button type="button" className="btn btn-secondary btn-small" onClick={closeBotPopup}>
                 Close
@@ -642,30 +667,6 @@ export default function TradeBotsModule() {
             <div className="space-y-4 px-5 py-4">
               {modalError && <div className="rounded-xl border border-rose-400/35 bg-rose-500/12 p-3 text-sm text-rose-100">{modalError}</div>}
               {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
-                  <p className="text-[11px] text-gray-400">estimated telemetry</p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
-                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
-                    {tradingViewConnected ? 'connected' : 'not linked'}
-                  </span>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
-                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
-                    {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
-                  </span>
-                </div>
-              </div>
 
               <div className="grid gap-3 xl:grid-cols-3">
                 <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
