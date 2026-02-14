@@ -122,7 +122,7 @@ export async function fetchWebhookDeliveries(limit = 10): Promise<WebhookDeliver
   return deliveries.items || [];
 }
 
-type MyWebhookResponse = {
+export type MyWebhookResponse = {
   url?: string | null;
   secret?: string | null;
   hmacKey?: string | null;

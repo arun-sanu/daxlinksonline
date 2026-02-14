@@ -1,4 +1,4 @@
-type Integration = {
+export type Integration = {
   id: string;
   workspaceId: string;
   exchange: string;

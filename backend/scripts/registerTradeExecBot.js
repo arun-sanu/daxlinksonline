@@ -1,7 +1,8 @@
 import { prisma } from '../src/utils/prisma.js';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
-const BOT_NAME = 'trade-exec-bot';
+const BOT_NAME = 'moneyplantbot1-robot';
+const LEGACY_BOT_NAMES = ['trade-exec-bot'];
 
 function parseArg(key, fallback = '') {
   const match = process.argv.find((entry) => entry.startsWith(`--${key}=`));
@@ -21,9 +22,15 @@ async function ensureTradeExecBot(workspaceId) {
   let bot = await prisma.bot.findFirst({
     where: {
       workspaceId,
-      name: BOT_NAME
+      name: { in: [BOT_NAME, ...LEGACY_BOT_NAMES] }
     }
   });
+  if (bot && bot.name !== BOT_NAME) {
+    bot = await prisma.bot.update({
+      where: { id: bot.id },
+      data: { name: BOT_NAME }
+    });
+  }
   if (!bot) {
     bot = await prisma.bot.create({
       data: {
@@ -46,7 +53,7 @@ async function ensureTradeExecBot(workspaceId) {
         notes: JSON.stringify({
           language: 'python',
           entrypoint: 'app.main:app',
-          originalFilename: 'trade-exec-bot',
+          originalFilename: BOT_NAME,
           uploadedAt: new Date().toISOString(),
           userNotes: 'Managed marketplace listing'
         })

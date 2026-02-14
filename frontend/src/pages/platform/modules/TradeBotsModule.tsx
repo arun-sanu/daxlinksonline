@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { listBots, listRentals } from '../../../api/tradeBots';
-import type { Bot, Rental } from '../../../api/types';
+import { listBots, listExchangeAccounts, listRentals } from '../../../api/tradeBots';
+import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
+import { listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
+import type { Bot, ExchangeAccount, Rental } from '../../../api/types';
 
 type TradeBotRow = Bot & {
   latestVersion?: { id?: string | null; status?: string | null; language?: string | null } | null;
@@ -11,6 +13,8 @@ type TradeBotRow = Bot & {
 type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
+const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
+const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
 
 function getWorkspaceId() {
   try {
@@ -41,6 +45,77 @@ function versionText(bot: TradeBotRow) {
   return 'No version';
 }
 
+type BotConnectivityLink = {
+  webhookUrl?: string | null;
+  integrationId?: string | null;
+  exchangeAccountId?: string | null;
+  updatedAt?: string | null;
+};
+
+function readBotLinks(): Record<string, BotConnectivityLink> {
+  try {
+    const raw = localStorage.getItem(BOT_LINKS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeBotLinks(next: Record<string, BotConnectivityLink>) {
+  try {
+    localStorage.setItem(BOT_LINKS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function normalizeBotName(name: string) {
+  if (String(name || '').trim().toLowerCase() === 'trade-exec-bot') {
+    return BOT_CANONICAL_NAME;
+  }
+  return name;
+}
+
+function collectWebhookUrls(profile: MyWebhookResponse | null): string[] {
+  if (!profile) return [];
+  const values = new Set<string>();
+  if (profile.url) values.add(String(profile.url));
+  for (const record of profile.dnsRecords || []) {
+    if (record?.url) values.add(String(record.url));
+  }
+  return Array.from(values);
+}
+
+function normalizeConnectionText(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function integrationIsHealthy(status?: string | null) {
+  const text = normalizeConnectionText(status);
+  if (!text) return false;
+  if (['failed', 'error', 'disabled', 'disconnected', 'revoked', 'invalid'].some((token) => text.includes(token))) {
+    return false;
+  }
+  return ['ok', 'connected', 'active', 'enabled', 'healthy', 'ready', 'success'].some((token) => text.includes(token));
+}
+
+function connectivityBadgeClass(connected: boolean) {
+  return connected ? 'border-emerald-300/35 bg-emerald-500/15 text-emerald-100' : 'border-amber-300/30 bg-amber-500/15 text-amber-100';
+}
+
+function estimatedBandwidthKbps(bot: TradeBotRow | null, connectedEndpoints: number) {
+  if (!bot || connectedEndpoints <= 0) return '0.0 kbps';
+  const instances = Number(bot.counts?.instances || 0);
+  const orders = Number(bot.counts?.orders || 0);
+  const estimate = 8 + instances * 5.5 + Math.min(orders, 1000) * 0.08 + connectedEndpoints * 2.3;
+  return `${estimate.toFixed(1)} kbps`;
+}
+
 export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [bots, setBots] = useState<TradeBotRow[]>([]);
@@ -51,6 +126,43 @@ export default function TradeBotsModule() {
   const [query, setQuery] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [automationEnabled, setAutomationEnabled] = useState(true);
+  const [selectedBot, setSelectedBot] = useState<TradeBotRow | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [modalMessage, setModalMessage] = useState('');
+  const [webhookProfile, setWebhookProfile] = useState<MyWebhookResponse | null>(null);
+  const [exchangeAccounts, setExchangeAccounts] = useState<ExchangeAccount[]>([]);
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [testingIntegrationId, setTestingIntegrationId] = useState<string | null>(null);
+  const [botLinks, setBotLinks] = useState<Record<string, BotConnectivityLink>>(() => readBotLinks());
+
+  const selectedBotLink = useMemo<BotConnectivityLink>(() => {
+    if (!selectedBot) return {};
+    return botLinks[selectedBot.id] || {};
+  }, [botLinks, selectedBot]);
+
+  const webhookUrls = useMemo(() => collectWebhookUrls(webhookProfile), [webhookProfile]);
+
+  const linkedIntegration = useMemo(
+    () => integrations.find((integration) => integration.id === selectedBotLink.integrationId) || null,
+    [integrations, selectedBotLink.integrationId]
+  );
+
+  const linkedExchangeAccount = useMemo(
+    () => exchangeAccounts.find((account) => account.id === selectedBotLink.exchangeAccountId) || null,
+    [exchangeAccounts, selectedBotLink.exchangeAccountId]
+  );
+
+  const tradingViewConnected = useMemo(() => {
+    if (!selectedBotLink.webhookUrl) return false;
+    return webhookUrls.includes(selectedBotLink.webhookUrl);
+  }, [selectedBotLink.webhookUrl, webhookUrls]);
+
+  const exchangeConnected = useMemo(() => integrationIsHealthy(linkedIntegration?.status), [linkedIntegration?.status]);
+
+  const connectedEndpoints = Number(tradingViewConnected) + Number(exchangeConnected);
+  const connectivityBandwidth = estimatedBandwidthKbps(selectedBot, connectedEndpoints);
+  const overallConnectivityStatus = connectedEndpoints === 2 ? 'connected' : connectedEndpoints === 1 ? 'partial' : 'disconnected';
 
   const filteredBots = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -86,7 +198,11 @@ export default function TradeBotsModule() {
     const [botsResult, rentalsResult] = await Promise.allSettled([listBots(), listRentals()]);
 
     if (botsResult.status === 'fulfilled') {
-      setBots((botsResult.value.items || []) as TradeBotRow[]);
+      const nextBots = (botsResult.value.items || []).map((bot) => ({
+        ...bot,
+        name: normalizeBotName(bot.name)
+      })) as TradeBotRow[];
+      setBots(nextBots);
     } else {
       setBots([]);
       setBotsError(botsResult.reason?.message || 'Failed to load workspace bots.');
@@ -111,6 +227,177 @@ export default function TradeBotsModule() {
     }
     load();
   }, []);
+
+  const upsertBotLink = (botId: string, patch: BotConnectivityLink) => {
+    setBotLinks((prev) => {
+      const next = {
+        ...prev,
+        [botId]: {
+          ...(prev[botId] || {}),
+          ...patch,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      writeBotLinks(next);
+      return next;
+    });
+  };
+
+  const openBotPopup = (bot: TradeBotRow) => {
+    setSelectedBot(bot);
+    setModalError('');
+    setModalMessage('');
+  };
+
+  const closeBotPopup = () => {
+    setSelectedBot(null);
+    setModalError('');
+    setModalMessage('');
+    setWebhookProfile(null);
+    setExchangeAccounts([]);
+    setIntegrations([]);
+    setTestingIntegrationId(null);
+  };
+
+  const loadConnectivityContext = async (botId?: string) => {
+    if (!botId) return;
+    setModalLoading(true);
+    setModalError('');
+    const [webhookRes, accountsRes, integrationsRes] = await Promise.allSettled([
+      getMyWebhook(),
+      listExchangeAccounts(),
+      listIntegrations()
+    ]);
+
+    if (webhookRes.status === 'fulfilled') {
+      setWebhookProfile(webhookRes.value || null);
+    } else {
+      setWebhookProfile(null);
+    }
+
+    if (accountsRes.status === 'fulfilled') {
+      setExchangeAccounts((accountsRes.value.items || []) as ExchangeAccount[]);
+    } else {
+      setExchangeAccounts([]);
+    }
+
+    if (integrationsRes.status === 'fulfilled') {
+      setIntegrations((integrationsRes.value || []) as Integration[]);
+    } else {
+      setIntegrations([]);
+    }
+
+    if (
+      webhookRes.status === 'rejected' &&
+      accountsRes.status === 'rejected' &&
+      integrationsRes.status === 'rejected'
+    ) {
+      setModalError('Failed to load connectivity data.');
+    }
+
+    setModalLoading(false);
+  };
+
+  useEffect(() => {
+    if (!selectedBot) return;
+    loadConnectivityContext(selectedBot.id);
+  }, [selectedBot?.id]);
+
+  const handleRefreshConnectivity = async () => {
+    if (!selectedBot) return;
+    await loadConnectivityContext(selectedBot.id);
+  };
+
+  const handleAssignIngress = async () => {
+    if (!selectedBot) return;
+    setModalLoading(true);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const assigned = await assignWebhook();
+      setWebhookProfile(assigned);
+      const urls = collectWebhookUrls(assigned);
+      if (urls.length > 0) {
+        upsertBotLink(selectedBot.id, { webhookUrl: urls[0] });
+      }
+      setModalMessage(urls.length > 0 ? 'TradingView ingress assigned and linked.' : 'TradingView ingress assigned.');
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to assign TradingView ingress.');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleVerifyIngress = async () => {
+    if (!selectedBot) return;
+    setModalLoading(true);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const profile = await getMyWebhook();
+      const urls = collectWebhookUrls(profile);
+      setWebhookProfile(profile);
+      if (selectedBotLink.webhookUrl && urls.includes(selectedBotLink.webhookUrl)) {
+        setModalMessage('TradingView ingress link is valid.');
+      } else {
+        setModalError('Linked TradingView ingress URL is not currently assigned.');
+      }
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to verify TradingView ingress.');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleLinkWebhook = (url: string) => {
+    if (!selectedBot) return;
+    upsertBotLink(selectedBot.id, { webhookUrl: url });
+    setModalError('');
+    setModalMessage('TradingView ingress linked.');
+  };
+
+  const handleLinkIntegration = (integrationId: string) => {
+    if (!selectedBot) return;
+    upsertBotLink(selectedBot.id, { integrationId });
+    setModalError('');
+    setModalMessage('Exchange integration linked.');
+  };
+
+  const handleLinkExchangeAccount = (exchangeAccountId: string) => {
+    if (!selectedBot) return;
+    upsertBotLink(selectedBot.id, { exchangeAccountId });
+    setModalError('');
+    setModalMessage('Exchange account linked.');
+  };
+
+  const handleTestIntegration = async (integrationId: string) => {
+    if (!selectedBot) return;
+    setTestingIntegrationId(integrationId);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const result = await testIntegration(integrationId);
+      upsertBotLink(selectedBot.id, { integrationId });
+      setIntegrations((prev) =>
+        prev.map((integration) =>
+          integration.id === integrationId
+            ? {
+                ...integration,
+                status: result.status || integration.status,
+                lastTestedAt: result.rotatedAt || new Date().toISOString()
+              }
+            : integration
+        )
+      );
+      setModalMessage(`Connectivity check finished with status: ${result.status}.`);
+      const refreshed = await listIntegrations();
+      setIntegrations((refreshed || []) as Integration[]);
+    } catch (error: any) {
+      setModalError(error?.message || 'Exchange connectivity check failed.');
+    } finally {
+      setTestingIntegrationId(null);
+    }
+  };
 
   const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'overview', label: 'Overview', icon: '/icons/hub.svg' },
@@ -197,7 +484,7 @@ export default function TradeBotsModule() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="section-label">Bots</p>
-              <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness.</p>
+              <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness. Click any bot to configure connectivity.</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -217,27 +504,29 @@ export default function TradeBotsModule() {
           {!loading && filteredBots.length > 0 && (
             <div className="grid gap-3 lg:grid-cols-2">
               {filteredBots.map((bot) => (
-                <article
+                <button
                   key={bot.id}
+                  type="button"
+                  onClick={() => openBotPopup(bot)}
                   className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/40 hover:bg-primary-500/10"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
-                      <h3 className="text-lg font-semibold text-white">{bot.name}</h3>
+                      <h3 className="text-left text-lg font-semibold text-white">{bot.name}</h3>
                       <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
                     </div>
                     <span className="rounded-lg border border-primary-300/35 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
                       {bot.latestVersion?.status || 'unknown'}
                     </span>
                   </div>
-                  <p className="mt-2 text-sm text-gray-300">{bot.description || 'No description'}</p>
+                  <p className="mt-2 text-left text-sm text-gray-300">{bot.description || 'No description'}</p>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
                     <InfoTile label="Version" value={versionText(bot)} mono />
                     <InfoTile label="Updated" value={formatDate(bot.updatedAt)} />
                     <InfoTile label="Instances" value={String(bot.counts?.instances || 0)} />
                     <InfoTile label="Orders" value={String(bot.counts?.orders || 0)} />
                   </div>
-                </article>
+                </button>
               ))}
             </div>
           )}
@@ -279,7 +568,7 @@ export default function TradeBotsModule() {
               {rentals.slice(0, 10).map((rental) => (
                 <div key={rental.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold text-white">{rental.bot?.name || rental.botId}</p>
+                    <p className="font-semibold text-white">{normalizeBotName(rental.bot?.name || rental.botId)}</p>
                     <span className="text-xs uppercase tracking-[0.14em] text-gray-300">{rental.status}</span>
                   </div>
                   <p className="mt-1 text-xs text-gray-400">
@@ -319,6 +608,180 @@ export default function TradeBotsModule() {
             Last sync: {formatDate(lastLoadedAt)} {botsError || rentalsError ? '• check alert banners for fetch errors.' : '• no load errors detected.'}
           </div>
         </section>
+      )}
+
+      {selectedBot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-5 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={closeBotPopup}>
+          <div
+            className="w-full max-w-6xl overflow-hidden rounded-3xl border border-white/20 bg-white/[0.07] shadow-[0_40px_100px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="section-label">Bot Connectivity</p>
+                <h3 className="text-2xl font-semibold text-main">{selectedBot.name}</h3>
+                <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-small" onClick={closeBotPopup}>
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              {modalError && <div className="rounded-xl border border-rose-400/35 bg-rose-500/12 p-3 text-sm text-rose-100">{modalError}</div>}
+              {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
+
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
+                  <p className="text-[11px] text-gray-400">estimated telemetry</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
+                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
+                    {tradingViewConnected ? 'connected' : 'not linked'}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
+                  <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
+                    {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-3 xl:grid-cols-3">
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">TradingView ingress</p>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
+                      Assign
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Available webhook URLs for TradingView alerts.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {webhookUrls.length === 0 && <p className="text-xs text-gray-400">No ingress URLs assigned yet.</p>}
+                    {webhookUrls.map((url) => {
+                      const linked = selectedBotLink.webhookUrl === url;
+                      return (
+                        <div key={url} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <p className="break-all font-mono text-[11px] text-gray-200">{url}</p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${connectivityBadgeClass(linked)}`}>
+                              {linked ? 'linked' : 'available'}
+                            </span>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkWebhook(url)}
+                            >
+                              Link
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button type="button" className="mt-3 btn btn-secondary btn-small" onClick={handleVerifyIngress} disabled={modalLoading}>
+                    Check Connectivity
+                  </button>
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">Exchange integrations</p>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
+                      Refresh
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Link any exchange integration and run a connection test.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {integrations.length === 0 && <p className="text-xs text-gray-400">No exchange integrations found.</p>}
+                    {integrations.map((integration) => {
+                      const linked = selectedBotLink.integrationId === integration.id;
+                      const healthy = integrationIsHealthy(integration.status);
+                      return (
+                        <div key={integration.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-100">{integration.label || integration.exchange}</p>
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-gray-400">
+                                {integration.exchange} · {integration.environment}
+                              </p>
+                            </div>
+                            <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${connectivityBadgeClass(healthy)}`}>
+                              {integration.status || 'unknown'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-gray-400">Last tested {formatDate(integration.lastTestedAt || null)}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkIntegration(integration.id)}
+                            >
+                              {linked ? 'Linked' : 'Link'}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleTestIntegration(integration.id)}
+                              disabled={testingIntegrationId === integration.id}
+                            >
+                              {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="text-sm font-semibold text-white">Exchange accounts</p>
+                  <p className="mt-1 text-xs text-gray-400">Optional account link used by bot runtime in this workspace.</p>
+                  <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
+                    {exchangeAccounts.length === 0 && <p className="text-xs text-gray-400">No exchange accounts configured.</p>}
+                    {exchangeAccounts.map((account) => {
+                      const linked = selectedBotLink.exchangeAccountId === account.id;
+                      return (
+                        <div key={account.id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                          <p className="text-sm font-semibold text-gray-100">{account.name}</p>
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-gray-400">
+                            {account.venue} {account.isSandbox ? '· sandbox' : '· live'}
+                          </p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <p className="text-[11px] text-gray-400">Updated {formatDate(account.updatedAt)}</p>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              onClick={() => handleLinkExchangeAccount(account.id)}
+                            >
+                              {linked ? 'Linked' : 'Link'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2 text-[11px] text-gray-300">
+                    Linked account: {linkedExchangeAccount ? `${linkedExchangeAccount.name} (${linkedExchangeAccount.venue})` : 'none'}
+                  </div>
+                </section>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
+                <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>
+                <p>Linked exchange integration: {linkedIntegration?.label || linkedIntegration?.exchange || 'none'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
