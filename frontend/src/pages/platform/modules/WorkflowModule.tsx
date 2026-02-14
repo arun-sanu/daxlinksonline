@@ -555,14 +555,22 @@ function layoutNodes(nodes: WorkflowNode[]): WorkflowNode[] {
     console.warn('[WM] layoutNodes received empty or invalid nodes array.');
     return [];
   }
-  const centerX = CENTER.x;
   const centerY = CENTER.y;
-  const horizontalOffset = 300;
   const minY = 120;
   const maxY = CANVAS_HEIGHT - 120;
+  const stagePadding = 56;
+  const sourceX = 260;
+  const serverXWithBridge = CENTER.x;
+  const bridgeX = 820;
+  const destinationXWithBridge = CANVAS_WIDTH - stagePadding - NODE_WIDTH / 2;
+  const serverXDefault = CENTER.x;
+  const destinationXDefault = 920;
+  const sourceXDefault = 300;
+
   const left = nodesArr.filter((n) => n.role === 'source');
   const rightBridge = nodesArr.filter((n) => n.role === 'destination' && n.isBridgeBot);
   const right = nodesArr.filter((n) => n.role === 'destination' && !n.isBridgeBot);
+  const hasBridgeLane = rightBridge.length > 0;
 
   function computePositions(list: WorkflowNode[], x: number) {
     if (!list.length) return [];
@@ -578,12 +586,14 @@ function layoutNodes(nodes: WorkflowNode[]): WorkflowNode[] {
     }));
   }
 
-  const placedLeft = computePositions(left, centerX - horizontalOffset);
-  const placedBridge = computePositions(rightBridge, centerX + Math.round(horizontalOffset * 0.52));
-  const placedRight = computePositions(right, centerX + horizontalOffset);
+  const placedLeft = computePositions(left, hasBridgeLane ? sourceX : sourceXDefault);
+  const placedBridge = computePositions(rightBridge, bridgeX);
+  const placedRight = computePositions(right, hasBridgeLane ? destinationXWithBridge : destinationXDefault);
+  const routerX = hasBridgeLane ? serverXWithBridge : serverXDefault;
+
   try {
     const placedNodes = nodesArr.map((n) => {
-      if (n.role === 'server') return { ...n, position: { x: centerX, y: centerY } };
+      if (n.role === 'server') return { ...n, position: { x: routerX, y: centerY } };
       const placed =
         placedLeft.find((p) => p.id === n.id) || placedBridge.find((p) => p.id === n.id) || placedRight.find((p) => p.id === n.id) || null;
       return placed ?? n;
