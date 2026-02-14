@@ -19,46 +19,76 @@ const BOT_RULES_STORAGE_KEY = 'dax_trade_bot_rules_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
 
 type ExecutionFunction = 'live_trading' | 'paper_trading' | 'signal_only';
-type RiskMode = 'balance_pct' | 'fixed_quote';
-type StopType = 'none' | 'percent' | 'absolute' | 'rr';
+type SizingMode = 'balance_pct' | 'fixed_quote' | 'risk_per_trade_pct' | 'volatility_adjusted';
+type StopType = 'none' | 'percent' | 'fixed_price' | 'rr' | 'atr_multiplier';
 type PreviewSide = 'buy' | 'sell';
+type ReferencePriceSource = 'last' | 'mark' | 'mid';
+type SignalSource = 'tradingview' | 'internal' | 'api';
 
 type BotTradingRules = {
   symbol: string;
   executionFunction: ExecutionFunction;
+  signalTimeframe: string;
+  signalSource: SignalSource;
+  signalDedupEnabled: boolean;
+  signalDedupWindowSec: number;
   orderType: 'market' | 'limit';
   limitPrice: number | null;
-  riskMode: RiskMode;
-  riskValue: number;
+  sizingMode: SizingMode;
+  allocationValue: number;
+  reinvestmentPct: number;
   minQuoteSpend: number;
   maxQuoteSpend: number;
+  referencePriceSource: ReferencePriceSource;
   slType: StopType;
   slValue: number | null;
+  slAtrLength: number;
+  slAtrMultiplier: number | null;
   tpType: StopType;
   tpValue: number | null;
   previewSide: PreviewSide;
+  maxPositionExposurePct: number;
+  maxOpenPositionsPerSymbol: number;
   cooldownSeconds: number;
   maxOpenOrdersPerSymbol: number;
+  slippageTolerancePct: number;
+  cancelIfNotFilledSec: number;
   dailyLossCapEnabled: boolean;
+  dailyLossLimitPct: number;
+  dailyResetTimeUtc: string;
 };
 
 const DEFAULT_TRADING_RULES: BotTradingRules = {
   symbol: 'BTCUSDC',
   executionFunction: 'live_trading',
+  signalTimeframe: '5m',
+  signalSource: 'tradingview',
+  signalDedupEnabled: true,
+  signalDedupWindowSec: 120,
   orderType: 'market',
   limitPrice: null,
-  riskMode: 'balance_pct',
-  riskValue: 1,
+  sizingMode: 'balance_pct',
+  allocationValue: 90,
+  reinvestmentPct: 90,
   minQuoteSpend: 1.05,
   maxQuoteSpend: 50,
-  slType: 'percent',
-  slValue: 2,
-  tpType: 'rr',
-  tpValue: 3,
+  referencePriceSource: 'last',
+  slType: 'atr_multiplier',
+  slValue: null,
+  slAtrLength: 14,
+  slAtrMultiplier: 1.5,
+  tpType: 'percent',
+  tpValue: 1,
   previewSide: 'buy',
+  maxPositionExposurePct: 100,
+  maxOpenPositionsPerSymbol: 1,
   cooldownSeconds: 30,
   maxOpenOrdersPerSymbol: 5,
-  dailyLossCapEnabled: false
+  slippageTolerancePct: 0.5,
+  cancelIfNotFilledSec: 20,
+  dailyLossCapEnabled: false,
+  dailyLossLimitPct: 5,
+  dailyResetTimeUtc: '00:00'
 };
 
 function getWorkspaceId() {
@@ -96,6 +126,42 @@ function normalizeSymbol(value?: string | null) {
     .trim()
     .toUpperCase()
     .replace(/\//g, '');
+}
+
+function normalizeTimeframe(value?: string | null) {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!raw) return '5m';
+  if (/^\d+[mhd]$/.test(raw)) return raw;
+  if (/^\d+$/.test(raw)) return `${raw}m`;
+  const aliases: Record<string, string> = {
+    '1min': '1m',
+    '5min': '5m',
+    '15min': '15m',
+    '30min': '30m',
+    '1hour': '1h',
+    '1hr': '1h',
+    '4hour': '4h',
+    '1day': '1d',
+    daily: '1d'
+  };
+  return aliases[raw] || '5m';
+}
+
+function timeframeToInterval(value?: string | null) {
+  const tf = normalizeTimeframe(value);
+  if (tf.endsWith('h')) {
+    const n = Number(tf.slice(0, -1));
+    if (n === 1) return '60m';
+    if (n === 4) return '4h';
+    return '60m';
+  }
+  if (tf.endsWith('d')) return '1d';
+  const n = Number(tf.slice(0, -1));
+  if ([1, 5, 15, 30].includes(n)) return `${n}m`;
+  if (n === 60) return '60m';
+  return '5m';
 }
 
 function resolveSymbolAssets(symbol: string, fallbackBase?: string | null, fallbackQuote?: string | null) {
@@ -172,9 +238,17 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
   const maxQuoteSpend = Math.max(maxQuoteSpendRaw, minQuoteSpend);
   const orderType = merged.orderType === 'limit' ? 'limit' : 'market';
   const limitPrice = orderType === 'limit' ? Math.max(0, normalizeNumber(merged.limitPrice, 0)) || null : null;
-  const slType: StopType = ['none', 'percent', 'absolute', 'rr'].includes(String(merged.slType)) ? (merged.slType as StopType) : 'none';
-  const tpType: StopType = ['none', 'percent', 'absolute', 'rr'].includes(String(merged.tpType)) ? (merged.tpType as StopType) : 'none';
-  const riskMode: RiskMode = merged.riskMode === 'fixed_quote' ? 'fixed_quote' : 'balance_pct';
+  const stopTypes: StopType[] = ['none', 'percent', 'fixed_price', 'rr', 'atr_multiplier'];
+  const slType: StopType = stopTypes.includes(merged.slType as StopType) ? (merged.slType as StopType) : 'none';
+  const tpType: StopType = stopTypes.includes(merged.tpType as StopType) ? (merged.tpType as StopType) : 'none';
+  const sizingModes: SizingMode[] = ['balance_pct', 'fixed_quote', 'risk_per_trade_pct', 'volatility_adjusted'];
+  const sizingMode: SizingMode = sizingModes.includes(merged.sizingMode as SizingMode) ? (merged.sizingMode as SizingMode) : 'balance_pct';
+  const referencePriceSource: ReferencePriceSource = ['last', 'mark', 'mid'].includes(String(merged.referencePriceSource))
+    ? (merged.referencePriceSource as ReferencePriceSource)
+    : 'last';
+  const signalSource: SignalSource = ['tradingview', 'internal', 'api'].includes(String(merged.signalSource))
+    ? (merged.signalSource as SignalSource)
+    : 'tradingview';
   const executionFunction: ExecutionFunction =
     merged.executionFunction === 'paper_trading' || merged.executionFunction === 'signal_only'
       ? merged.executionFunction
@@ -183,21 +257,38 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
 
   return {
     symbol: normalizeSymbol(merged.symbol) || DEFAULT_TRADING_RULES.symbol,
+    signalTimeframe: normalizeTimeframe(merged.signalTimeframe),
+    signalSource,
+    signalDedupEnabled: Boolean(merged.signalDedupEnabled),
+    signalDedupWindowSec: Math.max(0, Math.floor(normalizeNumber(merged.signalDedupWindowSec, DEFAULT_TRADING_RULES.signalDedupWindowSec))),
     executionFunction,
     orderType,
     limitPrice,
-    riskMode,
-    riskValue: Math.max(0, normalizeNumber(merged.riskValue, DEFAULT_TRADING_RULES.riskValue)),
+    sizingMode,
+    allocationValue: Math.max(0, normalizeNumber(merged.allocationValue, DEFAULT_TRADING_RULES.allocationValue)),
+    reinvestmentPct: Math.max(0, Math.min(100, normalizeNumber(merged.reinvestmentPct, DEFAULT_TRADING_RULES.reinvestmentPct))),
     minQuoteSpend,
     maxQuoteSpend,
+    referencePriceSource,
     slType,
-    slValue: slType === 'none' ? null : Math.max(0, normalizeNumber(merged.slValue, 0)) || null,
+    slValue: slType === 'none' || slType === 'atr_multiplier' ? null : Math.max(0, normalizeNumber(merged.slValue, 0)) || null,
+    slAtrLength: Math.max(2, Math.floor(normalizeNumber(merged.slAtrLength, DEFAULT_TRADING_RULES.slAtrLength))),
+    slAtrMultiplier: Math.max(0, normalizeNumber(merged.slAtrMultiplier, DEFAULT_TRADING_RULES.slAtrMultiplier || 1.5)) || null,
     tpType,
     tpValue: tpType === 'none' ? null : Math.max(0, normalizeNumber(merged.tpValue, 0)) || null,
     previewSide,
+    maxPositionExposurePct: Math.max(0, Math.min(100, normalizeNumber(merged.maxPositionExposurePct, DEFAULT_TRADING_RULES.maxPositionExposurePct))),
+    maxOpenPositionsPerSymbol: Math.max(1, Math.floor(normalizeNumber(merged.maxOpenPositionsPerSymbol, DEFAULT_TRADING_RULES.maxOpenPositionsPerSymbol))),
     cooldownSeconds: Math.max(0, Math.floor(normalizeNumber(merged.cooldownSeconds, DEFAULT_TRADING_RULES.cooldownSeconds))),
     maxOpenOrdersPerSymbol: Math.max(0, Math.floor(normalizeNumber(merged.maxOpenOrdersPerSymbol, DEFAULT_TRADING_RULES.maxOpenOrdersPerSymbol))),
-    dailyLossCapEnabled: Boolean(merged.dailyLossCapEnabled)
+    slippageTolerancePct: Math.max(0, normalizeNumber(merged.slippageTolerancePct, DEFAULT_TRADING_RULES.slippageTolerancePct)),
+    cancelIfNotFilledSec: Math.max(0, Math.floor(normalizeNumber(merged.cancelIfNotFilledSec, DEFAULT_TRADING_RULES.cancelIfNotFilledSec))),
+    dailyLossCapEnabled: Boolean(merged.dailyLossCapEnabled),
+    dailyLossLimitPct: Math.max(0, normalizeNumber(merged.dailyLossLimitPct, DEFAULT_TRADING_RULES.dailyLossLimitPct)),
+    dailyResetTimeUtc:
+      /^\d{2}:\d{2}$/.test(String(merged.dailyResetTimeUtc || '').trim())
+        ? String(merged.dailyResetTimeUtc).trim()
+        : DEFAULT_TRADING_RULES.dailyResetTimeUtc
   };
 }
 
@@ -275,6 +366,16 @@ function roundDownToStep(value: number, stepSize: number) {
   return Math.floor(value / stepSize) * stepSize;
 }
 
+function hashSignalKey(seed: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  const normalized = hash >>> 0;
+  return `sig_${normalized.toString(16).padStart(8, '0')}`;
+}
+
 export default function TradeBotsModule() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [bots, setBots] = useState<TradeBotRow[]>([]);
@@ -336,6 +437,8 @@ export default function TradeBotsModule() {
   const overallConnectivityStatus = connectedEndpoints === 2 ? 'connected' : connectedEndpoints === 1 ? 'partial' : 'disconnected';
   const marketFilters = exchangeSnapshot?.market?.filters?.data || null;
   const marketTicker = exchangeSnapshot?.market?.ticker?.data || null;
+  const marketPrices = exchangeSnapshot?.market?.prices?.data || null;
+  const marketAtr = exchangeSnapshot?.market?.atr?.data || null;
   const symbolAssets = useMemo(
     () => resolveSymbolAssets(tradingSymbol, marketFilters?.baseAsset || null, marketFilters?.quoteAsset || null),
     [marketFilters?.baseAsset, marketFilters?.quoteAsset, tradingSymbol]
@@ -357,20 +460,49 @@ export default function TradeBotsModule() {
   const integrationCredentials = integrationDetail?.credentials || [];
   const integrationLogs = integrationDetail?.logs || [];
   const activeRules = botRulesDraft || selectedBotRules;
+  const signalKeySeed = useMemo(() => {
+    if (!activeRules) return '';
+    return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
+  }, [activeRules, selectedBot?.id]);
+  const signalHashKey = useMemo(() => hashSignalKey(signalKeySeed), [signalKeySeed]);
+  const allocationLabel = useMemo(() => {
+    if (!activeRules) return 'Allocation Value';
+    if (activeRules.sizingMode === 'fixed_quote') return 'Allocation (USDC)';
+    if (activeRules.sizingMode === 'risk_per_trade_pct') return 'Risk / Trade %';
+    return 'Allocation %';
+  }, [activeRules]);
   const rulesPreview = useMemo(() => {
     const rules = activeRules;
     if (!rules) return null;
 
     const freeQuote = Number(quoteAssetBalance?.free || 0);
     const freeBase = Number(baseAssetBalance?.free || 0);
-    const refPrice = Number(marketTicker?.price || 0);
+    const referencePrices = {
+      last: Number(marketPrices?.last || marketTicker?.price || 0),
+      mark: Number(marketPrices?.mark || marketPrices?.last || marketTicker?.price || 0),
+      mid: Number(marketPrices?.mid || marketPrices?.mark || marketPrices?.last || marketTicker?.price || 0)
+    };
+    const refPrice = referencePrices[rules.referencePriceSource] || 0;
     const stepSize = Number(marketFilters?.stepSize || 0);
     const exchangeMinNotional = Number(marketFilters?.minNotional || 0);
     const minQuoteSpend = Math.max(0, Number(rules.minQuoteSpend || 0));
     const maxQuoteSpend = Math.max(minQuoteSpend, Number(rules.maxQuoteSpend || 0));
-    const riskValue = Math.max(0, Number(rules.riskValue || 0));
+    const allocationValue = Math.max(0, Number(rules.allocationValue || 0));
+    const reinvestmentFactor = Math.max(0, Math.min(1, Number(rules.reinvestmentPct || 0) / 100));
+    const atrValue = Number(marketAtr?.value || 0);
 
-    const quoteSpendRaw = rules.riskMode === 'balance_pct' ? freeQuote * (riskValue / 100) : riskValue;
+    let quoteSpendRawBase = 0;
+    if (rules.sizingMode === 'fixed_quote') {
+      quoteSpendRawBase = allocationValue;
+    } else if (rules.sizingMode === 'balance_pct' || rules.sizingMode === 'risk_per_trade_pct') {
+      quoteSpendRawBase = freeQuote * (allocationValue / 100);
+    } else {
+      const atrPct = refPrice > 0 && atrValue > 0 ? atrValue / refPrice : 0;
+      const volatilityFactor = atrPct > 0 ? 1 / (1 + atrPct * 10) : 1;
+      quoteSpendRawBase = freeQuote * (allocationValue / 100) * volatilityFactor;
+    }
+
+    const quoteSpendRaw = rules.sizingMode === 'fixed_quote' ? quoteSpendRawBase : quoteSpendRawBase * reinvestmentFactor;
     const quoteSpend = Math.max(minQuoteSpend, Math.min(maxQuoteSpend, quoteSpendRaw));
     const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
     const qtyFinal = roundDownToStep(qtyRaw, stepSize);
@@ -388,12 +520,18 @@ export default function TradeBotsModule() {
     } else if (notionalAfterRounding < effectiveMinNotional) {
       status = 'rejected';
       reason = 'Notional after rounding is below min notional';
-    } else if (rules.riskMode === 'fixed_quote' && quoteSpend > freeQuote) {
+    } else if (rules.sizingMode === 'fixed_quote' && quoteSpend > freeQuote) {
       status = 'warning';
       reason = 'Fixed quote spend is above free quote balance';
     } else if (rules.previewSide === 'sell' && qtyFinal > freeBase) {
       status = 'warning';
       reason = 'Sell quantity is above free base balance';
+    } else if (rules.maxPositionExposurePct > 0 && quoteSpend > freeQuote * (rules.maxPositionExposurePct / 100)) {
+      status = 'warning';
+      reason = 'Quote spend exceeds max exposure %';
+    } else if (rules.maxOpenPositionsPerSymbol > 0 && Number(openOrdersSummary?.countForSymbol || 0) >= rules.maxOpenPositionsPerSymbol) {
+      status = 'warning';
+      reason = 'Open positions/orders already at configured max per symbol';
     }
 
     const side = rules.previewSide;
@@ -403,15 +541,18 @@ export default function TradeBotsModule() {
     if (rules.slType === 'percent' && refPrice > 0 && slValue > 0) {
       const pct = slValue / 100;
       slPrice = side === 'buy' ? refPrice * (1 - pct) : refPrice * (1 + pct);
-    } else if (rules.slType === 'absolute' && slValue > 0) {
+    } else if (rules.slType === 'fixed_price' && slValue > 0) {
       slPrice = slValue;
+    } else if (rules.slType === 'atr_multiplier' && refPrice > 0 && atrValue > 0 && Number(rules.slAtrMultiplier || 0) > 0) {
+      const distance = atrValue * Number(rules.slAtrMultiplier);
+      slPrice = side === 'buy' ? refPrice - distance : refPrice + distance;
     }
 
     let tpPrice: number | null = null;
     if (rules.tpType === 'percent' && refPrice > 0 && tpValue > 0) {
       const pct = tpValue / 100;
       tpPrice = side === 'buy' ? refPrice * (1 + pct) : refPrice * (1 - pct);
-    } else if (rules.tpType === 'absolute' && tpValue > 0) {
+    } else if (rules.tpType === 'fixed_price' && tpValue > 0) {
       tpPrice = tpValue;
     } else if (rules.tpType === 'rr' && slPrice && refPrice > 0 && tpValue > 0) {
       const riskDistance = Math.abs(refPrice - slPrice);
@@ -432,18 +573,93 @@ export default function TradeBotsModule() {
       qtyRaw,
       qtyFinal,
       notionalAfterRounding,
+      atrValue,
+      referencePriceSource: rules.referencePriceSource,
       slPrice,
       tpPrice
     };
   }, [
+    openOrdersSummary?.countForSymbol,
     baseAssetBalance?.free,
     botRulesDraft,
     marketFilters?.minNotional,
     marketFilters?.stepSize,
+    marketPrices?.last,
+    marketPrices?.mark,
+    marketPrices?.mid,
+    marketAtr?.value,
     marketTicker?.price,
     quoteAssetBalance?.free,
     activeRules
   ]);
+  const runtimeConfigPreview = useMemo(() => {
+    const rules = activeRules;
+    if (!rules) return null;
+    return {
+      symbol: rules.symbol,
+      executionFunction: rules.executionFunction,
+      signal: {
+        idKey: signalHashKey,
+        source: rules.signalSource,
+        timeframe: rules.signalTimeframe,
+        dedup: {
+          enabled: rules.signalDedupEnabled,
+          windowSec: rules.signalDedupWindowSec
+        }
+      },
+      order: {
+        type: rules.orderType,
+        limitPrice: rules.limitPrice,
+        referencePriceSource: rules.referencePriceSource,
+        slippageTolerancePct: rules.slippageTolerancePct,
+        cancelIfNotFilledSec: rules.cancelIfNotFilledSec
+      },
+      sizing: {
+        mode: rules.sizingMode,
+        allocationValue: rules.allocationValue,
+        reinvestmentPct: rules.reinvestmentPct,
+        minQuoteSpend: rules.minQuoteSpend,
+        maxQuoteSpend: rules.maxQuoteSpend,
+        preview: rulesPreview
+          ? {
+              quoteSpend: rulesPreview.quoteSpend,
+              qtyFinal: rulesPreview.qtyFinal,
+              refPrice: rulesPreview.refPrice
+            }
+          : null
+      },
+      risk: {
+        cooldownSeconds: rules.cooldownSeconds,
+        maxOpenOrdersPerSymbol: rules.maxOpenOrdersPerSymbol,
+        maxPositionExposurePct: rules.maxPositionExposurePct,
+        maxOpenPositionsPerSymbol: rules.maxOpenPositionsPerSymbol,
+        dailyLoss: {
+          enabled: rules.dailyLossCapEnabled,
+          limitPct: rules.dailyLossLimitPct,
+          resetTimeUtc: rules.dailyResetTimeUtc
+        }
+      },
+      protection: {
+        sl: {
+          type: rules.slType,
+          value: rules.slValue,
+          atrLength: rules.slAtrLength,
+          atrMultiplier: rules.slAtrMultiplier
+        },
+        tp: {
+          type: rules.tpType,
+          value: rules.tpValue
+        }
+      },
+      meta: {
+        signalKeySeed,
+        botId: selectedBot?.id || null,
+        integrationId: selectedBotLink.integrationId || null,
+        exchangeAccountId: selectedBotLink.exchangeAccountId || null,
+        tradingViewWebhookUrl: selectedBotLink.webhookUrl || null
+      }
+    };
+  }, [activeRules, rulesPreview, selectedBot?.id, selectedBotLink.exchangeAccountId, selectedBotLink.integrationId, selectedBotLink.webhookUrl, signalHashKey, signalKeySeed]);
 
   const filteredBots = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -605,6 +821,8 @@ export default function TradeBotsModule() {
   const loadTradingDetails = async (integrationId: string) => {
     const targetIntegration = integrations.find((row) => row.id === integrationId) || null;
     const exchangeId = String(targetIntegration?.exchange || '').toLowerCase();
+    const currentRules = sanitizeTradingRules(botRulesDraft || selectedBotRules);
+    const symbolForFetch = normalizeSymbol(currentRules.symbol || tradingSymbol);
     setTradingDetailsLoading(true);
     setTradingDetailsError('');
 
@@ -620,7 +838,9 @@ export default function TradeBotsModule() {
 
       const snapshot = await fetchMexcSpotSnapshot({
         integrationId,
-        symbol: normalizeSymbol(tradingSymbol) || undefined
+        symbol: symbolForFetch || undefined,
+        interval: timeframeToInterval(currentRules.signalTimeframe),
+        atrLength: currentRules.slAtrLength
       });
       setExchangeSnapshot(snapshot);
     } catch (error: any) {
@@ -636,12 +856,15 @@ export default function TradeBotsModule() {
     await loadTradingDetails(selectedBotLink.integrationId);
   };
 
-  const handleRulesSave = () => {
+  const handleRulesSave = async () => {
     if (!selectedBot || !botRulesDraft) return;
     const sanitized = sanitizeTradingRules(botRulesDraft);
     upsertBotRules(selectedBot.id, sanitized);
     setBotRulesDraft(sanitized);
     setTradingSymbol(sanitized.symbol);
+    if (selectedBotLink.integrationId) {
+      await loadTradingDetails(selectedBotLink.integrationId);
+    }
     setModalError('');
     setModalMessage('Sizing, risk, SL/TP, and function rules saved for this bot.');
   };
@@ -1196,7 +1419,7 @@ export default function TradeBotsModule() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-white">Trading rules and function</p>
-                    <p className="mt-1 text-xs text-gray-400">Adjust sizing details, risk rules, stop loss, and take profit behavior per bot.</p>
+                    <p className="mt-1 text-xs text-gray-400">Adjust sizing details, risk rules, ATR stop loss, TP, execution safety, and signal metadata per bot.</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesReset}>
@@ -1210,6 +1433,19 @@ export default function TradeBotsModule() {
 
                 <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Symbol
+                    <input
+                      value={activeRules.symbol}
+                      onChange={(event) => {
+                        const symbol = normalizeSymbol(event.target.value);
+                        updateBotRulesDraft({ symbol });
+                        setTradingSymbol(symbol);
+                      }}
+                      placeholder="BTCUSDC"
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Function
                     <select
                       value={activeRules.executionFunction}
@@ -1221,6 +1457,56 @@ export default function TradeBotsModule() {
                       <option value="signal_only">Signal only</option>
                     </select>
                   </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Signal Timeframe
+                    <input
+                      value={activeRules.signalTimeframe}
+                      onChange={(event) => updateBotRulesDraft({ signalTimeframe: event.target.value })}
+                      placeholder="5m"
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Signal Source
+                    <select
+                      value={activeRules.signalSource}
+                      onChange={(event) => updateBotRulesDraft({ signalSource: event.target.value as SignalSource })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="tradingview">TradingView</option>
+                      <option value="internal">Internal</option>
+                      <option value="api">API</option>
+                    </select>
+                  </label>
+
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Signal Deduplication
+                    <select
+                      value={activeRules.signalDedupEnabled ? 'enabled' : 'disabled'}
+                      onChange={(event) => updateBotRulesDraft({ signalDedupEnabled: event.target.value === 'enabled' })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="enabled">Enabled</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Dedup Window (sec)
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={activeRules.signalDedupWindowSec}
+                      disabled={!activeRules.signalDedupEnabled}
+                      onChange={(event) => updateBotRulesDraft({ signalDedupWindowSec: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <div className="rounded-lg border border-white/15 bg-black/35 px-2 py-1">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">Signal ID / hash key</p>
+                    <p className="mt-1 text-[11px] font-mono text-gray-200 break-all">{signalHashKey}</p>
+                    <p className="mt-1 text-[10px] text-gray-500 break-all">{signalKeySeed}</p>
+                  </div>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Preview Side
                     <select
@@ -1244,6 +1530,18 @@ export default function TradeBotsModule() {
                     </select>
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Reference Price Source
+                    <select
+                      value={activeRules.referencePriceSource}
+                      onChange={(event) => updateBotRulesDraft({ referencePriceSource: event.target.value as ReferencePriceSource })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    >
+                      <option value="last">Last Price</option>
+                      <option value="mark">Mark Price</option>
+                      <option value="mid">Bid/Ask Mid</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Limit Price
                     <input
                       type="number"
@@ -1256,23 +1554,37 @@ export default function TradeBotsModule() {
                   </label>
 
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                    Risk Mode
+                    Sizing Mode
                     <select
-                      value={activeRules.riskMode}
-                      onChange={(event) => updateBotRulesDraft({ riskMode: event.target.value as RiskMode })}
+                      value={activeRules.sizingMode}
+                      onChange={(event) => updateBotRulesDraft({ sizingMode: event.target.value as SizingMode })}
                       className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                     >
                       <option value="balance_pct">Balance %</option>
-                      <option value="fixed_quote">Fixed quote</option>
+                      <option value="fixed_quote">Fixed USDC</option>
+                      <option value="risk_per_trade_pct">Risk per trade %</option>
+                      <option value="volatility_adjusted">Volatility adjusted</option>
                     </select>
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                    Risk Value
+                    {allocationLabel}
                     <input
                       type="number"
                       step="0.0001"
-                      value={activeRules.riskValue}
-                      onChange={(event) => updateBotRulesDraft({ riskValue: Number(event.target.value) })}
+                      value={activeRules.allocationValue}
+                      onChange={(event) => updateBotRulesDraft({ allocationValue: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Reinvestment %
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.0001"
+                      value={activeRules.reinvestmentPct}
+                      onChange={(event) => updateBotRulesDraft({ reinvestmentPct: Number(event.target.value) })}
                       className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                     />
                   </label>
@@ -1306,7 +1618,8 @@ export default function TradeBotsModule() {
                     >
                       <option value="none">None</option>
                       <option value="percent">Percent</option>
-                      <option value="absolute">Absolute</option>
+                      <option value="atr_multiplier">ATR Multiplier</option>
+                      <option value="fixed_price">Fixed Price</option>
                     </select>
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
@@ -1315,8 +1628,32 @@ export default function TradeBotsModule() {
                       type="number"
                       step="0.0001"
                       value={activeRules.slValue ?? ''}
-                      disabled={activeRules.slType === 'none'}
+                      disabled={activeRules.slType === 'none' || activeRules.slType === 'atr_multiplier'}
                       onChange={(event) => updateBotRulesDraft({ slValue: event.target.value ? Number(event.target.value) : null })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    ATR Length
+                    <input
+                      type="number"
+                      min={2}
+                      step="1"
+                      value={activeRules.slAtrLength}
+                      disabled={activeRules.slType !== 'atr_multiplier'}
+                      onChange={(event) => updateBotRulesDraft({ slAtrLength: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    ATR Multiplier
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      value={activeRules.slAtrMultiplier ?? ''}
+                      disabled={activeRules.slType !== 'atr_multiplier'}
+                      onChange={(event) => updateBotRulesDraft({ slAtrMultiplier: event.target.value ? Number(event.target.value) : null })}
                       className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
                     />
                   </label>
@@ -1329,8 +1666,8 @@ export default function TradeBotsModule() {
                     >
                       <option value="none">None</option>
                       <option value="percent">Percent</option>
-                      <option value="absolute">Absolute</option>
                       <option value="rr">Risk:Reward</option>
+                      <option value="fixed_price">Fixed Price</option>
                     </select>
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
@@ -1345,6 +1682,29 @@ export default function TradeBotsModule() {
                     />
                   </label>
 
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Max Exposure %
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.0001"
+                      value={activeRules.maxPositionExposurePct}
+                      onChange={(event) => updateBotRulesDraft({ maxPositionExposurePct: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Max Open Positions / Symbol
+                    <input
+                      type="number"
+                      min={1}
+                      step="1"
+                      value={activeRules.maxOpenPositionsPerSymbol}
+                      onChange={(event) => updateBotRulesDraft({ maxOpenPositionsPerSymbol: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Cooldown Seconds
                     <input
@@ -1368,6 +1728,28 @@ export default function TradeBotsModule() {
                     />
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Slippage Tolerance %
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      value={activeRules.slippageTolerancePct}
+                      onChange={(event) => updateBotRulesDraft({ slippageTolerancePct: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Cancel If Not Filled (sec)
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={activeRules.cancelIfNotFilledSec}
+                      onChange={(event) => updateBotRulesDraft({ cancelIfNotFilledSec: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Daily Loss Cap
                     <select
                       value={activeRules.dailyLossCapEnabled ? 'enabled' : 'disabled'}
@@ -1377,6 +1759,28 @@ export default function TradeBotsModule() {
                       <option value="disabled">Disabled</option>
                       <option value="enabled">Enabled</option>
                     </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Daily Loss Limit %
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      value={activeRules.dailyLossLimitPct}
+                      disabled={!activeRules.dailyLossCapEnabled}
+                      onChange={(event) => updateBotRulesDraft({ dailyLossLimitPct: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Daily Reset Time (UTC)
+                    <input
+                      type="time"
+                      value={activeRules.dailyResetTimeUtc}
+                      disabled={!activeRules.dailyLossCapEnabled}
+                      onChange={(event) => updateBotRulesDraft({ dailyResetTimeUtc: event.target.value })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
                   </label>
                 </div>
 
@@ -1395,13 +1799,23 @@ export default function TradeBotsModule() {
                       {rulesPreview.reason ? ` · ${rulesPreview.reason}` : ''}
                     </div>
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+                      <InfoTile label="Ref Price Source" value={String(rulesPreview.referencePriceSource || '').toUpperCase()} />
                       <InfoTile label="Quote Spend" value={formatDecimal(rulesPreview.quoteSpend)} />
                       <InfoTile label="Qty Raw" value={formatDecimal(rulesPreview.qtyRaw, 10)} />
                       <InfoTile label="Qty Final" value={formatDecimal(rulesPreview.qtyFinal, 10)} />
                       <InfoTile label="Notional" value={formatDecimal(rulesPreview.notionalAfterRounding)} />
+                      <InfoTile label="ATR" value={formatDecimal(rulesPreview.atrValue)} />
                       <InfoTile label="SL Price" value={formatDecimal(rulesPreview.slPrice)} />
                       <InfoTile label="TP Price" value={formatDecimal(rulesPreview.tpPrice)} />
                     </div>
+                  </div>
+                )}
+                {runtimeConfigPreview && (
+                  <div className="mt-3 rounded-lg border border-white/15 bg-black/35 p-2">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Runtime config preview</p>
+                    <pre className="mt-2 max-h-52 overflow-auto rounded border border-white/10 bg-black/40 p-2 text-[11px] text-gray-200">
+                      {JSON.stringify(runtimeConfigPreview, null, 2)}
+                    </pre>
                   </div>
                 )}
               </section>
@@ -1466,7 +1880,10 @@ export default function TradeBotsModule() {
                       />
                       <InfoTile label={`Free ${symbolAssets.quoteAsset || 'quote'}`} value={formatDecimal(quoteAssetBalance?.free)} />
                       <InfoTile label={`Free ${symbolAssets.baseAsset || 'base'}`} value={formatDecimal(baseAssetBalance?.free)} />
-                      <InfoTile label="Ticker price" value={formatDecimal(marketTicker?.price)} />
+                      <InfoTile label="Last price" value={formatDecimal(marketPrices?.last || marketTicker?.price)} />
+                      <InfoTile label="Mark price" value={formatDecimal(marketPrices?.mark)} />
+                      <InfoTile label="Bid/Ask mid" value={formatDecimal(marketPrices?.mid)} />
+                      <InfoTile label="ATR" value={formatDecimal(marketAtr?.value)} />
                       <InfoTile label="Min notional" value={formatDecimal(marketFilters?.minNotional)} />
                       <InfoTile label="Step size" value={formatDecimal(marketFilters?.stepSize, 12)} />
                       <InfoTile label="Min qty" value={formatDecimal(marketFilters?.minQty, 12)} />

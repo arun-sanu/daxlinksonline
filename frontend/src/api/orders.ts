@@ -34,6 +34,17 @@ export type OrderCheckSnapshot = {
       } | null;
       error?: string;
     };
+    prices?: {
+      ok: boolean;
+      data?: {
+        last: number | null;
+        mark: number | null;
+        bid: number | null;
+        ask: number | null;
+        mid: number | null;
+      } | null;
+      error?: string;
+    };
     filters: {
       ok: boolean;
       data?: {
@@ -43,6 +54,16 @@ export type OrderCheckSnapshot = {
         stepSize: number;
         minQty: number;
         minNotional: number;
+      } | null;
+      error?: string;
+    };
+    atr?: {
+      ok: boolean;
+      data?: {
+        interval: string;
+        length: number;
+        value: number | null;
+        candles: number;
       } | null;
       error?: string;
     };
@@ -60,6 +81,8 @@ export type OrderCheckQuery = {
   orderId?: string;
   origClientOrderId?: string;
   integrationId?: string;
+  interval?: string;
+  atrLength?: number;
 };
 
 export type OrderReportQuery = {
@@ -204,6 +227,10 @@ export async function fetchMexcSpotSnapshot(query: OrderCheckQuery): Promise<Ord
   if (query.orderId) params.set('orderId', query.orderId.trim());
   if (query.origClientOrderId) params.set('origClientOrderId', query.origClientOrderId.trim());
   if (query.integrationId) params.set('integrationId', query.integrationId.trim());
+  if (query.interval) params.set('interval', query.interval.trim());
+  if (Number.isFinite(Number(query.atrLength)) && Number(query.atrLength) > 1) {
+    params.set('atrLength', String(Math.floor(Number(query.atrLength))));
+  }
   return fetchFromOrderPaths<OrderCheckSnapshot>({
     endpoint: 'spot',
     params

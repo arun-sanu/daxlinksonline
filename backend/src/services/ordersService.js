@@ -11,6 +11,17 @@ const DEFAULT_RECV_WINDOW =
 const DEFAULT_TRADES_LIMIT =
   Number.isFinite(DEFAULT_TRADES_LIMIT_RAW) && DEFAULT_TRADES_LIMIT_RAW > 0 ? Math.min(DEFAULT_TRADES_LIMIT_RAW, 1000) : 30;
 const MAX_BALANCES = 10;
+const DEFAULT_ATR_LENGTH = 14;
+const DEFAULT_KLINE_INTERVAL = '5m';
+const SUPPORTED_KLINE_INTERVALS = new Set([
+  '1m',
+  '5m',
+  '15m',
+  '30m',
+  '60m',
+  '4h',
+  '1d'
+]);
 const DEFAULT_REPORT_LIMIT = 25;
 const MAX_REPORT_LIMIT = 100;
 const EMPTY_REPORT_SUMMARY = Object.freeze({
@@ -36,6 +47,37 @@ function normalizeSymbol(value) {
   return String(value || '')
     .trim()
     .toUpperCase();
+}
+
+function normalizeKlineInterval(value) {
+  const raw = String(value || DEFAULT_KLINE_INTERVAL)
+    .trim()
+    .toLowerCase();
+  const aliases = {
+    '1': '1m',
+    '1min': '1m',
+    '5': '5m',
+    '5min': '5m',
+    '15': '15m',
+    '15min': '15m',
+    '30': '30m',
+    '30min': '30m',
+    '1h': '60m',
+    '60': '60m',
+    '60m': '60m',
+    '4h': '4h',
+    '1d': '1d',
+    '24h': '1d',
+    '1day': '1d'
+  };
+  const normalized = aliases[raw] || raw;
+  return SUPPORTED_KLINE_INTERVALS.has(normalized) ? normalized : DEFAULT_KLINE_INTERVAL;
+}
+
+function normalizeAtrLength(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 2) return DEFAULT_ATR_LENGTH;
+  return Math.min(Math.floor(n), 200);
 }
 
 function compactParams(input) {
@@ -243,12 +285,74 @@ function formatSectionError(error) {
   };
 }
 
+function mapBookTicker(payload = {}) {
+  const bid = asNumber(payload?.bidPrice);
+  const ask = asNumber(payload?.askPrice);
+  const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : 0;
+  return {
+    symbol: String(payload?.symbol || '').toUpperCase(),
+    bid: bid > 0 ? bid : null,
+    ask: ask > 0 ? ask : null,
+    mid: mid > 0 ? mid : null
+  };
+}
+
+function mapKlineRows(payload = []) {
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .map((row) => {
+      if (!Array.isArray(row) || row.length < 6) return null;
+      const openTime = asNumber(row[0]);
+      const open = asNumber(row[1]);
+      const high = asNumber(row[2]);
+      const low = asNumber(row[3]);
+      const close = asNumber(row[4]);
+      const closeTime = asNumber(row[6]);
+      if (!(high > 0) || !(low > 0) || !(close > 0)) return null;
+      return {
+        openTime: openTime > 0 ? new Date(openTime).toISOString() : null,
+        closeTime: closeTime > 0 ? new Date(closeTime).toISOString() : null,
+        open,
+        high,
+        low,
+        close
+      };
+    })
+    .filter(Boolean);
+}
+
+function computeAtr(klines = [], atrLength = DEFAULT_ATR_LENGTH) {
+  if (!Array.isArray(klines) || klines.length < 2) return null;
+  const len = normalizeAtrLength(atrLength);
+  const trValues = [];
+  for (let i = 1; i < klines.length; i += 1) {
+    const current = klines[i];
+    const previous = klines[i - 1];
+    const high = asNumber(current?.high);
+    const low = asNumber(current?.low);
+    const prevClose = asNumber(previous?.close);
+    if (!(high > 0) || !(low > 0) || !(prevClose > 0)) continue;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    if (Number.isFinite(tr) && tr > 0) trValues.push(tr);
+  }
+  if (trValues.length < len) return null;
+  const slice = trValues.slice(-len);
+  const value = slice.reduce((sum, item) => sum + item, 0) / len;
+  return {
+    length: len,
+    value,
+    sampleCount: slice.length
+  };
+}
+
 export async function getMexcSpotSnapshot({
   workspaceId,
   integrationId,
   symbol,
   orderId,
-  origClientOrderId
+  origClientOrderId,
+  interval,
+  atrLength
 }) {
   const integration = await findMexcIntegration(workspaceId, integrationId);
   const credentials = {
@@ -257,10 +361,14 @@ export async function getMexcSpotSnapshot({
   };
 
   const normalizedSymbol = normalizeSymbol(symbol);
+  const normalizedInterval = normalizeKlineInterval(interval);
+  const normalizedAtrLength = normalizeAtrLength(atrLength);
   const orderQuery = {
     symbol: normalizedSymbol,
     orderId: orderId ? String(orderId) : undefined,
-    origClientOrderId: origClientOrderId ? String(origClientOrderId) : undefined
+    origClientOrderId: origClientOrderId ? String(origClientOrderId) : undefined,
+    interval: normalizedInterval,
+    atrLength: normalizedAtrLength
   };
 
   const accountPromise = mexcSignedGet(credentials, '/api/v3/account');
@@ -273,9 +381,19 @@ export async function getMexcSpotSnapshot({
   const tickerPromise = normalizedSymbol
     ? mexcPublicGet('/api/v3/ticker/price', { symbol: normalizedSymbol })
     : Promise.resolve(null);
+  const bookTickerPromise = normalizedSymbol
+    ? mexcPublicGet('/api/v3/ticker/bookTicker', { symbol: normalizedSymbol })
+    : Promise.resolve(null);
   const exchangeInfoPromise = normalizedSymbol
     ? mexcPublicGet('/api/v3/exchangeInfo', { symbol: normalizedSymbol })
     : Promise.resolve(null);
+  const klinePromise = normalizedSymbol
+    ? mexcPublicGet('/api/v3/klines', {
+        symbol: normalizedSymbol,
+        interval: normalizedInterval,
+        limit: Math.max(normalizedAtrLength + 2, 50)
+      })
+    : Promise.resolve([]);
   const orderPromise =
     normalizedSymbol && (orderQuery.orderId || orderQuery.origClientOrderId)
       ? mexcSignedGet(credentials, '/api/v3/order', {
@@ -284,12 +402,14 @@ export async function getMexcSpotSnapshot({
         })
       : Promise.resolve(null);
 
-  const [accountResult, openOrdersResult, tradesResult, tickerResult, exchangeInfoResult, orderResult] = await Promise.all([
+  const [accountResult, openOrdersResult, tradesResult, tickerResult, bookTickerResult, exchangeInfoResult, klineResult, orderResult] = await Promise.all([
     settle(accountPromise),
     settle(openOrdersPromise),
     settle(tradesPromise),
     settle(tickerPromise),
+    settle(bookTickerPromise),
     settle(exchangeInfoPromise),
+    settle(klinePromise),
     settle(orderPromise)
   ]);
 
@@ -297,7 +417,9 @@ export async function getMexcSpotSnapshot({
   const openOrdersOk = openOrdersResult.status === 'fulfilled';
   const tradesOk = tradesResult.status === 'fulfilled';
   const tickerOk = tickerResult.status === 'fulfilled';
+  const bookTickerOk = bookTickerResult.status === 'fulfilled';
   const exchangeInfoOk = exchangeInfoResult.status === 'fulfilled';
+  const klineOk = klineResult.status === 'fulfilled';
   const orderOk = orderResult.status === 'fulfilled';
 
   const balances = accountOk ? mapBalances(accountResult.value) : null;
@@ -309,7 +431,19 @@ export async function getMexcSpotSnapshot({
         price: asNumber(tickerResult.value?.price)
       }
     : null;
+  const bookTicker = bookTickerOk ? mapBookTicker(bookTickerResult.value) : null;
+  const prices = ticker || bookTicker
+    ? {
+        last: ticker && ticker.price > 0 ? ticker.price : null,
+        bid: bookTicker?.bid || null,
+        ask: bookTicker?.ask || null,
+        mid: bookTicker?.mid || null,
+        mark: (bookTicker?.mid && bookTicker.mid > 0 ? bookTicker.mid : ticker?.price) || null
+      }
+    : null;
   const symbolFilters = exchangeInfoOk ? extractSymbolFilters(exchangeInfoResult.value, normalizedSymbol) : null;
+  const klines = klineOk ? mapKlineRows(klineResult.value) : [];
+  const atr = computeAtr(klines, normalizedAtrLength);
   const order = orderOk ? summarizeOrderCheck(orderResult.value) : null;
 
   const didTradeHappen = Boolean((order?.executedQty || 0) > 0 || (trades?.count || 0) > 0);
@@ -327,7 +461,9 @@ export async function getMexcSpotSnapshot({
     query: {
       symbol: normalizedSymbol || null,
       orderId: orderQuery.orderId || null,
-      origClientOrderId: orderQuery.origClientOrderId || null
+      origClientOrderId: orderQuery.origClientOrderId || null,
+      interval: normalizedInterval,
+      atrLength: normalizedAtrLength
     },
     didTradeHappen: {
       answer: didTradeHappen,
@@ -346,11 +482,21 @@ export async function getMexcSpotSnapshot({
           ? { ok: true, data: ticker }
           : formatSectionError(tickerResult.reason)
         : { ok: false, error: 'Symbol is required to fetch ticker price.' },
+      prices: normalizedSymbol
+        ? tickerOk || bookTickerOk
+          ? { ok: true, data: prices }
+          : formatSectionError(bookTickerResult.reason || tickerResult.reason)
+        : { ok: false, error: 'Symbol is required to fetch market prices.' },
       filters: normalizedSymbol
         ? exchangeInfoOk
           ? { ok: true, data: symbolFilters }
           : formatSectionError(exchangeInfoResult.reason)
-        : { ok: false, error: 'Symbol is required to fetch market filters.' }
+        : { ok: false, error: 'Symbol is required to fetch market filters.' },
+      atr: normalizedSymbol
+        ? klineOk
+          ? { ok: true, data: { interval: normalizedInterval, length: normalizedAtrLength, value: atr?.value || null, candles: klines.length } }
+          : formatSectionError(klineResult.reason)
+        : { ok: false, error: 'Symbol is required to fetch ATR data.' }
     },
     currentBalance: {
       source: accountOk ? { ok: true, data: balances } : formatSectionError(accountResult.reason)

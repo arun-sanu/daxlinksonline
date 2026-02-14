@@ -15,7 +15,9 @@ const querySchema = z.object({
     .regex(/^[A-Z0-9_-]{4,20}$/)
     .optional(),
   orderId: z.union([z.string(), z.number()]).optional(),
-  origClientOrderId: z.string().trim().max(64).optional()
+  origClientOrderId: z.string().trim().max(64).optional(),
+  interval: z.string().trim().max(12).optional(),
+  atrLength: z.coerce.number().int().min(2).max(200).optional()
 });
 
 const reportQuerySchema = z.object({
@@ -32,14 +34,16 @@ const reportQuerySchema = z.object({
 export async function handleGetSpotOrderSnapshot(req, res, next) {
   try {
     const { workspaceId } = paramsSchema.parse(req.params);
-    const { integrationId, symbol, orderId, origClientOrderId } = querySchema.parse(req.query || {});
+    const { integrationId, symbol, orderId, origClientOrderId, interval, atrLength } = querySchema.parse(req.query || {});
 
     const snapshot = await getMexcSpotSnapshot({
       workspaceId,
       integrationId,
       symbol,
       orderId,
-      origClientOrderId
+      origClientOrderId,
+      interval,
+      atrLength
     });
     res.json(snapshot);
   } catch (error) {
@@ -75,14 +79,16 @@ async function resolveWorkspaceForUser(userId, workspaceId) {
 
 export async function handleGetMySpotOrderSnapshot(req, res, next) {
   try {
-    const { integrationId, symbol, orderId, origClientOrderId, workspaceId } = myQuerySchema.parse(req.query || {});
+    const { integrationId, symbol, orderId, origClientOrderId, interval, atrLength, workspaceId } = myQuerySchema.parse(req.query || {});
     const resolvedWorkspaceId = await resolveWorkspaceForUser(req.user.id, workspaceId);
     const snapshot = await getMexcSpotSnapshot({
       workspaceId: resolvedWorkspaceId,
       integrationId,
       symbol,
       orderId,
-      origClientOrderId
+      origClientOrderId,
+      interval,
+      atrLength
     });
     res.json(snapshot);
   } catch (error) {
