@@ -25,6 +25,28 @@ export type OrderCheckSnapshot = {
     answer: boolean | null;
     source: { ok: boolean; data?: any; error?: string };
   };
+  market?: {
+    ticker: {
+      ok: boolean;
+      data?: {
+        symbol: string;
+        price: number;
+      } | null;
+      error?: string;
+    };
+    filters: {
+      ok: boolean;
+      data?: {
+        symbol: string;
+        baseAsset: string | null;
+        quoteAsset: string | null;
+        stepSize: number;
+        minQty: number;
+        minNotional: number;
+      } | null;
+      error?: string;
+    };
+  };
   currentBalance: {
     source: { ok: boolean; data?: any; error?: string };
   };

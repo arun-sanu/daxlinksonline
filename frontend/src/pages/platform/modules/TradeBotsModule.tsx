@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listBots, listExchangeAccounts, listRentals } from '../../../api/tradeBots';
 import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
-import { listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
+import { fetchIntegrationDetail, listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
+import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import type { Bot, ExchangeAccount, Rental } from '../../../api/types';
 
 type TradeBotRow = Bot & {
@@ -38,6 +39,39 @@ function formatDate(value?: string | null) {
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString();
 }
+
+function formatDecimal(value: unknown, digits = 8) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function normalizeSymbol(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\//g, '');
+}
+
+function resolveSymbolAssets(symbol: string, fallbackBase?: string | null, fallbackQuote?: string | null) {
+  if (fallbackBase && fallbackQuote) {
+    return { baseAsset: fallbackBase.toUpperCase(), quoteAsset: fallbackQuote.toUpperCase() };
+  }
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return { baseAsset: null, quoteAsset: null };
+  }
+  const knownQuotes = ['USDC', 'USDT', 'BUSD', 'USD', 'BTC', 'ETH', 'EUR', 'TRY'];
+  const quote = knownQuotes.find((candidate) => normalized.endsWith(candidate));
+  if (quote) {
+    const base = normalized.slice(0, normalized.length - quote.length) || null;
+    return { baseAsset: base, quoteAsset: quote };
+  }
+  return { baseAsset: null, quoteAsset: null };
+}
+
+type IntegrationDetail = Awaited<ReturnType<typeof fetchIntegrationDetail>>;
 
 function versionText(bot: TradeBotRow) {
   if (bot.latestVersion?.id) return bot.latestVersion.id;
@@ -135,6 +169,11 @@ export default function TradeBotsModule() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [testingIntegrationId, setTestingIntegrationId] = useState<string | null>(null);
   const [botLinks, setBotLinks] = useState<Record<string, BotConnectivityLink>>(() => readBotLinks());
+  const [integrationDetail, setIntegrationDetail] = useState<IntegrationDetail>(null);
+  const [tradingSymbol, setTradingSymbol] = useState('BTCUSDC');
+  const [exchangeSnapshot, setExchangeSnapshot] = useState<OrderCheckSnapshot | null>(null);
+  const [tradingDetailsLoading, setTradingDetailsLoading] = useState(false);
+  const [tradingDetailsError, setTradingDetailsError] = useState('');
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -163,6 +202,28 @@ export default function TradeBotsModule() {
   const connectedEndpoints = Number(tradingViewConnected) + Number(exchangeConnected);
   const connectivityBandwidth = estimatedBandwidthKbps(selectedBot, connectedEndpoints);
   const overallConnectivityStatus = connectedEndpoints === 2 ? 'connected' : connectedEndpoints === 1 ? 'partial' : 'disconnected';
+  const marketFilters = exchangeSnapshot?.market?.filters?.data || null;
+  const marketTicker = exchangeSnapshot?.market?.ticker?.data || null;
+  const symbolAssets = useMemo(
+    () => resolveSymbolAssets(tradingSymbol, marketFilters?.baseAsset || null, marketFilters?.quoteAsset || null),
+    [marketFilters?.baseAsset, marketFilters?.quoteAsset, tradingSymbol]
+  );
+  const balanceAssets = useMemo(() => {
+    const rows = exchangeSnapshot?.currentBalance?.source?.data?.assets;
+    return Array.isArray(rows) ? rows : [];
+  }, [exchangeSnapshot]);
+  const quoteAssetBalance = useMemo(() => {
+    if (!symbolAssets.quoteAsset) return null;
+    return balanceAssets.find((row: any) => String(row?.asset || '').toUpperCase() === symbolAssets.quoteAsset) || null;
+  }, [balanceAssets, symbolAssets.quoteAsset]);
+  const baseAssetBalance = useMemo(() => {
+    if (!symbolAssets.baseAsset) return null;
+    return balanceAssets.find((row: any) => String(row?.asset || '').toUpperCase() === symbolAssets.baseAsset) || null;
+  }, [balanceAssets, symbolAssets.baseAsset]);
+  const openOrdersSummary = exchangeSnapshot?.isStillOpen?.source?.data || null;
+  const tradesSummary = exchangeSnapshot?.didTradeHappen?.source?.myTrades?.data || null;
+  const integrationCredentials = integrationDetail?.credentials || [];
+  const integrationLogs = integrationDetail?.logs || [];
 
   const filteredBots = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -247,6 +308,7 @@ export default function TradeBotsModule() {
     setSelectedBot(bot);
     setModalError('');
     setModalMessage('');
+    setTradingSymbol('BTCUSDC');
   };
 
   const closeBotPopup = () => {
@@ -257,6 +319,10 @@ export default function TradeBotsModule() {
     setExchangeAccounts([]);
     setIntegrations([]);
     setTestingIntegrationId(null);
+    setIntegrationDetail(null);
+    setExchangeSnapshot(null);
+    setTradingDetailsError('');
+    setTradingDetailsLoading(false);
   };
 
   const loadConnectivityContext = async (botId?: string) => {
@@ -298,10 +364,55 @@ export default function TradeBotsModule() {
     setModalLoading(false);
   };
 
+  const loadTradingDetails = async (integrationId: string) => {
+    const targetIntegration = integrations.find((row) => row.id === integrationId) || null;
+    const exchangeId = String(targetIntegration?.exchange || '').toLowerCase();
+    setTradingDetailsLoading(true);
+    setTradingDetailsError('');
+
+    try {
+      const detail = await fetchIntegrationDetail(integrationId);
+      setIntegrationDetail(detail);
+      const resolvedExchange = String(detail?.exchange || exchangeId || '').toLowerCase();
+      if (resolvedExchange && resolvedExchange !== 'mexc') {
+        setExchangeSnapshot(null);
+        setTradingDetailsError(`Live trading diagnostics currently support MEXC spot only. Linked exchange: ${resolvedExchange}.`);
+        return;
+      }
+
+      const snapshot = await fetchMexcSpotSnapshot({
+        integrationId,
+        symbol: normalizeSymbol(tradingSymbol) || undefined
+      });
+      setExchangeSnapshot(snapshot);
+    } catch (error: any) {
+      setExchangeSnapshot(null);
+      setTradingDetailsError(error?.message || 'Failed to pull exchange trading details.');
+    } finally {
+      setTradingDetailsLoading(false);
+    }
+  };
+
+  const handleRefreshTradingDetails = async () => {
+    if (!selectedBotLink.integrationId) return;
+    await loadTradingDetails(selectedBotLink.integrationId);
+  };
+
   useEffect(() => {
     if (!selectedBot) return;
     loadConnectivityContext(selectedBot.id);
   }, [selectedBot?.id]);
+
+  useEffect(() => {
+    if (!selectedBot) return;
+    if (!selectedBotLink.integrationId) {
+      setIntegrationDetail(null);
+      setExchangeSnapshot(null);
+      setTradingDetailsError('');
+      return;
+    }
+    loadTradingDetails(selectedBotLink.integrationId);
+  }, [selectedBot?.id, selectedBotLink.integrationId]);
 
   useEffect(() => {
     if (activeTab !== 'bots') {
@@ -312,12 +423,19 @@ export default function TradeBotsModule() {
       setExchangeAccounts([]);
       setIntegrations([]);
       setTestingIntegrationId(null);
+      setIntegrationDetail(null);
+      setExchangeSnapshot(null);
+      setTradingDetailsError('');
+      setTradingDetailsLoading(false);
     }
   }, [activeTab]);
 
   const handleRefreshConnectivity = async () => {
     if (!selectedBot) return;
     await loadConnectivityContext(selectedBot.id);
+    if (selectedBotLink.integrationId) {
+      await loadTradingDetails(selectedBotLink.integrationId);
+    }
   };
 
   const handleAssignIngress = async () => {
@@ -373,6 +491,7 @@ export default function TradeBotsModule() {
     upsertBotLink(selectedBot.id, { integrationId });
     setModalError('');
     setModalMessage('Exchange integration linked.');
+    loadTradingDetails(integrationId);
   };
 
   const handleLinkExchangeAccount = (exchangeAccountId: string) => {
@@ -404,6 +523,7 @@ export default function TradeBotsModule() {
       setModalMessage(`Connectivity check finished with status: ${result.status}.`);
       const refreshed = await listIntegrations();
       setIntegrations((refreshed || []) as Integration[]);
+      await loadTradingDetails(integrationId);
     } catch (error: any) {
       setModalError(error?.message || 'Exchange connectivity check failed.');
     } finally {
@@ -787,6 +907,83 @@ export default function TradeBotsModule() {
                   </div>
                 </section>
               </div>
+
+              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Exchange trading details</p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Live trading prerequisites pulled from the linked exchange integration: balances, symbol filters, and execution readiness.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={tradingSymbol}
+                      onChange={(event) => setTradingSymbol(normalizeSymbol(event.target.value))}
+                      placeholder="BTCUSDC"
+                      className="w-36 rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none transition focus:border-primary-300/60"
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={handleRefreshTradingDetails}
+                      disabled={!selectedBotLink.integrationId || tradingDetailsLoading}
+                    >
+                      {tradingDetailsLoading ? 'Pulling...' : 'Pull from Exchange'}
+                    </button>
+                  </div>
+                </div>
+
+                {!selectedBotLink.integrationId && (
+                  <p className="mt-3 text-xs text-gray-400">Link an exchange integration to pull trading-required exchange details.</p>
+                )}
+
+                {selectedBotLink.integrationId && (
+                  <div className="mt-3 space-y-3">
+                    {tradingDetailsError && (
+                      <div className="rounded-lg border border-amber-300/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                        {tradingDetailsError}
+                      </div>
+                    )}
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                      <InfoTile
+                        label="Exchange"
+                        value={`${(integrationDetail?.exchange || linkedIntegration?.exchange || '—').toUpperCase()} · ${
+                          integrationDetail?.environment || linkedIntegration?.environment || 'live'
+                        }`}
+                      />
+                      <InfoTile label="Integration status" value={integrationDetail?.status || linkedIntegration?.status || 'unknown'} />
+                      <InfoTile
+                        label="Last checked"
+                        value={formatDate(exchangeSnapshot?.checkedAt || integrationDetail?.lastTestedAt || linkedIntegration?.lastTestedAt || null)}
+                      />
+                      <InfoTile
+                        label="Credential key"
+                        value={integrationCredentials[0]?.apiKeyMasked || integrationDetail?.apiKeyMasked || linkedIntegration?.apiKeyMasked || '—'}
+                        mono
+                      />
+                      <InfoTile label={`Free ${symbolAssets.quoteAsset || 'quote'}`} value={formatDecimal(quoteAssetBalance?.free)} />
+                      <InfoTile label={`Free ${symbolAssets.baseAsset || 'base'}`} value={formatDecimal(baseAssetBalance?.free)} />
+                      <InfoTile label="Ticker price" value={formatDecimal(marketTicker?.price)} />
+                      <InfoTile label="Min notional" value={formatDecimal(marketFilters?.minNotional)} />
+                      <InfoTile label="Step size" value={formatDecimal(marketFilters?.stepSize, 12)} />
+                      <InfoTile label="Min qty" value={formatDecimal(marketFilters?.minQty, 12)} />
+                      <InfoTile label="Open orders" value={openOrdersSummary ? String(openOrdersSummary.countForSymbol || 0) : '—'} />
+                      <InfoTile label="Recent trades" value={tradesSummary ? String(tradesSummary.count || 0) : '—'} />
+                    </div>
+                    <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Recent exchange logs</p>
+                      {integrationLogs.length === 0 && <p className="mt-1 text-xs text-gray-400">No exchange log entries available.</p>}
+                      {integrationLogs.slice(0, 3).map((log) => (
+                        <div key={log.id} className="mt-1 flex items-center justify-between gap-2 text-xs text-gray-300">
+                          <p className="truncate">{log.message}</p>
+                          <p className="shrink-0 text-[11px] text-gray-500">{formatDate(log.createdAt)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
 
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 bg-black/45 p-3 text-xs text-gray-300">
                 <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>

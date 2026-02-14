@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../utils/prisma.js';
 import { decrypt } from '../lib/kms.js';
+import { extractSymbolFilters } from './mexcSpotClient.js';
 
 const MEXC_BASE_URL = (process.env.MEXC_SPOT_BASE_URL || 'https://api.mexc.com').replace(/\/+$/, '');
 const DEFAULT_RECV_WINDOW_RAW = Number(process.env.MEXC_RECV_WINDOW || 5000);
@@ -65,6 +66,29 @@ async function mexcSignedGet(credentials, path, params = {}) {
     method: 'GET',
     headers: { 'X-MEXC-APIKEY': credentials.apiKey }
   });
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!res.ok) {
+    const detail = payload?.msg || payload?.message || text || `MEXC request failed (${res.status})`;
+    throw Object.assign(new Error(detail), { status: res.status, payload });
+  }
+  if (payload && typeof payload === 'object' && 'code' in payload && payload.code !== 0) {
+    const detail = payload.msg || payload.message || `MEXC request failed with code ${payload.code}`;
+    throw Object.assign(new Error(detail), { status: 502, payload });
+  }
+  return payload;
+}
+
+async function mexcPublicGet(path, params = {}) {
+  const query = compactParams(params).toString();
+  const url = query ? `${MEXC_BASE_URL}${path}?${query}` : `${MEXC_BASE_URL}${path}`;
+  const res = await fetch(url, { method: 'GET' });
   const text = await res.text();
   let payload = null;
   try {
@@ -246,6 +270,12 @@ export async function getMexcSpotSnapshot({
   const tradesPromise = normalizedSymbol
     ? mexcSignedGet(credentials, '/api/v3/myTrades', { symbol: normalizedSymbol, limit: DEFAULT_TRADES_LIMIT })
     : Promise.resolve([]);
+  const tickerPromise = normalizedSymbol
+    ? mexcPublicGet('/api/v3/ticker/price', { symbol: normalizedSymbol })
+    : Promise.resolve(null);
+  const exchangeInfoPromise = normalizedSymbol
+    ? mexcPublicGet('/api/v3/exchangeInfo', { symbol: normalizedSymbol })
+    : Promise.resolve(null);
   const orderPromise =
     normalizedSymbol && (orderQuery.orderId || orderQuery.origClientOrderId)
       ? mexcSignedGet(credentials, '/api/v3/order', {
@@ -254,21 +284,32 @@ export async function getMexcSpotSnapshot({
         })
       : Promise.resolve(null);
 
-  const [accountResult, openOrdersResult, tradesResult, orderResult] = await Promise.all([
+  const [accountResult, openOrdersResult, tradesResult, tickerResult, exchangeInfoResult, orderResult] = await Promise.all([
     settle(accountPromise),
     settle(openOrdersPromise),
     settle(tradesPromise),
+    settle(tickerPromise),
+    settle(exchangeInfoPromise),
     settle(orderPromise)
   ]);
 
   const accountOk = accountResult.status === 'fulfilled';
   const openOrdersOk = openOrdersResult.status === 'fulfilled';
   const tradesOk = tradesResult.status === 'fulfilled';
+  const tickerOk = tickerResult.status === 'fulfilled';
+  const exchangeInfoOk = exchangeInfoResult.status === 'fulfilled';
   const orderOk = orderResult.status === 'fulfilled';
 
   const balances = accountOk ? mapBalances(accountResult.value) : null;
   const openOrders = openOrdersOk ? summarizeOpenOrders(openOrdersResult.value, orderQuery) : null;
   const trades = tradesOk ? summarizeTrades(tradesResult.value) : null;
+  const ticker = tickerOk
+    ? {
+        symbol: String(tickerResult.value?.symbol || normalizedSymbol || '').toUpperCase(),
+        price: asNumber(tickerResult.value?.price)
+      }
+    : null;
+  const symbolFilters = exchangeInfoOk ? extractSymbolFilters(exchangeInfoResult.value, normalizedSymbol) : null;
   const order = orderOk ? summarizeOrderCheck(orderResult.value) : null;
 
   const didTradeHappen = Boolean((order?.executedQty || 0) > 0 || (trades?.count || 0) > 0);
@@ -298,6 +339,18 @@ export async function getMexcSpotSnapshot({
     isStillOpen: {
       answer: isOpen,
       source: openOrdersOk ? { ok: true, data: openOrders } : formatSectionError(openOrdersResult.reason)
+    },
+    market: {
+      ticker: normalizedSymbol
+        ? tickerOk
+          ? { ok: true, data: ticker }
+          : formatSectionError(tickerResult.reason)
+        : { ok: false, error: 'Symbol is required to fetch ticker price.' },
+      filters: normalizedSymbol
+        ? exchangeInfoOk
+          ? { ok: true, data: symbolFilters }
+          : formatSectionError(exchangeInfoResult.reason)
+        : { ok: false, error: 'Symbol is required to fetch market filters.' }
     },
     currentBalance: {
       source: accountOk ? { ok: true, data: balances } : formatSectionError(accountResult.reason)
