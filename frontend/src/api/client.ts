@@ -10,10 +10,31 @@ export function getApiBase(): string {
   return normalizeBase(RUNTIME_BASE || ENV_BASE || DEFAULT_BASE);
 }
 
+function dedupeApiPrefixes(base: string, path: string): string {
+  let next = path;
+  const pairs: Array<{ baseSuffix: string; pathPrefix: string }> = [
+    { baseSuffix: '/api/v1', pathPrefix: '/api/v1' },
+    { baseSuffix: '/api/v1', pathPrefix: '/v1' },
+    { baseSuffix: '/api', pathPrefix: '/api' }
+  ];
+
+  for (const pair of pairs) {
+    if (!base.endsWith(pair.baseSuffix)) continue;
+    if (next === pair.pathPrefix) return '';
+    if (next.startsWith(`${pair.pathPrefix}/`)) {
+      return next.slice(pair.pathPrefix.length);
+    }
+  }
+
+  return next;
+}
+
 export function withApiBase(path: string | URL): string | URL {
   if (typeof path !== 'string') return path;
   if (path.startsWith('http')) return path;
   const base = getApiBase();
   const cleaned = path.startsWith('/') ? path : `/${path}`;
-  return `${base}${cleaned}`;
+  if (!base) return cleaned;
+  const deduped = dedupeApiPrefixes(base, cleaned);
+  return `${base}${deduped}`;
 }

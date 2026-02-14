@@ -43,7 +43,15 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit, errorMessage
     ...init
   });
   if (!res.ok) {
-    throw new Error(errorMessage || `Request failed (${res.status})`);
+    let detail = '';
+    try {
+      const payload = await res.json();
+      detail = payload?.error || payload?.message || '';
+    } catch {
+      // ignore response parsing failures
+    }
+    const base = errorMessage || `Request failed (${res.status})`;
+    throw new Error(detail ? `${base}: ${detail}` : base);
   }
   return (await res.json()) as T;
 }
