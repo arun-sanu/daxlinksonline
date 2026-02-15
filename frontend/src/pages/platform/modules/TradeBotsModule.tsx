@@ -12,6 +12,7 @@ type TradeBotRow = Bot & {
 };
 
 type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
+type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
@@ -745,6 +746,7 @@ export default function TradeBotsModule() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [automationEnabled, setAutomationEnabled] = useState(true);
   const [selectedBot, setSelectedBot] = useState<TradeBotRow | null>(null);
+  const [activePopupSection, setActivePopupSection] = useState<BotPopupSection>('integrations');
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
   const [modalMessage, setModalMessage] = useState('');
@@ -817,6 +819,37 @@ export default function TradeBotsModule() {
   }, [balanceAssets, symbolAssets.baseAsset]);
   const openOrdersSummary = exchangeSnapshot?.isStillOpen?.source?.data || null;
   const tradesSummary = exchangeSnapshot?.didTradeHappen?.source?.myTrades?.data || null;
+  const tradeHistoryRows = useMemo(() => {
+    const rawItems = Array.isArray((tradesSummary as any)?.items) ? (tradesSummary as any).items : [];
+    return rawItems.map((item: any, index: number) => {
+      const timestamp = Number(item?.time);
+      const executedAt = Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : null;
+      const side =
+        item?.isBuyer === true ? 'BUY' : item?.isBuyer === false ? 'SELL' : String(item?.side || '').toUpperCase() || '—';
+      const price = Number(item?.price);
+      const qty = Number(item?.qty);
+      const quoteQty = Number(item?.quoteQty);
+      const commission = Number(item?.commission);
+      const commissionAsset = String(item?.commissionAsset || '').toUpperCase();
+      const fee =
+        Number.isFinite(commission) && commission > 0
+          ? `${formatDecimal(commission, 10)}${commissionAsset ? ` ${commissionAsset}` : ''}`
+          : '—';
+      return {
+        id: `${String(item?.orderId || 'order')}:${String(item?.id || item?.tradeId || index)}`,
+        executedAt,
+        symbol: String(item?.symbol || selectedBotRules.symbol || tradingSymbol || '—').toUpperCase(),
+        side,
+        price: Number.isFinite(price) ? price : null,
+        qty: Number.isFinite(qty) ? qty : null,
+        quoteQty: Number.isFinite(quoteQty) ? quoteQty : null,
+        orderId: item?.orderId ? String(item.orderId) : '—',
+        fee,
+        liquidity: item?.isMaker === true ? 'maker' : item?.isMaker === false ? 'taker' : '—',
+        signalStatus: item?.isBestMatch === true ? 'matched' : item?.isBestMatch === false ? 'review' : 'captured'
+      };
+    });
+  }, [selectedBotRules.symbol, tradesSummary, tradingSymbol]);
   const integrationCredentials = integrationDetail?.credentials || [];
   const integrationLogs = integrationDetail?.logs || [];
   const activeRules = botRulesDraft || selectedBotRules;
@@ -1206,6 +1239,7 @@ export default function TradeBotsModule() {
 
   const openBotPopup = (bot: TradeBotRow) => {
     setSelectedBot(bot);
+    setActivePopupSection('integrations');
     setModalError('');
     setModalMessage('');
     const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRules());
@@ -1215,6 +1249,7 @@ export default function TradeBotsModule() {
 
   const closeBotPopup = () => {
     setSelectedBot(null);
+    setActivePopupSection('integrations');
     setModalError('');
     setModalMessage('');
     setWebhookProfile(null);
@@ -1417,6 +1452,7 @@ export default function TradeBotsModule() {
       setTradingDetailsError('');
       setTradingDetailsLoading(false);
       setBotRulesDraft(null);
+      setActivePopupSection('integrations');
     }
   }, [activeTab]);
 
@@ -1742,50 +1778,50 @@ export default function TradeBotsModule() {
       {selectedBot && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-6 backdrop-blur-md" role="dialog" aria-modal="true" onClick={closeBotPopup}>
           <div
-            className="w-full max-w-6xl"
+            className="mx-auto w-full max-w-[110rem] rounded-3xl border border-white/15 bg-black/90 shadow-[0_32px_120px_rgba(0,0,0,0.55)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/15 px-5 py-4">
-              <div className="max-w-4xl space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/15 px-7 py-8">
+              <div className="max-w-6xl space-y-5">
                 <div>
-                <p className="section-label">Bot Connectivity</p>
-                <h3 className="text-2xl font-semibold text-main">{selectedBot.name}</h3>
-                <p className="mt-1 text-xs text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
+                  <p className="section-label">Bot Connectivity</p>
+                  <h3 className="text-4xl font-semibold text-main md:text-5xl">{selectedBot.name}</h3>
+                  <p className="mt-2 text-sm text-gray-300">Link TradingView ingress and exchange connections, then run connectivity checks.</p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity status</p>
-                    <p className="mt-2 text-lg font-semibold text-white">{overallConnectivityStatus}</p>
+                    <p className="mt-3 text-2xl font-semibold text-white">{overallConnectivityStatus}</p>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Connectivity bandwidth</p>
-                    <p className="mt-2 text-lg font-semibold text-white">{connectivityBandwidth}</p>
+                    <p className="mt-3 text-2xl font-semibold text-white">{connectivityBandwidth}</p>
                     <p className="text-[11px] text-gray-400">estimated telemetry</p>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">TradingView</p>
-                    <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
+                    <span className={`mt-3 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(tradingViewConnected)}`}>
                       {tradingViewConnected ? 'connected' : 'not linked'}
                     </span>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Exchange</p>
-                    <span className={`mt-2 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
+                    <span className={`mt-3 inline-flex rounded-lg border px-2 py-1 text-xs uppercase tracking-[0.14em] ${connectivityBadgeClass(exchangeConnected)}`}>
                       {exchangeConnected ? linkedIntegration?.exchange || 'connected' : 'not linked'}
                     </span>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Market filters</p>
-                    <p className="mt-2 text-sm font-semibold text-white">
+                    <p className="mt-3 text-sm font-semibold text-white">
                       {marketFilters ? `minNotional ${formatDecimal(marketFilters.minNotional)}` : 'not pulled'}
                     </p>
                     <p className="text-[11px] text-gray-400">
                       {marketFilters ? `step ${formatDecimal(marketFilters.stepSize, 12)}` : 'link integration + pull'}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-white/15 bg-black/45 p-3">
+                  <div className="min-h-28 rounded-xl border border-white/15 bg-black/45 p-4">
                     <p className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Available balance</p>
-                    <p className="mt-2 text-sm font-semibold text-white">
+                    <p className="mt-3 text-sm font-semibold text-white">
                       {symbolAssets.quoteAsset || 'quote'} {formatDecimal(quoteAssetBalance?.free)}
                     </p>
                     <p className="text-[11px] text-gray-400">
@@ -1799,12 +1835,36 @@ export default function TradeBotsModule() {
               </button>
             </div>
 
-            <div className="space-y-4 px-5 py-4">
+            <div className="space-y-5 px-7 py-6">
               {modalError && <div className="rounded-xl border border-rose-400/35 bg-rose-500/12 p-3 text-sm text-rose-100">{modalError}</div>}
               {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
 
-              <div className="grid gap-3 xl:grid-cols-3">
-                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+              <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/15 bg-black/45 p-2 text-xs uppercase tracking-[0.2em]">
+                {[
+                  { key: 'integrations', label: 'Integrations' },
+                  { key: 'parameters', label: 'Parameters' },
+                  { key: 'exchange', label: 'Exchange' },
+                  { key: 'trade-history', label: 'Trade History' }
+                ].map((section) => {
+                  const isActive = activePopupSection === section.key;
+                  return (
+                    <button
+                      key={section.key}
+                      type="button"
+                      onClick={() => setActivePopupSection(section.key as BotPopupSection)}
+                      className={`rounded-xl px-3 py-2 transition ${
+                        isActive ? 'bg-primary-500/20 text-primary-100' : 'text-gray-300 hover:bg-white/10'
+                      }`}
+                    >
+                      {section.label}
+                    </button>
+                  );
+                })}
+              </nav>
+
+              {activePopupSection === 'integrations' && (
+                <div className="grid gap-3 xl:grid-cols-3">
+                  <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">TradingView ingress</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
@@ -1840,7 +1900,7 @@ export default function TradeBotsModule() {
                   </button>
                 </section>
 
-                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                  <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">Exchange integrations</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
@@ -1890,7 +1950,7 @@ export default function TradeBotsModule() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                  <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <p className="text-sm font-semibold text-white">Exchange accounts</p>
                   <p className="mt-1 text-xs text-gray-400">Optional account link used by bot runtime in this workspace.</p>
                   <div className="mt-3 space-y-2 max-h-52 overflow-auto pr-1">
@@ -1921,10 +1981,13 @@ export default function TradeBotsModule() {
                     Linked account: {linkedExchangeAccount ? `${linkedExchangeAccount.name} (${linkedExchangeAccount.venue})` : 'none'}
                   </div>
                 </section>
-              </div>
+                </div>
+              )}
 
-              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              {activePopupSection === 'parameters' && (
+                <div className="space-y-3">
+                  <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-white">PineScript import</p>
                     <p className="mt-1 text-xs text-gray-400">
@@ -2044,8 +2107,11 @@ export default function TradeBotsModule() {
                   </div>
                 </div>
               </section>
+            </div>
+          )}
 
-              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+              {activePopupSection === 'parameters' && (
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-white">Trading rules and function</p>
@@ -2448,9 +2514,11 @@ export default function TradeBotsModule() {
                     </pre>
                   </div>
                 )}
-              </section>
+                </section>
+              )}
 
-              <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+              {activePopupSection === 'exchange' && (
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-white">Exchange trading details</p>
@@ -2532,7 +2600,84 @@ export default function TradeBotsModule() {
                     </div>
                   </div>
                 )}
-              </section>
+                </section>
+              )}
+
+              {activePopupSection === 'trade-history' && (
+                <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Trade history</p>
+                      <p className="mt-1 text-xs text-gray-400">Recent bot trade signals from the linked exchange integration.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={handleRefreshTradingDetails}
+                      disabled={!selectedBotLink.integrationId || tradingDetailsLoading}
+                    >
+                      {tradingDetailsLoading ? 'Pulling...' : 'Refresh Trades'}
+                    </button>
+                  </div>
+
+                  {!selectedBotLink.integrationId && (
+                    <p className="mt-3 text-xs text-gray-400">Link an exchange integration to load trade history.</p>
+                  )}
+
+                  {selectedBotLink.integrationId && (
+                    <div className="mt-3 space-y-3">
+                      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                        <InfoTile label="Total signals" value={String(tradesSummary?.count || 0)} />
+                        <InfoTile label="Quote filled" value={formatDecimal(tradesSummary?.totalQuoteQty)} />
+                        <InfoTile label="Qty filled" value={formatDecimal(tradesSummary?.totalQty)} />
+                        <InfoTile label="Latest signal" value={formatDate(tradesSummary?.latestTradeAt || null)} />
+                      </div>
+
+                      <div className="overflow-x-auto rounded-xl border border-white/15 bg-black/35">
+                        <table className="min-w-full text-xs text-gray-200">
+                          <thead className="text-left text-[10px] uppercase tracking-[0.14em] text-gray-500">
+                            <tr>
+                              <th className="px-3 py-2">Signal time</th>
+                              <th className="px-3 py-2">Symbol</th>
+                              <th className="px-3 py-2">Side</th>
+                              <th className="px-3 py-2">Price</th>
+                              <th className="px-3 py-2">Qty</th>
+                              <th className="px-3 py-2">Quote qty</th>
+                              <th className="px-3 py-2">Order ID</th>
+                              <th className="px-3 py-2">Fee</th>
+                              <th className="px-3 py-2">Liquidity</th>
+                              <th className="px-3 py-2">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {tradeHistoryRows.length === 0 && (
+                              <tr className="border-t border-white/10">
+                                <td className="px-3 py-3 text-gray-400" colSpan={10}>
+                                  No trade signals found for the current symbol/integration.
+                                </td>
+                              </tr>
+                            )}
+                            {tradeHistoryRows.map((row) => (
+                              <tr key={row.id} className="border-t border-white/10">
+                                <td className="px-3 py-2">{formatDate(row.executedAt)}</td>
+                                <td className="px-3 py-2 font-mono">{row.symbol}</td>
+                                <td className="px-3 py-2">{row.side}</td>
+                                <td className="px-3 py-2">{formatDecimal(row.price, 8)}</td>
+                                <td className="px-3 py-2">{formatDecimal(row.qty, 8)}</td>
+                                <td className="px-3 py-2">{formatDecimal(row.quoteQty, 8)}</td>
+                                <td className="px-3 py-2 font-mono">{row.orderId}</td>
+                                <td className="px-3 py-2">{row.fee}</td>
+                                <td className="px-3 py-2 uppercase">{row.liquidity}</td>
+                                <td className="px-3 py-2 uppercase">{row.signalStatus}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
 
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/15 bg-black/45 p-3 text-xs text-gray-300">
                 <p>Linked TradingView URL: {selectedBotLink.webhookUrl || 'none'}</p>
