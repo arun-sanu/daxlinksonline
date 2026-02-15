@@ -8,6 +8,31 @@ export class SizingConfigError extends Error {
   }
 }
 
+function stepDecimals(stepNum) {
+  const stepString = String(stepNum || '').trim().toLowerCase();
+  if (!stepString) return 0;
+
+  if (stepString.includes('e-')) {
+    const [coeff, expPart] = stepString.split('e-');
+    const exp = Number(expPart);
+    if (!Number.isFinite(exp) || exp <= 0) return 0;
+    const coeffDecimals = coeff.includes('.') ? coeff.split('.')[1].replace(/0+$/, '').length : 0;
+    return exp + coeffDecimals;
+  }
+
+  if (stepString.includes('.')) {
+    return stepString.split('.')[1].replace(/0+$/, '').length;
+  }
+
+  return 0;
+}
+
+function normalizeCompoundingMode(value, sizingMode = 'balance_pct') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'profit_only' || normalized === 'full_balance') return normalized;
+  return sizingMode === 'fixed_quote' ? 'profit_only' : 'full_balance';
+}
+
 function asNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -64,8 +89,7 @@ export function roundDownToStep(value, stepSize) {
   if (!valueNum || valueNum <= 0) return 0;
   const stepNum = asNumber(stepSize);
   if (!stepNum || stepNum <= 0) return valueNum;
-  const stepString = String(stepNum);
-  const decimals = stepString.includes('.') ? stepString.split('.')[1].replace(/0+$/, '').length : 0;
+  const decimals = stepDecimals(stepNum);
   const scaledValue = valueNum / stepNum;
   const floored = Math.floor(scaledValue + 1e-12) * stepNum;
   return Number(floored.toFixed(Math.max(0, decimals)));
@@ -76,8 +100,7 @@ export function roundUpToStep(value, stepSize) {
   if (!valueNum || valueNum <= 0) return 0;
   const stepNum = asNumber(stepSize);
   if (!stepNum || stepNum <= 0) return valueNum;
-  const stepString = String(stepNum);
-  const decimals = stepString.includes('.') ? stepString.split('.')[1].replace(/0+$/, '').length : 0;
+  const decimals = stepDecimals(stepNum);
   const scaledValue = valueNum / stepNum;
   const ceiled = Math.ceil(scaledValue - 1e-12) * stepNum;
   return Number(ceiled.toFixed(Math.max(0, decimals)));
@@ -388,6 +411,107 @@ function normalizeRuntimeSizingMode(value) {
   return 'balance_pct';
 }
 
+export function applyCompoundingToQuoteSpend({
+  baseQuoteSpend,
+  freeQuote,
+  compoundingEnabled = false,
+  compoundingMode = 'full_balance',
+  compoundingBaseQuote = null,
+  compoundingPct = 100
+}) {
+  const baseSpend = asNumber(baseQuoteSpend);
+  const freeQuoteNum = asNumber(freeQuote) || 0;
+  const pct = clamp(compoundingPct, 0, 300);
+  const strength = pct === null ? 1 : pct / 100;
+
+  if (!baseSpend || baseSpend <= 0) {
+    return {
+      quoteSpend: 0,
+      baseQuoteSpend: 0,
+      compoundingFactor: 1,
+      compoundingProfitQuote: 0,
+      compoundingBaseQuote: asNumber(compoundingBaseQuote) || 0
+    };
+  }
+
+  const inferredBaseQuote = compoundingMode === 'full_balance'
+    ? (freeQuoteNum > 0 ? freeQuoteNum : baseSpend)
+    : baseSpend;
+  const baseQuote = toFiniteOrZero(compoundingBaseQuote) || inferredBaseQuote;
+  const profitQuote = Math.max(0, freeQuoteNum - baseQuote);
+
+  if (!compoundingEnabled || strength <= 0 || baseQuote <= 0) {
+    return {
+      quoteSpend: baseSpend,
+      baseQuoteSpend: baseSpend,
+      compoundingFactor: 1,
+      compoundingProfitQuote: profitQuote,
+      compoundingBaseQuote: baseQuote
+    };
+  }
+
+  let factor = 1;
+  if (compoundingMode === 'profit_only') {
+    factor = 1 + (profitQuote / baseQuote) * strength;
+  } else {
+    const balanceRatio = Math.max(0, freeQuoteNum / baseQuote);
+    factor = 1 + (balanceRatio - 1) * strength;
+    factor = Math.max(0, factor);
+  }
+
+  return {
+    quoteSpend: baseSpend * factor,
+    baseQuoteSpend: baseSpend,
+    compoundingFactor: factor,
+    compoundingProfitQuote: profitQuote,
+    compoundingBaseQuote: baseQuote
+  };
+}
+
+export function classifyMinNotionalShortfall({
+  normalizedSide = null,
+  effectiveMinNotional = 0,
+  computedPrice = 0,
+  stepSize = 0,
+  freeQuote = 0,
+  freeBase = 0
+}) {
+  const side = String(normalizedSide || '').trim().toUpperCase();
+  const minNotional = toFiniteOrZero(effectiveMinNotional);
+  const price = asNumber(computedPrice) || 0;
+  const step = toFiniteOrZero(stepSize);
+  const quote = asNumber(freeQuote) || 0;
+  const base = asNumber(freeBase) || 0;
+
+  if (!minNotional || !price) return null;
+
+  const minQtyRaw = minNotional / price;
+  const minQtyExecutable = step > 0 ? roundUpToStep(minQtyRaw, step) : minQtyRaw;
+  const minNotionalExecutable = minQtyExecutable * price;
+
+  if (side === 'BUY' && quote + 1e-12 < minNotionalExecutable) {
+    return {
+      reason: 'insufficient_quote_for_requested_qty',
+      minQtyExecutable,
+      minNotionalExecutable
+    };
+  }
+
+  if (side === 'SELL' && base + 1e-12 < minQtyExecutable) {
+    return {
+      reason: 'insufficient_base_for_requested_qty',
+      minQtyExecutable,
+      minNotionalExecutable
+    };
+  }
+
+  return {
+    reason: 'below_min_notional',
+    minQtyExecutable,
+    minNotionalExecutable
+  };
+}
+
 function extractTradeBotRuntimeSizingForIntegration(workflowConfig = {}, integrationId) {
   const wantedIntegrationId = String(integrationId || '').trim();
   if (!wantedIntegrationId) return null;
@@ -424,6 +548,12 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
   const maxQuoteSpendRaw = asNumber(rawRules?.maxQuoteSpend);
   const minQuoteSpend = minQuoteSpendRaw !== null && minQuoteSpendRaw > 0 ? minQuoteSpendRaw : 0;
   const maxQuoteSpend = maxQuoteSpendRaw !== null && maxQuoteSpendRaw > 0 ? Math.max(maxQuoteSpendRaw, minQuoteSpend) : null;
+  const compoundingEnabled = rawRules?.compoundingEnabled === true;
+  const compoundingMode = normalizeCompoundingMode(rawRules?.compoundingMode, sizingMode);
+  const compoundingBaseQuoteRaw = asNumber(rawRules?.compoundingBaseQuote);
+  const compoundingBaseQuote = compoundingBaseQuoteRaw !== null && compoundingBaseQuoteRaw > 0 ? compoundingBaseQuoteRaw : null;
+  const compoundingPctRaw = asNumber(rawRules?.compoundingPct);
+  const compoundingPct = compoundingPctRaw === null ? 100 : clamp(compoundingPctRaw, 0, 300);
 
   return {
     sizingMode,
@@ -431,6 +561,10 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     reinvestmentPct,
     minQuoteSpend,
     maxQuoteSpend,
+    compoundingEnabled,
+    compoundingMode,
+    compoundingBaseQuote,
+    compoundingPct,
     referencePriceSource: normalizeReferencePriceSource(rawRules?.referencePriceSource)
   };
 }
@@ -452,6 +586,53 @@ async function resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrat
   return {
     botId: runtimeMatch.botId,
     sizing: normalizeTradeBotRuntimeSizingConfig(runtimeMatch.rules)
+  };
+}
+
+export function adjustQuantityUpToMinNotional({
+  qtyRounded,
+  computedPrice,
+  effectiveMinNotional = 0,
+  stepSize = 0,
+  normalizedSide = null,
+  freeQuote = 0,
+  freeBase = 0
+}) {
+  const qty = asNumber(qtyRounded) || 0;
+  const price = asNumber(computedPrice) || 0;
+  const minNotional = toFiniteOrZero(effectiveMinNotional);
+  const step = toFiniteOrZero(stepSize);
+  const side = String(normalizedSide || '').trim().toUpperCase();
+  const availableQuote = asNumber(freeQuote) || 0;
+  const availableBase = asNumber(freeBase) || 0;
+
+  const currentNotional = qty * price;
+  if (!qty || !price || !minNotional || currentNotional >= minNotional) {
+    return {
+      qtyRounded: qty,
+      notional: currentNotional,
+      adjusted: false
+    };
+  }
+
+  const minQtyForNotional = minNotional / price;
+  const qtyRoundedUp = step > 0 ? roundUpToStep(minQtyForNotional, step) : minQtyForNotional;
+  const notionalRoundedUp = qtyRoundedUp * price;
+  const buyCanAffordRoundedUp = side !== 'BUY' || notionalRoundedUp <= availableQuote + 1e-12;
+  const sellCanFundRoundedUp = side !== 'SELL' || qtyRoundedUp <= availableBase + 1e-12;
+
+  if (qtyRoundedUp > 0 && buyCanAffordRoundedUp && sellCanFundRoundedUp) {
+    return {
+      qtyRounded: qtyRoundedUp,
+      notional: notionalRoundedUp,
+      adjusted: true
+    };
+  }
+
+  return {
+    qtyRounded: qty,
+    notional: currentNotional,
+    adjusted: false
   };
 }
 
@@ -486,7 +667,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
   const stepSize = asNumber(filters?.stepSize) || 0;
   const minQty = asNumber(filters?.minQty) || 0;
   const minNotional = asNumber(filters?.minNotional) || 0;
-  const normalizedSide = side ? String(side).toUpperCase() : null;
+  const normalizedSide = side ? String(side).trim().toUpperCase() : null;
   const stepSizeNum = toFiniteOrZero(stepSize);
   const minQtyNum = toFiniteOrZero(minQty);
   const minNotionalNum = toFiniteOrZero(minNotional);
@@ -504,6 +685,13 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     sizingMode: sizing.sizingMode,
     allocationValue: sizing.allocationValue,
     reinvestmentPct: sizing.reinvestmentPct,
+    compoundingEnabled: sizing.compoundingEnabled,
+    compoundingMode: sizing.compoundingMode,
+    compoundingPct: sizing.compoundingPct,
+    compoundingBaseQuote: sizing.compoundingBaseQuote,
+    compoundingFactor: 1,
+    compoundingProfitQuote: 0,
+    baseQuoteSpend: null,
     referencePriceSource: sizing.referencePriceSource,
     minQuoteSpend: sizing.minQuoteSpend,
     maxQuoteSpend: sizing.maxQuoteSpend,
@@ -514,7 +702,10 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     qtyAfterStepRounding: null,
     quoteSpendComputed: null,
     notionalAfterRounding: null,
+    roundingApplied: null,
     effectiveMinNotional: null,
+    minQtyExecutable: null,
+    minNotionalExecutable: null,
     rejectedReason: null
   };
 
@@ -530,6 +721,20 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     const reinvestmentFactor = Math.max(0, Math.min(1, sizing.reinvestmentPct / 100));
     quoteSpendRaw = pctSpend * reinvestmentFactor;
   }
+  const compounded = applyCompoundingToQuoteSpend({
+    baseQuoteSpend: quoteSpendRaw,
+    freeQuote,
+    compoundingEnabled: sizing.compoundingEnabled,
+    compoundingMode: sizing.compoundingMode,
+    compoundingBaseQuote: sizing.compoundingBaseQuote,
+    compoundingPct: sizing.compoundingPct
+  });
+  quoteSpendRaw = compounded.quoteSpend;
+  sizingDebug.baseQuoteSpend = asNullableNumber(compounded.baseQuoteSpend);
+  sizingDebug.compoundingFactor = asNullableNumber(compounded.compoundingFactor);
+  sizingDebug.compoundingProfitQuote = asNullableNumber(compounded.compoundingProfitQuote);
+  sizingDebug.compoundingBaseQuote = asNullableNumber(compounded.compoundingBaseQuote);
+
   const quoteSpendComputed = clamp(quoteSpendRaw, sizing.minQuoteSpend, sizing.maxQuoteSpend);
   if (!quoteSpendComputed || quoteSpendComputed <= 0) {
     throwSizingError('Trade Bot quote spend resolves to zero.', sizingDebug, 'invalid_quote_spend');
@@ -544,14 +749,11 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
   }
 
   const qtyRaw = quoteSpendComputed / computedPrice;
-  const qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
-  const notional = qtyRounded * computedPrice;
+  let qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
+  let notional = qtyRounded * computedPrice;
   const effectiveMinNotional = Math.max(minNotionalNum, sizing.minQuoteSpend || 0);
 
   sizingDebug.qtyRaw = asNumber(qtyRaw);
-  sizingDebug.quoteSpendComputed = asNullableNumber(quoteSpendComputed);
-  sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
-  sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
   sizingDebug.effectiveMinNotional = effectiveMinNotional;
 
   if (!qtyRounded || qtyRounded <= 0) {
@@ -569,10 +771,56 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     );
   }
   if (effectiveMinNotional > 0 && notional < effectiveMinNotional) {
+    const adjusted = adjustQuantityUpToMinNotional({
+      qtyRounded,
+      computedPrice,
+      effectiveMinNotional,
+      stepSize: stepSizeNum,
+      normalizedSide,
+      freeQuote,
+      freeBase
+    });
+    if (adjusted.adjusted) {
+      qtyRounded = adjusted.qtyRounded;
+      notional = adjusted.notional;
+      sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_MIN_NOTIONAL');
+    }
+  }
+
+  sizingDebug.quoteSpendComputed = asNullableNumber(notional);
+  sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
+  sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
+
+  if (effectiveMinNotional > 0 && notional < effectiveMinNotional) {
+    const shortfall = classifyMinNotionalShortfall({
+      normalizedSide,
+      effectiveMinNotional,
+      computedPrice,
+      stepSize: stepSizeNum,
+      freeQuote,
+      freeBase
+    });
+    const shortfallReason = shortfall?.reason || 'below_min_notional';
+    sizingDebug.minQtyExecutable = asNullableNumber(shortfall?.minQtyExecutable);
+    sizingDebug.minNotionalExecutable = asNullableNumber(shortfall?.minNotionalExecutable);
+    if (shortfallReason === 'insufficient_quote_for_requested_qty') {
+      throwSizingError(
+        `Available quote balance ${freeQuote} cannot satisfy minimum executable notional ${shortfall?.minNotionalExecutable}.`,
+        sizingDebug,
+        shortfallReason
+      );
+    }
+    if (shortfallReason === 'insufficient_base_for_requested_qty') {
+      throwSizingError(
+        `Available base balance ${freeBase} cannot satisfy minimum executable quantity ${shortfall?.minQtyExecutable}.`,
+        sizingDebug,
+        shortfallReason
+      );
+    }
     throwSizingError(
       `Order value ${notional} is below effective minNotional ${effectiveMinNotional}.`,
       sizingDebug,
-      'below_min_notional'
+      shortfallReason
     );
   }
   if (normalizedSide === 'SELL' && qtyRounded > freeBase + 1e-12) {
@@ -587,7 +835,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     qtyRaw,
     qtyRounded,
     notional,
-    quoteSpendComputed,
+    quoteSpendComputed: notional,
     freeQuote,
     freeBase,
     computedPrice,

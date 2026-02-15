@@ -5,8 +5,7 @@ import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsServi
 import { createMexcSpotClient } from '../services/mexcSpotClient.js';
 import {
   SizingConfigError,
-  computeMexcBaseQuantityForSignal,
-  computeMexcBaseQuantityFromSignalPayload
+  computeMexcBaseQuantityForSignal
 } from '../services/orderSizingService.js';
 import { EXECUTION_AUDIT_STATUS, updateExecutionAudit } from '../services/executionAuditService.js';
 
@@ -70,37 +69,22 @@ function parseNumeric(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function findNumericByKeys(objects, keys) {
+function hasSignalPayloadSizingHint(signal) {
+  const keys = ['qty', 'quantity', 'baseQty', 'baseQuantity', 'size', 'amount', 'quoteAmount', 'quoteQty', 'notional'];
   const keySet = new Set((Array.isArray(keys) ? keys : []).map((key) => String(key).toLowerCase()));
-  let present = false;
-
-  for (const obj of objects || []) {
-    if (!obj || typeof obj !== 'object') continue;
-    for (const [key, value] of Object.entries(obj)) {
-      if (!keySet.has(String(key).toLowerCase())) continue;
-      present = true;
-      const numericValue = parseNumeric(value);
-      if (numericValue !== null) {
-        return { present: true, value: numericValue };
-      }
-    }
-  }
-
-  return { present, value: null };
-}
-
-function resolveSignalPayloadSizing(signal) {
   const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
   const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
   const sources = [rawPayload, payload];
-  const qtyResult = findNumericByKeys(sources, ['qty', 'quantity', 'baseQty', 'baseQuantity', 'size']);
-  const amountResult = findNumericByKeys(sources, ['amount', 'quoteAmount', 'quoteQty', 'notional']);
 
-  return {
-    requestedQty: qtyResult.value,
-    requestedAmount: amountResult.value,
-    hasPayloadSizingHint: qtyResult.present || amountResult.present
-  };
+  for (const obj of sources) {
+    if (!obj || typeof obj !== 'object') continue;
+    for (const key of Object.keys(obj)) {
+      if (!keySet.has(String(key).toLowerCase())) continue;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function toJsonSafe(value) {
@@ -310,23 +294,15 @@ export async function executePreparedSignal(signalId) {
         });
       }
 
-      const signalPayloadSizing = resolveSignalPayloadSizing(signal);
-      const usingPayloadSizing = signalPayloadSizing.hasPayloadSizingHint;
-      const sizing = usingPayloadSizing
-        ? await computeMexcBaseQuantityFromSignalPayload({
-            symbol,
-            side,
-            client: mexcClient,
-            requestedQty: signalPayloadSizing.requestedQty,
-            requestedAmount: signalPayloadSizing.requestedAmount
-          })
-        : await computeMexcBaseQuantityForSignal({
-            workspaceId: integration.workspaceId,
-            integrationId: integration.id,
-            symbol,
-            side,
-            client: mexcClient
-          });
+      // Temporary policy: disable legacy payload-based sizing and force runtime Trade Bot sizing.
+      const ignoredPayloadSizing = hasSignalPayloadSizingHint(signal);
+      const sizing = await computeMexcBaseQuantityForSignal({
+        workspaceId: integration.workspaceId,
+        integrationId: integration.id,
+        symbol,
+        side,
+        client: mexcClient
+      });
 
       await markExecutionAudit(executionAuditId, {
         workspaceId: integration.workspaceId,
@@ -336,7 +312,11 @@ export async function executePreparedSignal(signalId) {
         freeQuote: sizing.freeQuote,
         qtyRaw: sizing.qtyRaw,
         qtyRounded: sizing.qtyRounded,
-        sizingDebug: sizing.sizingDebug || null
+        sizingDebug: {
+          ...(sizing.sizingDebug || {}),
+          sizingSource: 'trade_bot_runtime',
+          ignoredPayloadSizing
+        }
       });
 
       result = await mexcClient.placeMarketOrderBaseQty({
@@ -380,7 +360,8 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
-        sizingSource: usingPayloadSizing ? 'signal_payload' : 'trade_bot_runtime',
+        sizingSource: 'trade_bot_runtime',
+        ignoredPayloadSizing,
         quantity: sizing.qtyRounded,
         qtyRaw: sizing.qtyRaw,
         computedPrice: sizing.computedPrice,
