@@ -1,3 +1,5 @@
+import { withApiBase } from './client';
+
 export type Integration = {
   id: string;
   workspaceId: string;
@@ -59,21 +61,71 @@ type CreateIntegrationPayload = {
   description?: string;
 };
 
+const EMPTY_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000';
+
+function isUuid(value: unknown) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function getWorkspaceId() {
   try {
-    return localStorage.getItem('workspaceId') || '00000000-0000-0000-0000-000000000000';
+    const workspaceId = localStorage.getItem('workspaceId');
+    if (!workspaceId || workspaceId === EMPTY_WORKSPACE_ID || !isUuid(workspaceId)) return '';
+    return workspaceId;
   } catch {
-    return '00000000-0000-0000-0000-000000000000';
+    return '';
   }
 }
 
 function authHeaders() {
   try {
-    const token = localStorage.getItem('authToken') || localStorage.getItem('dax_portal_token');
+    const token =
+      localStorage.getItem('authToken') ||
+      localStorage.getItem('daxlinksToken') ||
+      localStorage.getItem('dax_portal_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch {
     return {};
   }
+}
+
+async function resolveWorkspaceId() {
+  const stored = getWorkspaceId();
+  if (stored) return stored;
+
+  const headers = { 'Content-Type': 'application/json', ...authHeaders() };
+  const profilePaths = ['/api/v1/auth/me', '/api/v1/users/me'];
+  for (const path of profilePaths) {
+    try {
+      const res = await fetch(withApiBase(path), {
+        method: 'GET',
+        credentials: 'include',
+        headers
+      });
+      if (!res.ok) continue;
+      const body = await res.json().catch(() => null);
+      const workspaceId = body?.workspace?.id || body?.workspaceId || null;
+      if (!isUuid(workspaceId)) continue;
+      try {
+        localStorage.setItem('workspaceId', workspaceId);
+      } catch {
+        // ignore localStorage errors
+      }
+      return workspaceId;
+    } catch {
+      // try next profile path
+    }
+  }
+
+  return '';
+}
+
+async function requireWorkspaceId() {
+  const workspaceId = await resolveWorkspaceId();
+  if (!workspaceId) {
+    throw new Error('Workspace not found. Please sign in again.');
+  }
+  return workspaceId;
 }
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit, message?: string): Promise<T> {
@@ -85,8 +137,15 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit, message?: st
     ...init
   });
   if (!res.ok) {
-    const msg = message || `Request failed (${res.status})`;
-    throw new Error(msg);
+    let detail = '';
+    try {
+      const payload = await res.json();
+      detail = payload?.error || payload?.message || '';
+    } catch {
+      // ignore parse issues
+    }
+    const fallback = message || `Request failed (${res.status})`;
+    throw new Error(detail ? `${fallback}: ${detail}` : fallback);
   }
   return (await res.json()) as T;
 }
@@ -100,16 +159,16 @@ export async function listAvailableExchanges(): Promise<AvailableExchange[]> {
 }
 
 export async function listIntegrations(): Promise<Integration[]> {
-  const ws = getWorkspaceId();
-  try {
-    return await fetchJson<Integration[]>(`/api/v1/integrations/${encodeURIComponent(ws)}`);
-  } catch {
-    return [];
-  }
+  const ws = await requireWorkspaceId();
+  return fetchJson<Integration[]>(
+    `/api/v1/integrations/${encodeURIComponent(ws)}`,
+    { method: 'GET' },
+    'Failed to load integrations'
+  );
 }
 
 export async function createIntegration(payload: CreateIntegrationPayload): Promise<Integration> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   return fetchJson<Integration>(
     `/api/v1/integrations/${encodeURIComponent(ws)}`,
     {
@@ -121,7 +180,7 @@ export async function createIntegration(payload: CreateIntegrationPayload): Prom
 }
 
 export async function testIntegration(integrationId: string): Promise<{ status: string; rotatedAt?: string; error?: string }> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   return fetchJson<{ status: string; rotatedAt?: string; error?: string }>(
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/test`,
     { method: 'POST' },
@@ -130,7 +189,7 @@ export async function testIntegration(integrationId: string): Promise<{ status: 
 }
 
 export async function fetchIntegrationDetail(integrationId: string): Promise<IntegrationDetail | null> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   try {
     return await fetchJson<IntegrationDetail>(
       `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}`,
@@ -146,7 +205,7 @@ export async function updateIntegrationCredential(
   credentialId: string,
   body: Partial<IntegrationCredential>
 ): Promise<IntegrationCredential> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   return fetchJson<IntegrationCredential>(
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/credentials/${encodeURIComponent(credentialId)}`,
     { method: 'PUT', body: JSON.stringify(body) },
@@ -155,7 +214,7 @@ export async function updateIntegrationCredential(
 }
 
 export async function deleteIntegrationCredential(integrationId: string, credentialId: string): Promise<void> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   await fetchJson<void>(
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/credentials/${encodeURIComponent(credentialId)}`,
     { method: 'DELETE' },
@@ -164,7 +223,7 @@ export async function deleteIntegrationCredential(integrationId: string, credent
 }
 
 export async function deleteIntegration(integrationId: string): Promise<void> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   await fetchJson<void>(
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}`,
     { method: 'DELETE' },
@@ -175,11 +234,10 @@ export async function deleteIntegration(integrationId: string): Promise<void> {
 export async function purgeIntegrationCredentials(
   integrationId: string
 ): Promise<{ status?: string }> {
-  const ws = getWorkspaceId();
+  const ws = await requireWorkspaceId();
   return fetchJson<{ status?: string }>(
     `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/credentials`,
     { method: 'DELETE' },
     'Failed to purge credentials'
   );
 }
-import { withApiBase } from './client';
