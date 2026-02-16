@@ -577,15 +577,23 @@ async function resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrat
   if (!workspace) {
     throw new SizingConfigError('Workspace not found while resolving Trade Bot runtime sizing config.');
   }
-  const runtimeMatch = extractTradeBotRuntimeSizingForIntegration(workspace.workflowConfig || {}, integrationId);
-  if (!runtimeMatch || !runtimeMatch.rules) {
-    throw new SizingConfigError(
-      'No Trade Bot runtime sizing config linked to this integration. Configure sizing in Trade Bots.'
-    );
+  const workflowConfig = workspace.workflowConfig || {};
+  const runtimeMatch = extractTradeBotRuntimeSizingForIntegration(workflowConfig, integrationId);
+  if (runtimeMatch?.rules) {
+    return {
+      botId: runtimeMatch.botId,
+      sizingSource: 'trade_bot_runtime',
+      sizing: normalizeTradeBotRuntimeSizingConfig(runtimeMatch.rules)
+    };
   }
+
+  // Backward compatibility: fall back to workspace/base sizing when runtime link is absent.
+  const legacyConfig = extractSizingConfigFromWorkflow(workflowConfig);
+  const normalizedLegacy = normalizeBaseSizingConfig(legacyConfig || {});
   return {
-    botId: runtimeMatch.botId,
-    sizing: normalizeTradeBotRuntimeSizingConfig(runtimeMatch.rules)
+    botId: null,
+    sizingSource: 'workflow_legacy',
+    sizing: normalizedLegacy
   };
 }
 
@@ -637,8 +645,9 @@ export function adjustQuantityUpToMinNotional({
 }
 
 export async function computeMexcBaseQuantityForSignal({ workspaceId, integrationId, symbol, side = null, client }) {
-  const [{ botId, sizing }, account, ticker, filters, bookTicker] = await Promise.all([
-    resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrationId),
+  // Resolve sizing before calling exchange APIs so config errors fail fast without network calls.
+  const { botId, sizing, sizingSource } = await resolveWorkspaceTradeBotRuntimeSizingConfig(workspaceId, integrationId);
+  const [account, ticker, filters, bookTicker] = await Promise.all([
     client.getAccount(),
     client.getTickerPrice(symbol),
     client.getSymbolFilters(symbol),
@@ -676,6 +685,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     symbol: normalizedSymbol || null,
     side: normalizedSide,
     botId: botId || null,
+    sizingSource,
     freeBase,
     freeQuote,
     priceUsed: computedPrice,
@@ -711,6 +721,56 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
 
   if (!computedPrice || computedPrice <= 0) {
     throwSizingError('Cannot compute quantity without a valid market price.', sizingDebug, 'invalid_price');
+  }
+
+  if (sizingSource === 'workflow_legacy') {
+    const legacyResult =
+      normalizedSide === 'SELL'
+        ? computeSellQuantityFromInputs({
+            freeBase,
+            sellMode: sizing.sellMode,
+            sellFixedBaseQty: sizing.sellFixedBaseQty,
+            sellPctOfFreeBase: sizing.sellPctOfFreeBase,
+            price: computedPrice,
+            stepSize: stepSizeNum,
+            minNotional: minNotionalNum,
+            minQty: minQtyNum,
+            sizingDebugBase: sizingDebug
+          })
+        : computeBaseQuantityFromInputs({
+            fixedBaseQty: sizing.fixedBaseQty,
+            riskPctOfFreeQuote: sizing.riskPctOfFreeQuote,
+            minQuoteSpend: sizing.minQuoteSpend,
+            freeQuote,
+            price: computedPrice,
+            stepSize: stepSizeNum,
+            minNotional: minNotionalNum,
+            minQty: minQtyNum,
+            sizingDebugBase: sizingDebug
+          });
+
+    const legacySizingDebug = {
+      ...(legacyResult.sizingDebug || {}),
+      sizingSource
+    };
+
+    return {
+      qtyRaw: legacyResult.qtyRaw,
+      qtyRounded: legacyResult.qtyRounded,
+      notional: legacyResult.notional,
+      quoteSpendComputed: legacyResult.quoteSpendComputed ?? legacyResult.notional,
+      freeQuote,
+      freeBase,
+      computedPrice,
+      quoteAsset,
+      baseAsset,
+      stepSize,
+      minQty,
+      minNotional,
+      sizing,
+      sizingSource,
+      sizingDebug: legacySizingDebug
+    };
   }
 
   let quoteSpendRaw;
@@ -845,6 +905,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     minQty,
     minNotional,
     sizing,
+    sizingSource,
     sizingDebug
   };
 }

@@ -314,7 +314,7 @@ export async function executePreparedSignal(signalId) {
         qtyRounded: sizing.qtyRounded,
         sizingDebug: {
           ...(sizing.sizingDebug || {}),
-          sizingSource: 'trade_bot_runtime',
+          sizingSource: sizing.sizingSource || 'trade_bot_runtime',
           ignoredPayloadSizing
         }
       });
@@ -360,7 +360,7 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
-        sizingSource: 'trade_bot_runtime',
+        sizingSource: sizing.sizingSource || 'trade_bot_runtime',
         ignoredPayloadSizing,
         quantity: sizing.qtyRounded,
         qtyRaw: sizing.qtyRaw,
