@@ -57,13 +57,23 @@ function parseJsonObject(text) {
 }
 
 async function findUserByPrefix(prefix) {
-  if (!prefix) return null;
+  const normalizedPrefix = String(prefix || '').trim().toLowerCase();
+  if (!normalizedPrefix) return null;
+
   const record = await prisma.dnsRecord.findFirst({
-    where: { subdomain: prefix, status: 'active' },
+    where: { subdomain: normalizedPrefix, status: 'active' },
     select: { userId: true }
   });
-  if (!record) return null;
-  return prisma.user.findUnique({ where: { id: record.userId } });
+  if (record?.userId) {
+    return prisma.user.findUnique({ where: { id: record.userId } });
+  }
+
+  // Fallback for assigned platform webhook prefixes when DNS records are not provisioned.
+  return prisma.user.findFirst({
+    where: {
+      OR: [{ subdomainPrefix: normalizedPrefix }, { webhookSubdomain: normalizedPrefix }]
+    }
+  });
 }
 
 async function resolveSingleExecutionTarget(userId) {
