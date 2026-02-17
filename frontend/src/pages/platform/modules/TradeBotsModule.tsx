@@ -2915,6 +2915,79 @@ function statusLabel(status: BotConnectivityStatus) {
   return 'idle';
 }
 
+function connectivityNodePositions(count: number, compact = false) {
+  const desktopPresets: Record<number, Array<{ x: number; y: number }>> = {
+    1: [{ x: 50, y: 80 }],
+    2: [
+      { x: 32, y: 80 },
+      { x: 68, y: 80 }
+    ],
+    3: [
+      { x: 20, y: 74 },
+      { x: 50, y: 84 },
+      { x: 80, y: 74 }
+    ],
+    4: [
+      { x: 18, y: 70 },
+      { x: 40, y: 86 },
+      { x: 60, y: 86 },
+      { x: 82, y: 70 }
+    ],
+    5: [
+      { x: 14, y: 68 },
+      { x: 32, y: 82 },
+      { x: 50, y: 90 },
+      { x: 68, y: 82 },
+      { x: 86, y: 68 }
+    ],
+    6: [
+      { x: 12, y: 66 },
+      { x: 28, y: 82 },
+      { x: 44, y: 90 },
+      { x: 56, y: 90 },
+      { x: 72, y: 82 },
+      { x: 88, y: 66 }
+    ]
+  };
+
+  const compactPresets: Record<number, Array<{ x: number; y: number }>> = {
+    1: [{ x: 50, y: 82 }],
+    2: [
+      { x: 28, y: 82 },
+      { x: 72, y: 82 }
+    ],
+    3: [
+      { x: 18, y: 76 },
+      { x: 50, y: 89 },
+      { x: 82, y: 76 }
+    ],
+    4: [
+      { x: 22, y: 72 },
+      { x: 78, y: 72 },
+      { x: 34, y: 89 },
+      { x: 66, y: 89 }
+    ],
+    5: [
+      { x: 20, y: 70 },
+      { x: 50, y: 66 },
+      { x: 80, y: 70 },
+      { x: 32, y: 89 },
+      { x: 68, y: 89 }
+    ],
+    6: [
+      { x: 20, y: 68 },
+      { x: 50, y: 66 },
+      { x: 80, y: 68 },
+      { x: 20, y: 89 },
+      { x: 50, y: 91 },
+      { x: 80, y: 89 }
+    ]
+  };
+
+  const presets = compact ? compactPresets : desktopPresets;
+  return presets[Math.min(Math.max(count, 1), 6)] || presets[6];
+}
+
 function ConnectivityMindmap({
   bots,
   botLinks
@@ -2922,6 +2995,24 @@ function ConnectivityMindmap({
   bots: TradeBotRow[];
   botLinks: Record<string, BotConnectivityLink>;
 }) {
+  const [compactLayout, setCompactLayout] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 640px)').matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 640px)');
+    const onChange = () => setCompactLayout(media.matches);
+    onChange();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, []);
+
   const nodes = bots
     .map((bot) => {
       const link = botLinks[bot.id];
@@ -2937,6 +3028,12 @@ function ConnectivityMindmap({
     .slice(0, 6);
   const connectedCount = nodes.filter((node) => node.connected).length;
   const connectedNodes = nodes.filter((node) => node.connected);
+  const nodeCoords = connectivityNodePositions(nodes.length, compactLayout);
+  const plottedNodes = nodes.map((node, idx) => ({
+    ...node,
+    x: nodeCoords[idx]?.x ?? 50,
+    y: nodeCoords[idx]?.y ?? 84
+  }));
 
   return (
     <div className="card-shell relative overflow-hidden space-y-3 border border-cyan-300/20 bg-slate-950/45 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_40px_rgba(34,211,238,0.12)]">
@@ -2986,24 +3083,75 @@ function ConnectivityMindmap({
         {nodes.length === 0 && <p className="mt-4 text-center text-sm text-cyan-100/70">No bots loaded to draw connectivity.</p>}
 
         {nodes.length > 0 && (
-          <div className="relative mt-5">
-            <span className="pointer-events-none absolute left-1/2 top-0 h-4 w-px -translate-x-1/2 bg-cyan-300/60"></span>
-            <span className="pointer-events-none absolute left-[8%] right-[8%] top-4 h-px bg-cyan-300/40"></span>
-            <div className="grid gap-3 pt-5 sm:grid-cols-2 lg:grid-cols-3">
-              {nodes.map((node) => (
-                <div
-                  key={node.id}
-                  className="relative rounded-xl border border-cyan-300/25 bg-slate-900/75 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08),0_0_16px_rgba(14,165,233,0.14)]"
-                >
-                  <span className="pointer-events-none absolute -top-5 left-1/2 h-5 w-px -translate-x-1/2 bg-cyan-300/40"></span>
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2.5 w-2.5 rounded-full ${statusPill(node.status)}`}></span>
-                    <p className="truncate text-sm font-semibold text-cyan-50">{node.name}</p>
-                  </div>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-cyan-200/75">{statusLabel(node.status)}</p>
-                </div>
-              ))}
+          <div className="relative mt-5 h-[24rem] sm:h-[22rem] overflow-hidden rounded-xl border border-cyan-300/20 bg-slate-950/70">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(56,189,248,0.2),transparent_36%)]"></div>
+            <div className="pointer-events-none absolute inset-0 opacity-30 bg-[linear-gradient(to_right,rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(34,211,238,0.1)_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+
+            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <path d="M8 14 H92" stroke="rgba(34,211,238,0.28)" strokeWidth="0.45" strokeDasharray="1.5 1.8" fill="none">
+                <animate attributeName="stroke-dashoffset" values="0;-22" dur="8s" repeatCount="indefinite" />
+              </path>
+              {plottedNodes.map((node, idx) => {
+                const midY = Math.max(compactLayout ? 30 : 26, node.y - (compactLayout ? 14 : 18));
+                const lineColor =
+                  node.status === 'online'
+                    ? 'rgba(52,211,153,0.9)'
+                    : node.status === 'issue'
+                      ? 'rgba(251,113,133,0.9)'
+                      : 'rgba(250,204,21,0.9)';
+                const dashPattern = node.status === 'online' ? '2.8 2.2' : node.status === 'issue' ? '1.2 1.8' : '2 2.4';
+                const flowDur = `${4 + (idx % 3)}s`;
+                return (
+                  <g key={`mesh-${node.id}`}>
+                    <path
+                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
+                      stroke={lineColor}
+                      strokeWidth={node.status === 'online' ? '1.15' : '0.95'}
+                      fill="none"
+                      opacity="0.28"
+                    />
+                    <path
+                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
+                      stroke={lineColor}
+                      strokeWidth={node.status === 'online' ? '1.05' : '0.9'}
+                      strokeDasharray={dashPattern}
+                      fill="none"
+                      opacity="0.95"
+                    >
+                      <animate attributeName="stroke-dashoffset" values="0;-30" dur={flowDur} repeatCount="indefinite" />
+                    </path>
+                    <path
+                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
+                      stroke={lineColor}
+                      strokeWidth="2.3"
+                      fill="none"
+                      opacity="0.09"
+                    />
+                    <circle cx={node.x} cy={node.y - 7} r="0.95" fill={lineColor}>
+                      <animate attributeName="r" values="0.7;1.1;0.7" dur={`${2.2 + idx * 0.25}s`} repeatCount="indefinite" />
+                    </circle>
+                  </g>
+                );
+              })}
+            </svg>
+
+            <div className="pointer-events-none absolute left-1/2 top-[12%] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-cyan-200/60 bg-gradient-to-r from-cyan-300/25 via-sky-300/20 to-fuchsia-300/25 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-100 shadow-[0_0_22px_rgba(56,189,248,0.36)]">
+              Link Router
             </div>
+
+            {plottedNodes.map((node) => (
+              <div
+                key={node.id}
+                className="absolute w-[5.4rem] sm:w-[7.5rem] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-cyan-300/30 bg-slate-900/85 px-1.5 sm:px-2 py-1.5 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08),0_0_16px_rgba(14,165,233,0.14)]"
+                style={{ left: `${node.x}%`, top: `${node.y}%` }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusPill(node.status)}`}></span>
+                  <p className="truncate text-[10px] sm:text-[11px] font-semibold text-cyan-50">{node.name}</p>
+                </div>
+                <p className="mt-1 text-[9px] uppercase tracking-[0.16em] text-cyan-200/75">{statusLabel(node.status)}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>
