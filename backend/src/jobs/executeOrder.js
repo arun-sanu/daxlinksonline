@@ -8,6 +8,7 @@ import {
   computeMexcBaseQuantityForSignal
 } from '../services/orderSizingService.js';
 import { EXECUTION_AUDIT_STATUS, updateExecutionAudit } from '../services/executionAuditService.js';
+import { recordTradeTransaction } from '../services/tradeTransactionsService.js';
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
@@ -19,6 +20,25 @@ function debugExecution(stage, data = {}) {
   } catch {
     console.log('[tv-webhook-debug]', stage);
   }
+}
+
+function logLedgerWriteError(error, context = {}) {
+  const message = error?.message || String(error || 'unknown ledger write error');
+  try {
+    console.error(
+      '[trade-ledger-write-failed]',
+      JSON.stringify({
+        message,
+        ...context
+      })
+    );
+  } catch {
+    console.error('[trade-ledger-write-failed]', message);
+  }
+  debugExecution('ledger_write_failed', {
+    message,
+    ...context
+  });
 }
 
 function toBuffer(value) {
@@ -379,6 +399,87 @@ export async function executePreparedSignal(signalId) {
           error: null
         }
       });
+
+      const signalPayload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+      const signalRaw = signalPayload?.raw && typeof signalPayload.raw === 'object' ? signalPayload.raw : {};
+      const fills = Array.isArray(orderSnapshot?.fills)
+        ? orderSnapshot.fills
+        : Array.isArray(result?.fills)
+          ? result.fills
+          : [];
+      const firstFill = fills[0] || null;
+      const resolvedQuantity = parseNumeric(orderSnapshot?.executedQty ?? result?.executedQty ?? sizing.qtyRounded);
+      const resolvedValue = parseNumeric(orderSnapshot?.cummulativeQuoteQty ?? result?.cummulativeQuoteQty ?? result?.quoteQty);
+      const explicitExecutionPrice = parseNumeric(orderSnapshot?.price ?? result?.price);
+      const resolvedExecutionPrice =
+        explicitExecutionPrice && explicitExecutionPrice > 0
+          ? explicitExecutionPrice
+          : resolvedValue && resolvedQuantity && resolvedQuantity > 0
+            ? resolvedValue / resolvedQuantity
+            : null;
+
+      try {
+        await recordTradeTransaction({
+          workspaceId: integration.workspaceId,
+          botId: signalRaw?.botId || signalPayload?.botId || null,
+          botInstanceId: signalRaw?.botInstanceId || signalPayload?.botInstanceId || null,
+          orderId: null,
+          executionAuditId: executionAuditId || null,
+          forwardedSignalId: signal.id,
+          integrationId: integration.id,
+          exchangeAccountId: signalRaw?.exchangeAccountId || signalPayload?.exchangeAccountId || null,
+          venue: integration.exchange || 'mexc',
+          symbol,
+          side,
+          orderType,
+          status: String(mexcStatus || finalAuditStatus || 'sent').toLowerCase(),
+          amount: parseNumeric(sizing.qtyRaw ?? sizing.qtyRounded),
+          quantity: resolvedQuantity,
+          value: resolvedValue,
+          marketPrice: parseNumeric(sizing.computedPrice),
+          executionPrice: resolvedExecutionPrice,
+          feeAmount: parseNumeric(firstFill?.commission),
+          feeAsset: firstFill?.commissionAsset || null,
+          accountBalanceBefore: parseNumeric(sizing.freeQuote),
+          balanceAsset: sizing.quoteAsset || null,
+          decisionContext: toJsonSafe({
+            source: 'tradingview_forwarder',
+            signalType: signal.type || null,
+            ignoredPayloadSizing,
+            idempotencyKey: signal.idempotencyKey || null
+          }),
+          sizingContext: toJsonSafe({
+            qtyRaw: sizing.qtyRaw,
+            qtyRounded: sizing.qtyRounded,
+            computedPrice: sizing.computedPrice,
+            freeQuote: sizing.freeQuote,
+            sizingSource: sizing.sizingSource || 'trade_bot_runtime',
+            sizingDebug: sizing.sizingDebug || {}
+          }),
+          exchangePayload: toJsonSafe({
+            placeOrderResult: result,
+            orderSnapshot
+          }),
+          metadata: toJsonSafe({
+            alertId,
+            clientOrderId,
+            mexcOrderId: mexcOrderId ? String(mexcOrderId) : null,
+            flow: 'executePreparedSignal.mexc'
+          }),
+          executedAt: orderSnapshot?.updateTime || result?.transactTime || new Date()
+        });
+      } catch (ledgerError) {
+        // Never block execution on ledger writes.
+        logLedgerWriteError(ledgerError, {
+          flow: 'executePreparedSignal.mexc',
+          signalId,
+          executionAuditId: executionAuditId || null,
+          integrationId: integration.id,
+          symbol,
+          side
+        });
+      }
+
       return { ok: true, result: executionResult };
     }
 
@@ -433,6 +534,59 @@ export async function executePreparedSignal(signalId) {
         error: null
       }
     });
+
+    const signalPayload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+    const signalRaw = signalPayload?.raw && typeof signalPayload.raw === 'object' ? signalPayload.raw : {};
+    try {
+      await recordTradeTransaction({
+        workspaceId: integration.workspaceId,
+        botId: signalRaw?.botId || signalPayload?.botId || null,
+        botInstanceId: signalRaw?.botInstanceId || signalPayload?.botInstanceId || null,
+        orderId: null,
+        executionAuditId: executionAuditId || null,
+        forwardedSignalId: signal.id,
+        integrationId: integration.id,
+        exchangeAccountId: signalRaw?.exchangeAccountId || signalPayload?.exchangeAccountId || null,
+        venue: integration.exchange || null,
+        symbol,
+        side,
+        orderType,
+        status: 'sent',
+        amount: fallbackAmount,
+        quantity: fallbackAmount,
+        value: parseNumeric(result?.cummulativeQuoteQty ?? result?.quoteQty ?? result?.cost),
+        marketPrice: parseNumeric(signal.price ?? signalPayload?.price ?? signalRaw?.price),
+        executionPrice: parseNumeric(result?.price ?? signal.price ?? signalPayload?.price ?? signalRaw?.price),
+        feeAmount: parseNumeric(result?.fee?.cost ?? result?.feeAmount),
+        feeAsset: result?.fee?.currency || result?.feeAsset || null,
+        decisionContext: toJsonSafe({
+          source: 'tradingview_forwarder',
+          idempotencyKey: signal.idempotencyKey || null
+        }),
+        sizingContext: toJsonSafe({
+          mode: 'fallback_amount',
+          fallbackAmount
+        }),
+        exchangePayload: toJsonSafe(result),
+        metadata: toJsonSafe({
+          alertId,
+          clientOrderId,
+          flow: 'executePreparedSignal.generic'
+        }),
+        executedAt: result?.transactTime || result?.timestamp || new Date()
+      });
+    } catch (ledgerError) {
+      // Never block execution on ledger writes.
+      logLedgerWriteError(ledgerError, {
+        flow: 'executePreparedSignal.generic',
+        signalId,
+        executionAuditId: executionAuditId || null,
+        integrationId: integration.id,
+        symbol,
+        side
+      });
+    }
+
     return { ok: true, result };
   } catch (err) {
     const message = err?.message || String(err);

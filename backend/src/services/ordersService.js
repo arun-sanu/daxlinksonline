@@ -24,6 +24,26 @@ const SUPPORTED_KLINE_INTERVALS = new Set([
 ]);
 const DEFAULT_REPORT_LIMIT = 25;
 const MAX_REPORT_LIMIT = 100;
+const DEFAULT_COMPOUNDING_LIMIT = 5000;
+const MAX_COMPOUNDING_LIMIT = 20000;
+const DEFAULT_COMPOUNDING_BUCKET = 'day';
+const SUPPORTED_COMPOUNDING_BUCKETS = new Set(['trade', 'hour', 'day']);
+const DEFAULT_REALIZED_PNL_FEE_MODE = 'auto';
+const SUPPORTED_REALIZED_PNL_FEE_MODES = new Set([
+  'auto',
+  'realized_excludes_fees',
+  'realized_includes_fees'
+]);
+const FINAL_COMPOUNDING_STATUSES = new Set([
+  'filled',
+  'executed',
+  'executed_success',
+  'success',
+  'succeeded',
+  'closed',
+  'done',
+  'partially_filled'
+]);
 const EMPTY_REPORT_SUMMARY = Object.freeze({
   executed: 0,
   rejected: 0,
@@ -994,5 +1014,645 @@ export async function getWorkspaceOrderReport({
     total: items.length,
     summary,
     items
+  };
+}
+
+function maybeNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function roundNumber(value, digits = 8) {
+  const n = maybeNumber(value);
+  if (n === null) return null;
+  return Number(n.toFixed(digits));
+}
+
+function parseDateInput(value, options = {}) {
+  if (value === null || value === undefined || value === '') return null;
+  const { endOfDayWhenDateOnly = false } = options;
+
+  let dateOnlyInput = false;
+  let date = null;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    dateOnlyInput = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+    date = new Date(trimmed);
+  } else {
+    date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  }
+
+  if (!date || Number.isNaN(date.getTime())) return null;
+  if (!endOfDayWhenDateOnly) return date;
+
+  const isMidnightUtc =
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0;
+  if (dateOnlyInput || isMidnightUtc) {
+    date.setUTCHours(23, 59, 59, 999);
+  }
+  return date;
+}
+
+function normalizeCompoundingLimit(limit) {
+  const n = Number(limit);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_COMPOUNDING_LIMIT;
+  return Math.min(Math.floor(n), MAX_COMPOUNDING_LIMIT);
+}
+
+function normalizeCompoundingBucket(value) {
+  const bucket = String(value || DEFAULT_COMPOUNDING_BUCKET)
+    .trim()
+    .toLowerCase();
+  return SUPPORTED_COMPOUNDING_BUCKETS.has(bucket) ? bucket : DEFAULT_COMPOUNDING_BUCKET;
+}
+
+function normalizeRealizedPnlFeeMode(value) {
+  const mode = String(value || DEFAULT_REALIZED_PNL_FEE_MODE)
+    .trim()
+    .toLowerCase();
+  return SUPPORTED_REALIZED_PNL_FEE_MODES.has(mode) ? mode : DEFAULT_REALIZED_PNL_FEE_MODE;
+}
+
+function toCompoundingBucketTimestamp(value, bucket) {
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  if (bucket === 'trade') return date.toISOString();
+  if (bucket === 'hour') {
+    date.setUTCMinutes(0, 0, 0);
+    return date.toISOString();
+  }
+  date.setUTCHours(0, 0, 0, 0);
+  return date.toISOString();
+}
+
+function toCompoundingBucketKey(value, bucket, rowId = null) {
+  const timestamp = toCompoundingBucketTimestamp(value, bucket);
+  if (!timestamp) return null;
+  if (bucket === 'trade') return `${timestamp}#${String(rowId || '')}`;
+  return timestamp;
+}
+
+function deriveSignedCashFlow(side, value, fee = 0) {
+  const normalizedSide = String(side || '')
+    .trim()
+    .toUpperCase();
+  const tradeValue = maybeNumber(value);
+  const tradeFee = maybeNumber(fee) || 0;
+
+  if (tradeValue === null) return tradeFee ? -tradeFee : null;
+  if (normalizedSide === 'BUY' || normalizedSide === 'LONG') return -tradeValue - tradeFee;
+  if (normalizedSide === 'SELL' || normalizedSide === 'SHORT') return tradeValue - tradeFee;
+  return -tradeFee;
+}
+
+function resolveNetRealizedPnlContribution({
+  realizedPnl,
+  fee = 0,
+  feeMode = DEFAULT_REALIZED_PNL_FEE_MODE,
+  realizedPnlIncludesFees = null
+}) {
+  const pnl = maybeNumber(realizedPnl);
+  const resolvedFee = maybeNumber(fee) || 0;
+  const mode = normalizeRealizedPnlFeeMode(feeMode);
+
+  if (pnl === null) {
+    return {
+      selected: -resolvedFee,
+      reported: -resolvedFee,
+      conservative: -resolvedFee
+    };
+  }
+
+  const reported = pnl;
+  const conservative = pnl - resolvedFee;
+
+  if (mode === 'realized_excludes_fees') {
+    return { selected: conservative, reported, conservative };
+  }
+  if (mode === 'realized_includes_fees') {
+    return { selected: reported, reported, conservative };
+  }
+
+  // Auto mode: use explicit row metadata when available, otherwise prefer
+  // reported realized pnl to avoid fee double-counting.
+  if (realizedPnlIncludesFees === false) {
+    return { selected: conservative, reported, conservative };
+  }
+  return { selected: reported, reported, conservative };
+}
+
+function mapTradeTransactionForAnalytics(row = {}) {
+  return {
+    id: row.id,
+    executedAt: row.executedAt,
+    botId: row.botId || null,
+    botInstanceId: row.botInstanceId || null,
+    integrationId: row.integrationId || null,
+    symbol: row.symbol || null,
+    side: row.side || null,
+    orderType: row.orderType || null,
+    status: row.status || null,
+    amount: maybeNumber(row.amount),
+    quantity: maybeNumber(row.quantity),
+    value: maybeNumber(row.value),
+    marketPrice: maybeNumber(row.marketPrice),
+    executionPrice: maybeNumber(row.executionPrice),
+    feeAmount: maybeNumber(row.feeAmount),
+    feeAsset: row.feeAsset || null,
+    realizedPnl: maybeNumber(row.realizedPnl),
+    unrealizedPnl: maybeNumber(row.unrealizedPnl),
+    accountBalanceBefore: maybeNumber(row.accountBalanceBefore),
+    accountBalanceAfter: maybeNumber(row.accountBalanceAfter),
+    accountEquityBefore: maybeNumber(row.accountEquityBefore),
+    accountEquityAfter: maybeNumber(row.accountEquityAfter),
+    balanceAsset: row.balanceAsset || null
+  };
+}
+
+export async function getWorkspaceTradeCompoundingReport({
+  workspaceId,
+  integrationId,
+  symbol,
+  botId,
+  botInstanceId,
+  from,
+  to,
+  bucket = DEFAULT_COMPOUNDING_BUCKET,
+  limit = DEFAULT_COMPOUNDING_LIMIT,
+  includeNonFinal = false,
+  realizedPnlFeeMode = DEFAULT_REALIZED_PNL_FEE_MODE
+}) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true }
+  });
+  if (!workspace) {
+    throw Object.assign(new Error('Workspace not found'), { status: 404 });
+  }
+
+  const fromDate = parseDateInput(from);
+  const toDate = parseDateInput(to, { endOfDayWhenDateOnly: true });
+  if (from && !fromDate) {
+    throw Object.assign(new Error('Invalid "from" date'), { status: 400 });
+  }
+  if (to && !toDate) {
+    throw Object.assign(new Error('Invalid "to" date'), { status: 400 });
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw Object.assign(new Error('"from" must be earlier than or equal to "to"'), { status: 400 });
+  }
+
+  const normalizedSymbol = symbol ? normalizeSymbol(symbol) : null;
+  const normalizedBucket = normalizeCompoundingBucket(bucket);
+  const normalizedFeeMode = normalizeRealizedPnlFeeMode(realizedPnlFeeMode);
+  const rowLimit = normalizeCompoundingLimit(limit);
+  const includeAllStatuses = includeNonFinal === true;
+
+  const where = {
+    workspaceId,
+    ...(integrationId ? { integrationId } : {}),
+    ...(normalizedSymbol ? { symbol: normalizedSymbol } : {}),
+    ...(botId ? { botId: String(botId).trim() } : {}),
+    ...(botInstanceId ? { botInstanceId: String(botInstanceId).trim() } : {}),
+    ...(includeAllStatuses ? {} : { status: { in: Array.from(FINAL_COMPOUNDING_STATUSES) } }),
+    ...(fromDate || toDate
+      ? {
+          executedAt: {
+            ...(fromDate ? { gte: fromDate } : {}),
+            ...(toDate ? { lte: toDate } : {})
+          }
+        }
+      : {})
+  };
+
+  const [totalMatchingRows, rowsDesc] = await Promise.all([
+    prisma.tradeTransaction.count({ where }),
+    prisma.tradeTransaction.findMany({
+      where,
+      orderBy: [{ executedAt: 'desc' }, { createdAt: 'desc' }],
+      take: rowLimit,
+      select: {
+        id: true,
+        botId: true,
+        botInstanceId: true,
+        integrationId: true,
+        symbol: true,
+        side: true,
+        orderType: true,
+        status: true,
+        amount: true,
+        quantity: true,
+        value: true,
+        marketPrice: true,
+        executionPrice: true,
+        feeAmount: true,
+        feeAsset: true,
+        realizedPnl: true,
+        unrealizedPnl: true,
+        accountBalanceBefore: true,
+        accountBalanceAfter: true,
+        accountEquityBefore: true,
+        accountEquityAfter: true,
+        balanceAsset: true,
+        metadata: true,
+        executedAt: true
+      }
+    })
+  ]);
+
+  const rows = [...rowsDesc].reverse();
+  if (!rows.length) {
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      filters: {
+        workspaceId,
+        integrationId: integrationId || null,
+        symbol: normalizedSymbol,
+        botId: botId || null,
+        botInstanceId: botInstanceId || null,
+        from: fromDate ? fromDate.toISOString() : null,
+        to: toDate ? toDate.toISOString() : null,
+        bucket: normalizedBucket,
+        limit: rowLimit,
+        includeNonFinal: includeAllStatuses,
+        realizedPnlFeeMode: normalizedFeeMode
+      },
+      totals: {
+        matchedRows: totalMatchingRows,
+        processedRows: 0,
+        truncated: false
+      },
+      summary: {
+        trades: 0,
+        buys: 0,
+        sells: 0,
+        volume: 0,
+        quantity: 0,
+        fees: 0,
+        reportedRealizedPnl: 0,
+        grossRealizedPnl: 0,
+        netRealizedPnl: 0,
+        netRealizedPnlReported: 0,
+        netRealizedPnlConservative: 0,
+        realizedPnlFeeMode: normalizedFeeMode,
+        wins: 0,
+        losses: 0,
+        breakeven: 0,
+        winRatePct: null,
+        pnlCoveragePct: 0,
+        startingCapital: null,
+        endingCapital: null,
+        compoundedReturnPct: null,
+        realizedReturnPct: null,
+        realizedReturnPctReported: null,
+        realizedReturnPctConservative: null,
+        inferredBalancePoints: 0
+      },
+      byBot: [],
+      bySymbol: [],
+      curve: [],
+      recentTrades: []
+    };
+  }
+
+  const botIds = Array.from(new Set(rows.map((row) => row.botId).filter(Boolean)));
+  const bots = botIds.length
+    ? await prisma.bot.findMany({
+        where: { id: { in: botIds } },
+        select: { id: true, name: true }
+      })
+    : [];
+  const botNameById = bots.reduce((acc, bot) => {
+    acc[bot.id] = bot.name;
+    return acc;
+  }, {});
+
+  let totalTrades = 0;
+  let totalBuys = 0;
+  let totalSells = 0;
+  let totalVolume = 0;
+  let totalQuantity = 0;
+  let totalFees = 0;
+  let reportedRealizedPnl = 0;
+  let grossRealizedPnl = 0;
+  let netRealizedPnl = 0;
+  let netRealizedPnlReported = 0;
+  let netRealizedPnlConservative = 0;
+  let pnlTrades = 0;
+  let wins = 0;
+  let losses = 0;
+  let breakeven = 0;
+  let inferredBalancePoints = 0;
+  let runningBalance = null;
+  let startingCapital = null;
+  let endingCapital = null;
+
+  const botAggByKey = new Map();
+  const symbolAggByKey = new Map();
+  const curveByBucket = new Map();
+
+  rows.forEach((row) => {
+    totalTrades += 1;
+
+    const side = String(row.side || '')
+      .trim()
+      .toUpperCase();
+    const quantity = maybeNumber(row.quantity ?? row.amount);
+    const value = maybeNumber(row.value);
+    const fee = maybeNumber(row.feeAmount) || 0;
+    const realizedPnl = maybeNumber(row.realizedPnl);
+    const realizedPnlIncludesFees =
+      typeof row?.metadata?.realizedPnlIncludesFees === 'boolean'
+        ? row.metadata.realizedPnlIncludesFees
+        : null;
+    const balanceBefore = maybeNumber(row.accountEquityBefore ?? row.accountBalanceBefore);
+    let balanceAfter = maybeNumber(row.accountEquityAfter ?? row.accountBalanceAfter);
+
+    if (side === 'BUY' || side === 'LONG') totalBuys += 1;
+    if (side === 'SELL' || side === 'SHORT') totalSells += 1;
+    if (quantity !== null) totalQuantity += Math.abs(quantity);
+    if (value !== null) totalVolume += Math.abs(value);
+    totalFees += fee;
+
+    const pnlContribution = resolveNetRealizedPnlContribution({
+      realizedPnl,
+      fee,
+      feeMode: normalizedFeeMode,
+      realizedPnlIncludesFees
+    });
+    netRealizedPnl += pnlContribution.selected;
+    netRealizedPnlReported += pnlContribution.reported;
+    netRealizedPnlConservative += pnlContribution.conservative;
+
+    if (realizedPnl !== null) {
+      pnlTrades += 1;
+      reportedRealizedPnl += realizedPnl;
+      grossRealizedPnl += realizedPnl;
+      if (realizedPnl > 1e-12) wins += 1;
+      else if (realizedPnl < -1e-12) losses += 1;
+      else breakeven += 1;
+    }
+
+    if (runningBalance === null) {
+      if (balanceBefore !== null) {
+        runningBalance = balanceBefore;
+      } else if (balanceAfter !== null) {
+        const signedCashFlow = deriveSignedCashFlow(side, value, fee);
+        runningBalance = signedCashFlow !== null ? balanceAfter - signedCashFlow : balanceAfter;
+      }
+    }
+    if (startingCapital === null && runningBalance !== null) {
+      startingCapital = runningBalance;
+    }
+
+    let balanceWasInferred = false;
+    if (balanceAfter !== null) {
+      runningBalance = balanceAfter;
+    } else {
+      const signedCashFlow = deriveSignedCashFlow(side, value, fee);
+      if (runningBalance !== null && signedCashFlow !== null) {
+        runningBalance += signedCashFlow;
+        balanceAfter = runningBalance;
+        balanceWasInferred = true;
+        inferredBalancePoints += 1;
+      }
+    }
+
+    if (startingCapital === null && balanceAfter !== null) {
+      const signedCashFlow = deriveSignedCashFlow(side, value, fee);
+      startingCapital = signedCashFlow !== null ? balanceAfter - signedCashFlow : balanceAfter;
+    }
+
+    if (balanceAfter !== null) {
+      endingCapital = balanceAfter;
+    }
+
+    const botKey = row.botId || (row.botInstanceId ? `instance:${row.botInstanceId}` : 'unassigned');
+    if (!botAggByKey.has(botKey)) {
+      botAggByKey.set(botKey, {
+        key: botKey,
+        botId: row.botId || null,
+        botName: row.botId ? botNameById[row.botId] || null : null,
+        botInstanceIds: new Set(),
+        trades: 0,
+        buys: 0,
+        sells: 0,
+        quantity: 0,
+        volume: 0,
+        fees: 0,
+        reportedRealizedPnl: 0,
+        grossRealizedPnl: 0,
+        netRealizedPnl: 0,
+        netRealizedPnlReported: 0,
+        netRealizedPnlConservative: 0,
+        pnlTrades: 0,
+        wins: 0,
+        losses: 0
+      });
+    }
+    const botAgg = botAggByKey.get(botKey);
+    if (row.botInstanceId) botAgg.botInstanceIds.add(row.botInstanceId);
+    botAgg.trades += 1;
+    if (side === 'BUY' || side === 'LONG') botAgg.buys += 1;
+    if (side === 'SELL' || side === 'SHORT') botAgg.sells += 1;
+    if (quantity !== null) botAgg.quantity += Math.abs(quantity);
+    if (value !== null) botAgg.volume += Math.abs(value);
+    botAgg.fees += fee;
+    botAgg.reportedRealizedPnl += realizedPnl ?? 0;
+    if (realizedPnl !== null) {
+      botAgg.pnlTrades += 1;
+      botAgg.grossRealizedPnl += realizedPnl;
+      if (realizedPnl > 1e-12) botAgg.wins += 1;
+      if (realizedPnl < -1e-12) botAgg.losses += 1;
+    }
+    botAgg.netRealizedPnl += pnlContribution.selected;
+    botAgg.netRealizedPnlReported += pnlContribution.reported;
+    botAgg.netRealizedPnlConservative += pnlContribution.conservative;
+
+    const symbolKey = String(row.symbol || '').toUpperCase();
+    if (!symbolAggByKey.has(symbolKey)) {
+      symbolAggByKey.set(symbolKey, {
+        symbol: symbolKey,
+        trades: 0,
+        buys: 0,
+        sells: 0,
+        quantity: 0,
+        volume: 0,
+        fees: 0,
+        reportedRealizedPnl: 0,
+        grossRealizedPnl: 0,
+        netRealizedPnl: 0,
+        netRealizedPnlReported: 0,
+        netRealizedPnlConservative: 0,
+        pnlTrades: 0,
+        wins: 0,
+        losses: 0
+      });
+    }
+    const symbolAgg = symbolAggByKey.get(symbolKey);
+    symbolAgg.trades += 1;
+    if (side === 'BUY' || side === 'LONG') symbolAgg.buys += 1;
+    if (side === 'SELL' || side === 'SHORT') symbolAgg.sells += 1;
+    if (quantity !== null) symbolAgg.quantity += Math.abs(quantity);
+    if (value !== null) symbolAgg.volume += Math.abs(value);
+    symbolAgg.fees += fee;
+    symbolAgg.reportedRealizedPnl += realizedPnl ?? 0;
+    if (realizedPnl !== null) {
+      symbolAgg.pnlTrades += 1;
+      symbolAgg.grossRealizedPnl += realizedPnl;
+      if (realizedPnl > 1e-12) symbolAgg.wins += 1;
+      if (realizedPnl < -1e-12) symbolAgg.losses += 1;
+    }
+    symbolAgg.netRealizedPnl += pnlContribution.selected;
+    symbolAgg.netRealizedPnlReported += pnlContribution.reported;
+    symbolAgg.netRealizedPnlConservative += pnlContribution.conservative;
+
+    const bucketKey = toCompoundingBucketKey(row.executedAt, normalizedBucket, row.id);
+    const bucketTimestamp = toCompoundingBucketTimestamp(row.executedAt, normalizedBucket);
+    if (bucketKey) {
+      if (!curveByBucket.has(bucketKey)) {
+        curveByBucket.set(bucketKey, {
+          timestamp: bucketTimestamp,
+          trades: 0,
+          balance: null,
+          cumulativeGrossRealizedPnl: 0,
+          cumulativeNetRealizedPnl: 0,
+          cumulativeNetRealizedPnlReported: 0,
+          cumulativeNetRealizedPnlConservative: 0,
+          cumulativeFees: 0,
+          inferredBalance: false
+        });
+      }
+      const curvePoint = curveByBucket.get(bucketKey);
+      curvePoint.trades += 1;
+      if (balanceAfter !== null) curvePoint.balance = roundNumber(balanceAfter, 8);
+      curvePoint.cumulativeGrossRealizedPnl = roundNumber(grossRealizedPnl, 8);
+      curvePoint.cumulativeNetRealizedPnl = roundNumber(netRealizedPnl, 8);
+      curvePoint.cumulativeNetRealizedPnlReported = roundNumber(netRealizedPnlReported, 8);
+      curvePoint.cumulativeNetRealizedPnlConservative = roundNumber(netRealizedPnlConservative, 8);
+      curvePoint.cumulativeFees = roundNumber(totalFees, 8);
+      if (balanceWasInferred) curvePoint.inferredBalance = true;
+    }
+  });
+
+  const byBot = Array.from(botAggByKey.values())
+    .map((entry) => ({
+      botId: entry.botId,
+      botName: entry.botName,
+      botInstanceCount: entry.botInstanceIds.size,
+      trades: entry.trades,
+      buys: entry.buys,
+      sells: entry.sells,
+      quantity: roundNumber(entry.quantity, 8),
+      volume: roundNumber(entry.volume, 8),
+      fees: roundNumber(entry.fees, 8),
+      reportedRealizedPnl: roundNumber(entry.reportedRealizedPnl, 8),
+      grossRealizedPnl: roundNumber(entry.grossRealizedPnl, 8),
+      netRealizedPnl: roundNumber(entry.netRealizedPnl, 8),
+      netRealizedPnlReported: roundNumber(entry.netRealizedPnlReported, 8),
+      netRealizedPnlConservative: roundNumber(entry.netRealizedPnlConservative, 8),
+      pnlTrades: entry.pnlTrades,
+      winRatePct: entry.pnlTrades > 0 ? roundNumber((entry.wins / entry.pnlTrades) * 100, 4) : null
+    }))
+    .sort((a, b) => (b.netRealizedPnl || 0) - (a.netRealizedPnl || 0));
+
+  const bySymbol = Array.from(symbolAggByKey.values())
+    .map((entry) => ({
+      symbol: entry.symbol,
+      trades: entry.trades,
+      buys: entry.buys,
+      sells: entry.sells,
+      quantity: roundNumber(entry.quantity, 8),
+      volume: roundNumber(entry.volume, 8),
+      fees: roundNumber(entry.fees, 8),
+      reportedRealizedPnl: roundNumber(entry.reportedRealizedPnl, 8),
+      grossRealizedPnl: roundNumber(entry.grossRealizedPnl, 8),
+      netRealizedPnl: roundNumber(entry.netRealizedPnl, 8),
+      netRealizedPnlReported: roundNumber(entry.netRealizedPnlReported, 8),
+      netRealizedPnlConservative: roundNumber(entry.netRealizedPnlConservative, 8),
+      pnlTrades: entry.pnlTrades,
+      winRatePct: entry.pnlTrades > 0 ? roundNumber((entry.wins / entry.pnlTrades) * 100, 4) : null
+    }))
+    .sort((a, b) => (b.netRealizedPnl || 0) - (a.netRealizedPnl || 0));
+
+  const curve = Array.from(curveByBucket.values()).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  const winRatePct = pnlTrades > 0 ? (wins / pnlTrades) * 100 : null;
+  const pnlCoveragePct = totalTrades > 0 ? (pnlTrades / totalTrades) * 100 : 0;
+  const compoundedReturnPct =
+    startingCapital && startingCapital > 0 && endingCapital !== null
+      ? ((endingCapital - startingCapital) / startingCapital) * 100
+      : null;
+  const realizedReturnPct =
+    startingCapital && startingCapital > 0
+      ? (netRealizedPnl / startingCapital) * 100
+      : null;
+  const realizedReturnPctReported =
+    startingCapital && startingCapital > 0
+      ? (netRealizedPnlReported / startingCapital) * 100
+      : null;
+  const realizedReturnPctConservative =
+    startingCapital && startingCapital > 0
+      ? (netRealizedPnlConservative / startingCapital) * 100
+      : null;
+
+  return {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    filters: {
+      workspaceId,
+      integrationId: integrationId || null,
+      symbol: normalizedSymbol,
+      botId: botId || null,
+      botInstanceId: botInstanceId || null,
+        from: fromDate ? fromDate.toISOString() : null,
+        to: toDate ? toDate.toISOString() : null,
+        bucket: normalizedBucket,
+        limit: rowLimit,
+        includeNonFinal: includeAllStatuses,
+        realizedPnlFeeMode: normalizedFeeMode
+      },
+    totals: {
+      matchedRows: totalMatchingRows,
+      processedRows: rows.length,
+      truncated: totalMatchingRows > rows.length
+    },
+    summary: {
+      trades: totalTrades,
+      buys: totalBuys,
+      sells: totalSells,
+      volume: roundNumber(totalVolume, 8),
+      quantity: roundNumber(totalQuantity, 8),
+      fees: roundNumber(totalFees, 8),
+      reportedRealizedPnl: roundNumber(reportedRealizedPnl, 8),
+      grossRealizedPnl: roundNumber(grossRealizedPnl, 8),
+      netRealizedPnl: roundNumber(netRealizedPnl, 8),
+      netRealizedPnlReported: roundNumber(netRealizedPnlReported, 8),
+      netRealizedPnlConservative: roundNumber(netRealizedPnlConservative, 8),
+      realizedPnlFeeMode: normalizedFeeMode,
+      wins,
+      losses,
+      breakeven,
+      winRatePct: roundNumber(winRatePct, 4),
+      pnlCoveragePct: roundNumber(pnlCoveragePct, 4),
+      startingCapital: roundNumber(startingCapital, 8),
+      endingCapital: roundNumber(endingCapital, 8),
+      compoundedReturnPct: roundNumber(compoundedReturnPct, 4),
+      realizedReturnPct: roundNumber(realizedReturnPct, 4),
+      realizedReturnPctReported: roundNumber(realizedReturnPctReported, 4),
+      realizedReturnPctConservative: roundNumber(realizedReturnPctConservative, 4),
+      inferredBalancePoints
+    },
+    byBot,
+    bySymbol,
+    curve,
+    recentTrades: rows.slice(-Math.min(rows.length, 200)).reverse().map(mapTradeTransactionForAnalytics)
   };
 }

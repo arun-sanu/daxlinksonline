@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/prisma.js';
+import { recordTradeTransaction } from './tradeTransactionsService.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -265,42 +266,135 @@ export async function writeBotOrderResult(payload = {}) {
     throw Object.assign(new Error('entryOrder.qty or sizing.qtyFinal must be > 0'), { status: 400 });
   }
 
-  const created = await prisma.order.create({
-    data: orderData
-  });
+  const executedAt =
+    asDate(entryOrder?.executedAt || executionResult?.executedAt || executionResult?.updateTime || payload?.executedAt) ||
+    new Date();
 
-  const report = await prisma.orderSizingReport.create({
-    data: {
-      orderId: created.id,
-      freeQuote: asDecimal(sizing?.freeQuote ?? sizing?.free_quote),
-      freeBase: asDecimal(sizing?.freeBase ?? sizing?.free_base),
-      exchangeMinNotional: asDecimal(sizing?.exchangeMinNotional ?? sizing?.exchange_min_notional),
-      effectiveMinNotional: asDecimal(sizing?.effectiveMinNotional ?? sizing?.effective_min_notional),
-      precisionAmount: asDecimal(sizing?.precisionAmount ?? sizing?.precision_amount),
-      stepSize: asDecimal(sizing?.stepSize ?? sizing?.step_size),
-      roundingMethod: sizing?.roundingMethod || sizing?.rounding_method || null,
-      rawPayload: toJsonSafe(rawPayload),
-      normalizedSignal: toJsonSafe(signal),
-      executionResult: toJsonSafe({
-        entryOrder,
-        protection,
-        executionResult,
-        errors: payload?.errors || []
-      })
-    },
-    include: {
-      order: {
-        include: {
-          botInstance: {
-            include: {
-              bot: {
-                select: { id: true, name: true }
+  const [created, report] = await prisma.$transaction(async (tx) => {
+    const createdOrder = await tx.order.create({
+      data: orderData
+    });
+
+    const createdReport = await tx.orderSizingReport.create({
+      data: {
+        orderId: createdOrder.id,
+        freeQuote: asDecimal(sizing?.freeQuote ?? sizing?.free_quote),
+        freeBase: asDecimal(sizing?.freeBase ?? sizing?.free_base),
+        exchangeMinNotional: asDecimal(sizing?.exchangeMinNotional ?? sizing?.exchange_min_notional),
+        effectiveMinNotional: asDecimal(sizing?.effectiveMinNotional ?? sizing?.effective_min_notional),
+        precisionAmount: asDecimal(sizing?.precisionAmount ?? sizing?.precision_amount),
+        stepSize: asDecimal(sizing?.stepSize ?? sizing?.step_size),
+        roundingMethod: sizing?.roundingMethod || sizing?.rounding_method || null,
+        rawPayload: toJsonSafe(rawPayload),
+        normalizedSignal: toJsonSafe(signal),
+        executionResult: toJsonSafe({
+          entryOrder,
+          protection,
+          executionResult,
+          errors: payload?.errors || []
+        })
+      },
+      include: {
+        order: {
+          include: {
+            botInstance: {
+              include: {
+                bot: {
+                  select: { id: true, name: true }
+                }
               }
             }
           }
         }
       }
-    }
+    });
+
+    await recordTradeTransaction(
+      {
+        workspaceId: botInstance.workspaceId,
+        botId: botInstance.botId,
+        botInstanceId: botInstance.id,
+        orderId: createdOrder.id,
+        executionAuditId: payload?.executionAuditId || payload?.meta?.executionAuditId || null,
+        forwardedSignalId: payload?.signalId || signal?.id || null,
+        integrationId: payload?.integrationId || payload?.meta?.integrationId || signal?.meta?.integrationId || null,
+        exchangeAccountId: botInstance.exchangeAccountId || null,
+        venue: orderData.venue,
+        symbol,
+        side,
+        orderType: type,
+        status: orderStatus,
+        amount: toPlainNumber(orderData.qtyRaw ?? orderData.qty),
+        quantity: toPlainNumber(orderData.qtyFinal ?? orderData.qty),
+        value: toPlainNumber(orderData.quoteSpend),
+        marketPrice: toPlainNumber(orderData.refPrice),
+        executionPrice: toPlainNumber(orderData.price),
+        feeAmount: toPlainNumber(
+          executionResult?.feeAmount ??
+            executionResult?.fee_amount ??
+            executionResult?.commission ??
+            entryOrder?.feeAmount ??
+            entryOrder?.commission
+        ),
+        feeAsset: executionResult?.feeAsset || executionResult?.commissionAsset || entryOrder?.feeAsset || null,
+        realizedPnl: toPlainNumber(
+          executionResult?.realizedPnl ??
+            executionResult?.realized_pnl ??
+            payload?.realizedPnl
+        ),
+        unrealizedPnl: toPlainNumber(
+          executionResult?.unrealizedPnl ??
+            executionResult?.unrealized_pnl ??
+            payload?.unrealizedPnl
+        ),
+        accountBalanceBefore: toPlainNumber(sizing?.freeQuote ?? sizing?.free_quote),
+        accountBalanceAfter: toPlainNumber(
+          executionResult?.freeQuoteAfter ??
+            executionResult?.free_quote_after ??
+            payload?.accountBalanceAfter
+        ),
+        accountEquityBefore: toPlainNumber(
+          payload?.accountEquityBefore ??
+            sizing?.equityBefore ??
+            sizing?.equity_before
+        ),
+        accountEquityAfter: toPlainNumber(
+          payload?.accountEquityAfter ??
+            executionResult?.equityAfter ??
+            executionResult?.equity_after
+        ),
+        balanceAsset: sizing?.quoteAsset || payload?.quoteAsset || null,
+        positionQtyBefore: toPlainNumber(
+          payload?.positionQtyBefore ??
+            signal?.positionQtyBefore ??
+            signal?.position?.beforeQty
+        ),
+        positionQtyAfter: toPlainNumber(
+          payload?.positionQtyAfter ??
+            signal?.positionQtyAfter ??
+            signal?.position?.afterQty
+        ),
+        decisionContext: toJsonSafe({
+          strategy: extractStrategy(payload),
+          signal,
+          risk: signal?.risk || null
+        }),
+        sizingContext: toJsonSafe(sizing),
+        exchangePayload: toJsonSafe({
+          entryOrder,
+          protection,
+          executionResult
+        }),
+        metadata: toJsonSafe({
+          rawPayload,
+          reportSource: 'internalBotOrderResult'
+        }),
+        executedAt
+      },
+      { db: tx }
+    );
+
+    return [createdOrder, createdReport];
   });
 
   return {

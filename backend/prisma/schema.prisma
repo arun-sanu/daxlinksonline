@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
@@ -181,37 +181,37 @@ model IntegrationCredential {
 }
 
 model User {
-  id               String               @id @default(uuid())
-  shortCode        String?              @unique
-  email            String               @unique
-  passwordHash     String
-  name             String
-  image            String?
-  emailVerified    Boolean              @default(false)
-  twoFactorEnabled Boolean              @default(false)
-  role             String               @default("operator")
-  isSuperAdmin     Boolean              @default(false)
+  id                String               @id @default(uuid())
+  shortCode         String?              @unique
+  email             String               @unique
+  passwordHash      String
+  name              String
+  image             String?
+  emailVerified     Boolean              @default(false)
+  twoFactorEnabled  Boolean              @default(false)
+  role              String               @default("operator")
+  isSuperAdmin      Boolean              @default(false)
   // Webhook trial + ingress fields
-  subdomainPrefix  String?              @unique
-  webhookSubdomain String?             @unique
-  webhookSecret    String?
-  webhookHmacKey   String?
-  enforceHmac      Boolean              @default(false)
-  trialEndsAt      DateTime?
-  isActive         Boolean              @default(true)
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  workspaces       Workspace[]          @relation("WorkspaceOwner")
-  accounts         Account[]
-  sessions         Session[]
-  twoFactor        TwoFactor?
-  resetTokens      PasswordResetToken[]
-  createdDatabases DatabaseInstance[]
-  dnsRecords       DnsRecord[]
-  devices          Device[]
-  dnsOrder         String[]             @default([])
+  subdomainPrefix   String?              @unique
+  webhookSubdomain  String?              @unique
+  webhookSecret     String?
+  webhookHmacKey    String?
+  enforceHmac       Boolean              @default(false)
+  trialEndsAt       DateTime?
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  workspaces        Workspace[]          @relation("WorkspaceOwner")
+  accounts          Account[]
+  sessions          Session[]
+  twoFactor         TwoFactor?
+  resetTokens       PasswordResetToken[]
+  createdDatabases  DatabaseInstance[]
+  dnsRecords        DnsRecord[]
+  devices           Device[]
+  dnsOrder          String[]             @default([])
   tradingviewAlerts TradingviewAlert[]
-  executionAudits  ExecutionAudit[]
+  executionAudits   ExecutionAudit[]
 
   @@index([trialEndsAt])
 }
@@ -459,7 +459,7 @@ model TradingviewAlert {
   receivedAt       DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, receivedAt])
 }
@@ -493,7 +493,7 @@ model ExecutionAudit {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, receivedAt])
   @@index([botId, dedupeKey])
@@ -503,14 +503,14 @@ model ExecutionAudit {
 
 // Power-user DNS records for custom subdomains
 model DnsRecord {
-  id           String  @id @default(uuid())
+  id           String   @id @default(uuid())
   subdomain    String
   cloudflareId String
   ip           String?
   userId       String
-  status       String  @default("active")
+  status       String   @default("active")
   createdAt    DateTime @default(now())
-  user         User    @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id])
 
   @@index([subdomain])
   @@index([userId])
@@ -582,20 +582,20 @@ model Bot {
 }
 
 model BotVersion {
-  id           String        @id @default(cuid())
-  botId        String
-  imageRef     String?
-  signedDigest String?
-  sbomRef      String?
-  sdkVersion   String?
-  status       String        @default("draft") // draft|built|scanned|approved|published|rejected
-  notes        String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  bot          Bot           @relation(fields: [botId], references: [id])
-  latestForBots Bot[]        @relation("BotLatestVersion")
+  id            String        @id @default(cuid())
+  botId         String
+  imageRef      String?
+  signedDigest  String?
+  sbomRef       String?
+  sdkVersion    String?
+  status        String        @default("draft") // draft|built|scanned|approved|published|rejected
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  bot           Bot           @relation(fields: [botId], references: [id])
+  latestForBots Bot[]         @relation("BotLatestVersion")
   // Back relation for instances
-  instances    BotInstance[]
+  instances     BotInstance[]
 }
 
 model BotInstance {
@@ -674,33 +674,33 @@ model Signal {
 }
 
 model Order {
-  id            String      @id @default(cuid())
-  botInstanceId String
-  venue         String
-  symbol        String
-  side          String // BUY|SELL
-  type          String // LIMIT|MARKET|STOP
-  price         Decimal?    @db.Decimal(38, 12)
-  qty           Decimal     @db.Decimal(38, 12)
-  quoteSpend    Decimal?    @db.Decimal(38, 12)
-  qtyRaw        Decimal?    @db.Decimal(38, 12)
-  qtyFinal      Decimal?    @db.Decimal(38, 12)
-  refPrice      Decimal?    @db.Decimal(38, 12)
-  minNotional   Decimal?    @db.Decimal(38, 12)
-  stepSize      Decimal?    @db.Decimal(38, 12)
-  riskMode      String?
-  riskValue     Decimal?    @db.Decimal(38, 12)
-  slPrice       Decimal?    @db.Decimal(38, 12)
-  tpPrice       Decimal?    @db.Decimal(38, 12)
-  sizingStatus  String?
+  id                 String             @id @default(cuid())
+  botInstanceId      String
+  venue              String
+  symbol             String
+  side               String // BUY|SELL
+  type               String // LIMIT|MARKET|STOP
+  price              Decimal?           @db.Decimal(38, 12)
+  qty                Decimal            @db.Decimal(38, 12)
+  quoteSpend         Decimal?           @db.Decimal(38, 12)
+  qtyRaw             Decimal?           @db.Decimal(38, 12)
+  qtyFinal           Decimal?           @db.Decimal(38, 12)
+  refPrice           Decimal?           @db.Decimal(38, 12)
+  minNotional        Decimal?           @db.Decimal(38, 12)
+  stepSize           Decimal?           @db.Decimal(38, 12)
+  riskMode           String?
+  riskValue          Decimal?           @db.Decimal(38, 12)
+  slPrice            Decimal?           @db.Decimal(38, 12)
+  tpPrice            Decimal?           @db.Decimal(38, 12)
+  sizingStatus       String?
   sizingRejectReason String?
-  status        String
-  venueOrderId  String?
-  error         String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  botInstance   BotInstance @relation(fields: [botInstanceId], references: [id])
-  sizingReport  OrderSizingReport?
+  status             String
+  venueOrderId       String?
+  error              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  botInstance        BotInstance        @relation(fields: [botInstanceId], references: [id])
+  sizingReport       OrderSizingReport?
 
   @@index([botInstanceId, symbol, status])
 }
@@ -722,6 +722,56 @@ model OrderSizingReport {
   order                Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+}
+
+model TradeTransaction {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  botId                String?
+  botInstanceId        String?
+  orderId              String?
+  executionAuditId     String?
+  forwardedSignalId    String?
+  integrationId        String?
+  exchangeAccountId    String?
+  venue                String?
+  symbol               String
+  side                 String
+  orderType            String?
+  status               String   @default("executed")
+  amount               Decimal? @db.Decimal(38, 12)
+  quantity             Decimal? @db.Decimal(38, 12)
+  value                Decimal? @db.Decimal(38, 12)
+  marketPrice          Decimal? @db.Decimal(38, 12)
+  executionPrice       Decimal? @db.Decimal(38, 12)
+  feeAmount            Decimal? @db.Decimal(38, 12)
+  feeAsset             String?
+  realizedPnl          Decimal? @db.Decimal(38, 12)
+  unrealizedPnl        Decimal? @db.Decimal(38, 12)
+  accountBalanceBefore Decimal? @db.Decimal(38, 12)
+  accountBalanceAfter  Decimal? @db.Decimal(38, 12)
+  accountEquityBefore  Decimal? @db.Decimal(38, 12)
+  accountEquityAfter   Decimal? @db.Decimal(38, 12)
+  balanceAsset         String?
+  positionQtyBefore    Decimal? @db.Decimal(38, 12)
+  positionQtyAfter     Decimal? @db.Decimal(38, 12)
+  decisionContext      Json?
+  sizingContext        Json?
+  exchangePayload      Json?
+  metadata             Json?
+  executedAt           DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([workspaceId, executedAt])
+  @@index([botId, executedAt])
+  @@index([botInstanceId, executedAt])
+  @@index([integrationId, executedAt])
+  @@index([orderId])
+  @@index([executionAuditId])
+  @@index([forwardedSignalId])
+  @@index([symbol, executedAt])
+  @@index([status, executedAt])
 }
 
 model Position {

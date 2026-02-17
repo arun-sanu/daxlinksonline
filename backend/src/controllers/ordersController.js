@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { getMexcSpotSnapshot, getWorkspaceOrderReport } from '../services/ordersService.js';
+import {
+  getMexcSpotSnapshot,
+  getWorkspaceOrderReport,
+  getWorkspaceTradeCompoundingReport
+} from '../services/ordersService.js';
 import { prisma } from '../utils/prisma.js';
 
 const paramsSchema = z.object({
@@ -31,6 +35,24 @@ const reportQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional()
 });
 
+const compoundingQuerySchema = z.object({
+  integrationId: z.string().uuid().optional(),
+  symbol: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9_-]{4,20}$/)
+    .optional(),
+  botId: z.string().trim().min(1).max(64).optional(),
+  botInstanceId: z.string().trim().min(1).max(64).optional(),
+  from: z.string().trim().max(64).optional(),
+  to: z.string().trim().max(64).optional(),
+  bucket: z.enum(['trade', 'hour', 'day']).optional(),
+  includeNonFinal: z.coerce.boolean().optional(),
+  realizedPnlFeeMode: z.enum(['auto', 'realized_excludes_fees', 'realized_includes_fees']).optional(),
+  limit: z.coerce.number().int().min(1).max(20000).optional()
+});
+
 export async function handleGetSpotOrderSnapshot(req, res, next) {
   try {
     const { workspaceId } = paramsSchema.parse(req.params);
@@ -60,6 +82,10 @@ const myQuerySchema = querySchema.extend({
 });
 
 const myReportQuerySchema = reportQuerySchema.extend({
+  workspaceId: z.string().uuid().optional()
+});
+
+const myCompoundingQuerySchema = compoundingQuerySchema.extend({
   workspaceId: z.string().uuid().optional()
 });
 
@@ -128,6 +154,84 @@ export async function handleGetMyOrderReport(req, res, next) {
       workspaceId: resolvedWorkspaceId,
       integrationId,
       symbol,
+      limit
+    });
+    res.json(report);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid query parameters';
+    }
+    next(error);
+  }
+}
+
+export async function handleGetWorkspaceCompoundingReport(req, res, next) {
+  try {
+    const { workspaceId } = paramsSchema.parse(req.params);
+    const {
+      integrationId,
+      symbol,
+      botId,
+      botInstanceId,
+      from,
+      to,
+      bucket,
+      includeNonFinal,
+      realizedPnlFeeMode,
+      limit
+    } = compoundingQuerySchema.parse(req.query || {});
+
+    const report = await getWorkspaceTradeCompoundingReport({
+      workspaceId,
+      integrationId,
+      symbol,
+      botId,
+      botInstanceId,
+      from,
+      to,
+      bucket,
+      includeNonFinal,
+      realizedPnlFeeMode,
+      limit
+    });
+    res.json(report);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid query parameters';
+    }
+    next(error);
+  }
+}
+
+export async function handleGetMyCompoundingReport(req, res, next) {
+  try {
+    const {
+      integrationId,
+      symbol,
+      botId,
+      botInstanceId,
+      from,
+      to,
+      bucket,
+      includeNonFinal,
+      realizedPnlFeeMode,
+      limit,
+      workspaceId
+    } = myCompoundingQuerySchema.parse(req.query || {});
+    const resolvedWorkspaceId = await resolveWorkspaceForUser(req.user.id, workspaceId);
+    const report = await getWorkspaceTradeCompoundingReport({
+      workspaceId: resolvedWorkspaceId,
+      integrationId,
+      symbol,
+      botId,
+      botInstanceId,
+      from,
+      to,
+      bucket,
+      includeNonFinal,
+      realizedPnlFeeMode,
       limit
     });
     res.json(report);
