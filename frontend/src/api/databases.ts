@@ -121,6 +121,14 @@ function authHeaders() {
   }
 }
 
+function getWorkspaceId() {
+  try {
+    return localStorage.getItem('workspaceId') || '';
+  } catch {
+    return '';
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withApiBase(path) as string;
   const res = await fetch(url, {
@@ -171,5 +179,25 @@ export async function listTradeTransactionsForDatabase(
   }
   const suffix = params.toString();
   const path = `/api/v1/admin/databases/${encodeURIComponent(dbId)}/tables/trade-transactions${suffix ? `?${suffix}` : ''}`;
+  return request<TradeTransactionLedgerResponse>(path);
+}
+
+export async function listTradeTransactions(
+  query: TradeTransactionLedgerQuery = {}
+): Promise<TradeTransactionLedgerResponse> {
+  const params = new URLSearchParams();
+  const workspaceId = query.workspaceId || getWorkspaceId();
+  if (workspaceId) params.set('workspaceId', workspaceId.trim());
+  if (query.symbol) params.set('symbol', query.symbol.trim().toUpperCase());
+  if (query.botId) params.set('botId', query.botId.trim());
+  if (query.botInstanceId) params.set('botInstanceId', query.botInstanceId.trim());
+  if (query.status) params.set('status', query.status.trim().toLowerCase());
+  if (query.from) params.set('from', query.from.trim());
+  if (query.to) params.set('to', query.to.trim());
+  if (query.limit && Number.isFinite(Number(query.limit))) {
+    params.set('limit', String(Math.max(1, Math.floor(Number(query.limit)))));
+  }
+  const suffix = params.toString();
+  const path = `/api/v1/orders/trade-transactions${suffix ? `?${suffix}` : ''}`;
   return request<TradeTransactionLedgerResponse>(path);
 }

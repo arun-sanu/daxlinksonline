@@ -313,38 +313,26 @@ export async function listTradeTransactionsForDatabase(
   } = {}
 ) {
   const db = await getDatabase(dbId, { workspaceScope });
-  const fromDate = parseDateInput(from);
-  const toDate = parseDateInput(to, { endOfDayWhenDateOnly: true });
-  const rowLimit = normalizeLimit(limit);
   const effectiveWorkspaceScope = resolveTradeWorkspaceScope(db, workspaceScope);
 
-  const where = {
-    ...buildWorkspaceWhere(effectiveWorkspaceScope),
-    ...(toUpper(symbol) ? { symbol: toUpper(symbol) } : {}),
-    ...(botId ? { botId: String(botId).trim() } : {}),
-    ...(botInstanceId ? { botInstanceId: String(botInstanceId).trim() } : {}),
-    ...(status ? { status: String(status).trim().toLowerCase() } : {}),
-    ...(fromDate || toDate
-      ? {
-          executedAt: {
-            ...(fromDate ? { gte: fromDate } : {}),
-            ...(toDate ? { lte: toDate } : {})
-          }
-        }
-      : {})
-  };
+  return listTradeTransactions({
+    workspaceScope: effectiveWorkspaceScope,
+    symbol,
+    botId,
+    botInstanceId,
+    status,
+    from,
+    to,
+    limit,
+    database: {
+      id: db.id,
+      name: db.name
+    }
+  });
+}
 
-  const [total, rows] = await Promise.all([
-    prisma.tradeTransaction.count({ where }),
-    prisma.tradeTransaction.findMany({
-      where,
-      orderBy: [{ executedAt: 'desc' }, { createdAt: 'desc' }],
-      take: rowLimit
-    })
-  ]);
-
-  const items = rows.map((row) => mapTradeTransactionRow(row));
-  const summary = items.reduce(
+function summarizeTradeTransactions(items = []) {
+  const totals = items.reduce(
     (acc, row) => {
       acc.trades += 1;
       const value = asNumber(row.value);
@@ -382,16 +370,75 @@ export async function listTradeTransactionsForDatabase(
   );
 
   return {
+    trades: totals.trades,
+    buyTrades: totals.buyTrades,
+    sellTrades: totals.sellTrades,
+    totalValue: Number(totals.totalValue.toFixed(8)),
+    buyValue: Number(totals.buyValue.toFixed(8)),
+    sellValue: Number(totals.sellValue.toFixed(8)),
+    totalQuantity: Number(totals.totalQuantity.toFixed(8)),
+    totalFees: Number(totals.totalFees.toFixed(8)),
+    realizedPnl: Number(totals.realizedPnl.toFixed(8))
+  };
+}
+
+export async function listTradeTransactions({
+  workspaceScope = null,
+  symbol = null,
+  botId = null,
+  botInstanceId = null,
+  status = null,
+  from = null,
+  to = null,
+  limit = DEFAULT_TABLE_ROWS_LIMIT,
+  database = {
+    id: 'workspace-ledger',
+    name: 'Workspace trade ledger'
+  }
+} = {}) {
+  const fromDate = parseDateInput(from);
+  const toDate = parseDateInput(to, { endOfDayWhenDateOnly: true });
+  const rowLimit = normalizeLimit(limit);
+
+  const where = {
+    ...buildWorkspaceWhere(workspaceScope),
+    ...(toUpper(symbol) ? { symbol: toUpper(symbol) } : {}),
+    ...(botId ? { botId: String(botId).trim() } : {}),
+    ...(botInstanceId ? { botInstanceId: String(botInstanceId).trim() } : {}),
+    ...(status ? { status: String(status).trim().toLowerCase() } : {}),
+    ...(fromDate || toDate
+      ? {
+          executedAt: {
+            ...(fromDate ? { gte: fromDate } : {}),
+            ...(toDate ? { lte: toDate } : {})
+          }
+        }
+      : {})
+  };
+
+  const [total, rows] = await Promise.all([
+    prisma.tradeTransaction.count({ where }),
+    prisma.tradeTransaction.findMany({
+      where,
+      orderBy: [{ executedAt: 'desc' }, { createdAt: 'desc' }],
+      take: rowLimit
+    })
+  ]);
+
+  const items = rows.map((row) => mapTradeTransactionRow(row));
+  const summary = summarizeTradeTransactions(items);
+
+  return {
     database: {
-      id: db.id,
-      name: db.name
+      id: String(database?.id || 'workspace-ledger'),
+      name: String(database?.name || 'Workspace trade ledger')
     },
     table: {
       key: 'trade-transactions',
       name: 'TradeTransaction'
     },
     filters: {
-      workspaceScope: effectiveWorkspaceScope || null,
+      workspaceScope: workspaceScope || null,
       symbol: toUpper(symbol),
       botId: botId || null,
       botInstanceId: botInstanceId || null,
@@ -402,17 +449,7 @@ export async function listTradeTransactionsForDatabase(
     },
     total,
     returned: items.length,
-    summary: {
-      trades: summary.trades,
-      buyTrades: summary.buyTrades,
-      sellTrades: summary.sellTrades,
-      totalValue: Number(summary.totalValue.toFixed(8)),
-      buyValue: Number(summary.buyValue.toFixed(8)),
-      sellValue: Number(summary.sellValue.toFixed(8)),
-      totalQuantity: Number(summary.totalQuantity.toFixed(8)),
-      totalFees: Number(summary.totalFees.toFixed(8)),
-      realizedPnl: Number(summary.realizedPnl.toFixed(8))
-    },
+    summary,
     items
   };
 }

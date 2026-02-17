@@ -4,6 +4,7 @@ import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/ord
 import { listIntegrations } from '../../../api/integrations';
 import {
   listDatabases,
+  listTradeTransactions,
   listTradeTransactionsForDatabase,
   type DatabaseInstance,
   type TradeTransactionLedgerResponse
@@ -164,20 +165,22 @@ export default function OrdersModule() {
       symbolFilter: string;
       limit: number;
     }) => {
-      if (!dbId) {
-        setLedger(null);
-        return;
-      }
       setLedgerLoading(true);
       setLedgerError('');
       try {
-        const payload = await listTradeTransactionsForDatabase(dbId, {
-          symbol: symbolFilter || undefined,
-          limit: Number.isFinite(limit) ? limit : 25
-        });
+        const payload = dbId
+          ? await listTradeTransactionsForDatabase(dbId, {
+              symbol: symbolFilter || undefined,
+              limit: Number.isFinite(limit) ? limit : 25
+            })
+          : await listTradeTransactions({
+              symbol: symbolFilter || undefined,
+              limit: Number.isFinite(limit) ? limit : 25
+            });
         setLedger(payload);
       } catch (err: any) {
         setLedgerError(err?.message || 'Failed to load trade transaction table.');
+        setLedger(null);
       } finally {
         setLedgerLoading(false);
       }
@@ -214,10 +217,6 @@ export default function OrdersModule() {
   }, []);
 
   useEffect(() => {
-    if (!ledgerDbId) {
-      setLedger(null);
-      return;
-    }
     loadLedger({
       dbId: ledgerDbId,
       symbolFilter: ledgerSymbol,
@@ -602,7 +601,7 @@ export default function OrdersModule() {
             <button
               type="button"
               onClick={handleRefreshLedger}
-              disabled={ledgerLoading || !ledgerDbId}
+              disabled={ledgerLoading}
               className="btn btn-secondary btn-small btn-rect w-full disabled:cursor-not-allowed disabled:opacity-60"
             >
               {ledgerLoading ? 'Refreshing...' : 'Refresh ledger'}
@@ -612,12 +611,17 @@ export default function OrdersModule() {
 
         {ledgerDbError && <p className="text-sm text-amber-300">{ledgerDbError}</p>}
         {ledgerError && <p className="text-sm text-rose-300">{ledgerError}</p>}
+        {!ledgerDbLoading && ledgerDatabases.length === 0 && (
+          <p className="text-sm text-sky-200">
+            No database instance is configured for this workspace. Showing direct workspace trade ledger.
+          </p>
+        )}
 
-        {selectedLedgerDatabase && (
+        {(selectedLedgerDatabase || ledger) && (
           <div className="grid gap-3 rounded-2xl border border-white/8 bg-white/5 p-4 text-xs text-gray-300 md:grid-cols-4">
             <div>
               <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Database</p>
-              <p className="mt-1 font-semibold text-white">{selectedLedgerDatabase.name}</p>
+              <p className="mt-1 font-semibold text-white">{selectedLedgerDatabase?.name || ledger?.database?.name || 'Workspace trade ledger'}</p>
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Records</p>

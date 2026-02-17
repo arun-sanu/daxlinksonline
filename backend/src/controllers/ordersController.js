@@ -4,6 +4,7 @@ import {
   getWorkspaceOrderReport,
   getWorkspaceTradeCompoundingReport
 } from '../services/ordersService.js';
+import { listTradeTransactions } from '../services/databaseService.js';
 import { prisma } from '../utils/prisma.js';
 
 const paramsSchema = z.object({
@@ -33,6 +34,21 @@ const reportQuerySchema = z.object({
     .regex(/^[A-Z0-9_-]{4,20}$/)
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).optional()
+});
+
+const tradeTransactionsQuerySchema = z.object({
+  symbol: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9_-]{4,20}$/)
+    .optional(),
+  botId: z.string().trim().min(1).max(64).optional(),
+  botInstanceId: z.string().trim().min(1).max(64).optional(),
+  status: z.string().trim().max(64).optional(),
+  from: z.string().trim().max(64).optional(),
+  to: z.string().trim().max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
 });
 
 const compoundingQuerySchema = z.object({
@@ -82,6 +98,10 @@ const myQuerySchema = querySchema.extend({
 });
 
 const myReportQuerySchema = reportQuerySchema.extend({
+  workspaceId: z.string().uuid().optional()
+});
+
+const myTradeTransactionsQuerySchema = tradeTransactionsQuerySchema.extend({
   workspaceId: z.string().uuid().optional()
 });
 
@@ -157,6 +177,54 @@ export async function handleGetMyOrderReport(req, res, next) {
       limit
     });
     res.json(report);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid query parameters';
+    }
+    next(error);
+  }
+}
+
+export async function handleGetWorkspaceTradeTransactions(req, res, next) {
+  try {
+    const { workspaceId } = paramsSchema.parse(req.params);
+    const { symbol, botId, botInstanceId, status, from, to, limit } = tradeTransactionsQuerySchema.parse(req.query || {});
+    const payload = await listTradeTransactions({
+      workspaceScope: workspaceId,
+      symbol,
+      botId,
+      botInstanceId,
+      status,
+      from,
+      to,
+      limit
+    });
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid query parameters';
+    }
+    next(error);
+  }
+}
+
+export async function handleGetMyTradeTransactions(req, res, next) {
+  try {
+    const { workspaceId, symbol, botId, botInstanceId, status, from, to, limit } = myTradeTransactionsQuerySchema.parse(req.query || {});
+    const resolvedWorkspaceId = await resolveWorkspaceForUser(req.user.id, workspaceId);
+    const payload = await listTradeTransactions({
+      workspaceScope: resolvedWorkspaceId,
+      symbol,
+      botId,
+      botInstanceId,
+      status,
+      from,
+      to,
+      limit
+    });
+    res.json(payload);
   } catch (error) {
     if (error instanceof z.ZodError) {
       error.status = 400;
