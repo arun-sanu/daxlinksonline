@@ -70,13 +70,15 @@ function toFiniteOrZero(value) {
 export function resolveEffectiveMinNotional({
   normalizedSide = null,
   exchangeMinNotional = 0,
-  minQuoteSpend = 0
+  minQuoteSpend = 0,
+  minSellNotional = 0
 }) {
   const side = String(normalizedSide || '').trim().toUpperCase();
   const exchangeFloor = toFiniteOrZero(exchangeMinNotional);
   // Internal minQuoteSpend floor is a BUY-side sizing control, not a SELL exchange rule.
   const buySideFloor = side === 'BUY' ? toFiniteOrZero(minQuoteSpend) : 0;
-  return Math.max(exchangeFloor, buySideFloor);
+  const sellSideFloor = side === 'SELL' ? toFiniteOrZero(minSellNotional) : 0;
+  return Math.max(exchangeFloor, buySideFloor, sellSideFloor);
 }
 
 function throwSizingError(message, sizingDebug, rejectedReason) {
@@ -560,6 +562,16 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
   const maxQuoteSpendRaw = asNumber(rawRules?.maxQuoteSpend);
   const minQuoteSpend = minQuoteSpendRaw !== null && minQuoteSpendRaw > 0 ? minQuoteSpendRaw : 0;
   const maxQuoteSpend = maxQuoteSpendRaw !== null && maxQuoteSpendRaw > 0 ? Math.max(maxQuoteSpendRaw, minQuoteSpend) : null;
+  const codeParameters =
+    rawRules?.codeParameters && typeof rawRules.codeParameters === 'object' ? rawRules.codeParameters : {};
+  const codeMinSellNotionalRaw = asNumber(codeParameters?.min_sell_usdc);
+  const minSellNotionalRaw = asNumber(
+    rawRules?.minSellNotional ??
+    rawRules?.minSellUsdc ??
+    codeMinSellNotionalRaw ??
+    rawRules?.minQuoteSpend
+  );
+  const minSellNotional = minSellNotionalRaw !== null && minSellNotionalRaw > 0 ? minSellNotionalRaw : 0;
   const compoundingEnabled = rawRules?.compoundingEnabled === true;
   const compoundingMode = normalizeCompoundingMode(rawRules?.compoundingMode, sizingMode);
   const compoundingBaseQuoteRaw = asNumber(rawRules?.compoundingBaseQuote);
@@ -573,6 +585,7 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     reinvestmentPct,
     minQuoteSpend,
     maxQuoteSpend,
+    minSellNotional,
     compoundingEnabled,
     compoundingMode,
     compoundingBaseQuote,
@@ -717,6 +730,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     referencePriceSource: sizing.referencePriceSource,
     minQuoteSpend: sizing.minQuoteSpend,
     maxQuoteSpend: sizing.maxQuoteSpend,
+    minSellNotional: sizing.minSellNotional,
     stepSize: stepSizeNum,
     minQty: minQtyNum,
     minNotional: minNotionalNum,
@@ -785,49 +799,81 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     };
   }
 
-  let quoteSpendRaw;
-  if (sizing.sizingMode === 'fixed_quote') {
-    quoteSpendRaw = sizing.allocationValue;
+  let qtyRaw = 0;
+  let quoteSpendComputed = null;
+
+  if (normalizedSide === 'SELL') {
+    if (!freeBase || freeBase <= 0) {
+      throwSizingError(
+        'Cannot compute sell quantity because free base balance is zero.',
+        sizingDebug,
+        'insufficient_base_for_requested_qty'
+      );
+    }
+
+    if (sizing.sizingMode === 'fixed_quote') {
+      const targetQuote = Math.max(toFiniteOrZero(sizing.allocationValue), toFiniteOrZero(sizing.minSellNotional));
+      quoteSpendComputed = clamp(targetQuote, toFiniteOrZero(sizing.minSellNotional), sizing.maxQuoteSpend);
+      if (!quoteSpendComputed || quoteSpendComputed <= 0) {
+        throwSizingError('Trade Bot sell quote target resolves to zero.', sizingDebug, 'invalid_quote_spend');
+      }
+      qtyRaw = quoteSpendComputed / computedPrice;
+    } else {
+      const pctOfBase = clamp(sizing.allocationValue, 0, 100);
+      if (pctOfBase === null || pctOfBase <= 0) {
+        throwSizingError('Trade Bot sell allocation percent resolves to zero.', sizingDebug, 'invalid_quote_spend');
+      }
+      qtyRaw = freeBase * (pctOfBase / 100);
+      quoteSpendComputed = qtyRaw * computedPrice;
+    }
+    sizingDebug.baseQuoteSpend = asNullableNumber(quoteSpendComputed);
   } else {
-    const pctSpend = freeQuote * (sizing.allocationValue / 100);
-    const reinvestmentFactor = Math.max(0, Math.min(1, sizing.reinvestmentPct / 100));
-    quoteSpendRaw = pctSpend * reinvestmentFactor;
-  }
-  const compounded = applyCompoundingToQuoteSpend({
-    baseQuoteSpend: quoteSpendRaw,
-    freeQuote,
-    compoundingEnabled: sizing.compoundingEnabled,
-    compoundingMode: sizing.compoundingMode,
-    compoundingBaseQuote: sizing.compoundingBaseQuote,
-    compoundingPct: sizing.compoundingPct
-  });
-  quoteSpendRaw = compounded.quoteSpend;
-  sizingDebug.baseQuoteSpend = asNullableNumber(compounded.baseQuoteSpend);
-  sizingDebug.compoundingFactor = asNullableNumber(compounded.compoundingFactor);
-  sizingDebug.compoundingProfitQuote = asNullableNumber(compounded.compoundingProfitQuote);
-  sizingDebug.compoundingBaseQuote = asNullableNumber(compounded.compoundingBaseQuote);
+    let quoteSpendRaw;
+    if (sizing.sizingMode === 'fixed_quote') {
+      quoteSpendRaw = sizing.allocationValue;
+    } else {
+      const pctSpend = freeQuote * (sizing.allocationValue / 100);
+      const reinvestmentFactor = Math.max(0, Math.min(1, sizing.reinvestmentPct / 100));
+      quoteSpendRaw = pctSpend * reinvestmentFactor;
+    }
+    const compounded = applyCompoundingToQuoteSpend({
+      baseQuoteSpend: quoteSpendRaw,
+      freeQuote,
+      compoundingEnabled: sizing.compoundingEnabled,
+      compoundingMode: sizing.compoundingMode,
+      compoundingBaseQuote: sizing.compoundingBaseQuote,
+      compoundingPct: sizing.compoundingPct
+    });
+    quoteSpendRaw = compounded.quoteSpend;
+    sizingDebug.baseQuoteSpend = asNullableNumber(compounded.baseQuoteSpend);
+    sizingDebug.compoundingFactor = asNullableNumber(compounded.compoundingFactor);
+    sizingDebug.compoundingProfitQuote = asNullableNumber(compounded.compoundingProfitQuote);
+    sizingDebug.compoundingBaseQuote = asNullableNumber(compounded.compoundingBaseQuote);
 
-  const minQuoteSpendFloor = normalizedSide === 'BUY' ? sizing.minQuoteSpend : 0;
-  const quoteSpendComputed = clamp(quoteSpendRaw, minQuoteSpendFloor, sizing.maxQuoteSpend);
-  if (!quoteSpendComputed || quoteSpendComputed <= 0) {
-    throwSizingError('Trade Bot quote spend resolves to zero.', sizingDebug, 'invalid_quote_spend');
+    const minQuoteSpendFloor = normalizedSide === 'BUY' ? sizing.minQuoteSpend : 0;
+    quoteSpendComputed = clamp(quoteSpendRaw, minQuoteSpendFloor, sizing.maxQuoteSpend);
+    if (!quoteSpendComputed || quoteSpendComputed <= 0) {
+      throwSizingError('Trade Bot quote spend resolves to zero.', sizingDebug, 'invalid_quote_spend');
+    }
+
+    if (quoteSpendComputed > freeQuote + 1e-12) {
+      throwSizingError(
+        `Configured quote spend ${quoteSpendComputed} exceeds available quote balance ${freeQuote}.`,
+        sizingDebug,
+        'insufficient_quote_for_requested_qty'
+      );
+    }
+
+    qtyRaw = quoteSpendComputed / computedPrice;
   }
 
-  if (normalizedSide !== 'SELL' && quoteSpendComputed > freeQuote + 1e-12) {
-    throwSizingError(
-      `Configured quote spend ${quoteSpendComputed} exceeds available quote balance ${freeQuote}.`,
-      sizingDebug,
-      'insufficient_quote_for_requested_qty'
-    );
-  }
-
-  const qtyRaw = quoteSpendComputed / computedPrice;
   let qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
   let notional = qtyRounded * computedPrice;
   const effectiveMinNotional = resolveEffectiveMinNotional({
     normalizedSide,
     exchangeMinNotional: minNotionalNum,
-    minQuoteSpend: sizing.minQuoteSpend
+    minQuoteSpend: sizing.minQuoteSpend,
+    minSellNotional: sizing.minSellNotional
   });
 
   sizingDebug.qtyRaw = asNumber(qtyRaw);
