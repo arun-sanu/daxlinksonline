@@ -37,6 +37,8 @@ type StopType = 'none' | 'percent' | 'fixed_price' | 'rr' | 'atr_multiplier';
 type PreviewSide = 'buy' | 'sell';
 type ReferencePriceSource = 'last' | 'mark' | 'mid';
 type SignalSource = 'tradingview' | 'internal' | 'api';
+type BotCodeParameterType = 'number' | 'string' | 'boolean';
+type BotCodeParameterValue = string | number | boolean | null;
 
 type PineInputSetting = {
   key: string;
@@ -57,6 +59,16 @@ type PineScriptAnalysis = {
   notes: string[];
   sourceDigest: string;
   generatedAt: string;
+};
+
+type BotCodeParameter = {
+  key: string;
+  label: string;
+  type: BotCodeParameterType;
+  defaultValue: string | number | boolean;
+  source: string | null;
+  description: string | null;
+  line: number | null;
 };
 
 type BotTradingRules = {
@@ -91,6 +103,10 @@ type BotTradingRules = {
   dailyLossLimitPct: number;
   dailyResetTimeUtc: string;
   pineAnalysis: PineScriptAnalysis | null;
+  codeSource: string | null;
+  codeParameterSchema: BotCodeParameter[];
+  codeParameters: Record<string, BotCodeParameterValue>;
+  codeParametersUpdatedAt: string | null;
 };
 
 const DEFAULT_TRADING_RULES: BotTradingRules = {
@@ -124,7 +140,11 @@ const DEFAULT_TRADING_RULES: BotTradingRules = {
   dailyLossCapEnabled: false,
   dailyLossLimitPct: 5,
   dailyResetTimeUtc: '00:00',
-  pineAnalysis: null
+  pineAnalysis: null,
+  codeSource: null,
+  codeParameterSchema: [],
+  codeParameters: {},
+  codeParametersUpdatedAt: null
 };
 
 function getWorkspaceId() {
@@ -386,6 +406,107 @@ function sanitizePineAnalysis(value: unknown): PineScriptAnalysis | null {
   };
 }
 
+function sanitizeCodeParameterType(value: unknown): BotCodeParameterType | null {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'number' || normalized === 'string' || normalized === 'boolean') {
+    return normalized as BotCodeParameterType;
+  }
+  return null;
+}
+
+function sanitizeCodeParameterSchema(value: unknown): BotCodeParameter[] {
+  if (!Array.isArray(value)) return [];
+  const out: BotCodeParameter[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const key = String((item as any).key || '').trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || seen.has(key)) continue;
+    const type = sanitizeCodeParameterType((item as any).type);
+    if (!type) continue;
+
+    const defaultValueRaw = (item as any).defaultValue;
+    let defaultValue: string | number | boolean;
+    if (type === 'number') {
+      const n = Number(defaultValueRaw);
+      if (!Number.isFinite(n)) continue;
+      defaultValue = n;
+    } else if (type === 'boolean') {
+      defaultValue = Boolean(defaultValueRaw);
+    } else {
+      defaultValue = String(defaultValueRaw ?? '');
+    }
+
+    seen.add(key);
+    out.push({
+      key,
+      label: String((item as any).label || key),
+      type,
+      defaultValue,
+      source: (item as any).source ? String((item as any).source) : null,
+      description: (item as any).description ? String((item as any).description) : null,
+      line: Number.isFinite(Number((item as any).line)) ? Number((item as any).line) : null
+    });
+    if (out.length >= 300) break;
+  }
+
+  return out;
+}
+
+function coerceCodeParameterValue(
+  value: unknown,
+  type: BotCodeParameterType,
+  fallback: string | number | boolean
+): BotCodeParameterValue {
+  if (type === 'number') {
+    const n = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(n) ? n : (fallback as number);
+  }
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(text)) return true;
+    if (['false', '0', 'no', 'off'].includes(text)) return false;
+    return Boolean(fallback);
+  }
+  if (value === null || value === undefined) return String(fallback);
+  return String(value);
+}
+
+function sanitizeCodeParameterValues(
+  value: unknown,
+  schema: BotCodeParameter[]
+): Record<string, BotCodeParameterValue> {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const out: Record<string, BotCodeParameterValue> = {};
+
+  if (!schema.length) {
+    for (const [key, entry] of Object.entries(raw)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      if (
+        entry === null ||
+        typeof entry === 'string' ||
+        typeof entry === 'number' ||
+        typeof entry === 'boolean'
+      ) {
+        out[key] = entry as BotCodeParameterValue;
+      }
+    }
+    return out;
+  }
+
+  for (const item of schema) {
+    out[item.key] = coerceCodeParameterValue(raw[item.key], item.type, item.defaultValue);
+  }
+  return out;
+}
+
 function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined): BotTradingRules {
   const merged = {
     ...DEFAULT_TRADING_RULES,
@@ -412,6 +533,15 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
       ? merged.executionFunction
       : 'live_trading';
   const previewSide: PreviewSide = merged.previewSide === 'sell' ? 'sell' : 'buy';
+  const codeParameterSchema = sanitizeCodeParameterSchema((merged as any).codeParameterSchema);
+  const codeParameters = sanitizeCodeParameterValues((merged as any).codeParameters, codeParameterSchema);
+  const codeSourceRaw = (merged as any).codeSource;
+  const codeSource = typeof codeSourceRaw === 'string' ? codeSourceRaw.slice(0, 250000) : null;
+  const codeParametersUpdatedAtRaw = String((merged as any).codeParametersUpdatedAt || '').trim();
+  const codeParametersUpdatedAt =
+    codeParametersUpdatedAtRaw && !Number.isNaN(new Date(codeParametersUpdatedAtRaw).getTime())
+      ? codeParametersUpdatedAtRaw
+      : null;
 
   return {
     symbol: normalizeSymbol(merged.symbol) || DEFAULT_TRADING_RULES.symbol,
@@ -447,7 +577,11 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
       /^\d{2}:\d{2}$/.test(String(merged.dailyResetTimeUtc || '').trim())
         ? String(merged.dailyResetTimeUtc).trim()
         : DEFAULT_TRADING_RULES.dailyResetTimeUtc,
-    pineAnalysis: sanitizePineAnalysis(merged.pineAnalysis)
+    pineAnalysis: sanitizePineAnalysis(merged.pineAnalysis),
+    codeSource,
+    codeParameterSchema,
+    codeParameters,
+    codeParametersUpdatedAt
   };
 }
 
@@ -469,7 +603,15 @@ function readBotTradingRulesMap(): Record<string, BotTradingRules> {
 
 function writeBotTradingRulesMap(next: Record<string, BotTradingRules>) {
   try {
-    localStorage.setItem(BOT_RULES_STORAGE_KEY, JSON.stringify(next));
+    const compact: Record<string, BotTradingRules> = {};
+    for (const [botId, rules] of Object.entries(next)) {
+      compact[botId] = {
+        ...rules,
+        // Keep browser storage compact; full source remains in backend runtime config.
+        codeSource: null
+      };
+    }
+    localStorage.setItem(BOT_RULES_STORAGE_KEY, JSON.stringify(compact));
   } catch {
     // ignore storage failures
   }
@@ -920,6 +1062,8 @@ export default function TradeBotsModule() {
   const integrationLogs = integrationDetail?.logs || [];
   const activeRules = botRulesDraft || selectedBotRules;
   const activePineAnalysis = activeRules?.pineAnalysis || null;
+  const activeCodeParameterSchema = activeRules?.codeParameterSchema || [];
+  const activeCodeParameterValues = activeRules?.codeParameters || {};
   const signalKeySeed = useMemo(() => {
     if (!activeRules) return '';
     return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
@@ -1287,9 +1431,24 @@ export default function TradeBotsModule() {
     load();
   }, []);
 
-  const applyRuntimeConfigFromBackend = (botId: string, payload: { links?: BotConnectivityLink | null; rules?: Partial<BotTradingRules> | null }) => {
+  const applyRuntimeConfigFromBackend = (
+    botId: string,
+    payload: {
+      links?: BotConnectivityLink | null;
+      rules?: Partial<BotTradingRules> | null;
+      parameters?:
+        | {
+            sourceCode?: string | null;
+            schema?: BotCodeParameter[];
+            values?: Record<string, BotCodeParameterValue>;
+            updatedAt?: string | null;
+          }
+        | null;
+    }
+  ) => {
     const links = payload.links || null;
     const rules = payload.rules || null;
+    const parameters = payload.parameters || null;
 
     if (links) {
       const normalizedLinks: BotConnectivityLink = {
@@ -1308,8 +1467,20 @@ export default function TradeBotsModule() {
       });
     }
 
-    if (rules && typeof rules === 'object') {
-      const sanitizedRules = sanitizeTradingRules(rules);
+    if ((rules && typeof rules === 'object') || parameters) {
+      const mergedRules = {
+        ...(rules && typeof rules === 'object' ? rules : {}),
+        ...(parameters
+          ? {
+              codeSource: parameters.sourceCode ?? (rules as any)?.codeSource ?? null,
+              codeParameterSchema: parameters.schema ?? (rules as any)?.codeParameterSchema ?? [],
+              codeParameters: parameters.values ?? (rules as any)?.codeParameters ?? {},
+              codeParametersUpdatedAt:
+                parameters.updatedAt ?? (rules as any)?.codeParametersUpdatedAt ?? null
+            }
+          : {})
+      };
+      const sanitizedRules = sanitizeTradingRules(mergedRules);
       setBotRulesMap((prev) => {
         const next = {
           ...prev,
@@ -1330,7 +1501,8 @@ export default function TradeBotsModule() {
     if (!runtime) return;
     applyRuntimeConfigFromBackend(botId, {
       links: runtime.links || null,
-      rules: runtime.rules || null
+      rules: runtime.rules || null,
+      parameters: runtime.parameters || null
     });
   };
 
@@ -1361,7 +1533,8 @@ export default function TradeBotsModule() {
 
     applyRuntimeConfigFromBackend(botId, {
       links: saved.links || null,
-      rules: saved.rules || null
+      rules: saved.rules || null,
+      parameters: saved.parameters || null
     });
     return true;
   };
@@ -1392,6 +1565,37 @@ export default function TradeBotsModule() {
 
   const updateBotRulesDraft = (patch: Partial<BotTradingRules>) => {
     setBotRulesDraft((prev) => sanitizeTradingRules({ ...(prev || selectedBotRules), ...patch }));
+  };
+
+  const updateCodeParameterDraftValue = (
+    key: string,
+    type: BotCodeParameterType,
+    rawValue: string | number | boolean | null
+  ) => {
+    if (!key) return;
+    const current = activeRules?.codeParameters || {};
+    let nextValue: BotCodeParameterValue = rawValue;
+    if (type === 'number') {
+      const n = Number(rawValue);
+      nextValue = Number.isFinite(n) ? n : null;
+    } else if (type === 'boolean') {
+      if (typeof rawValue === 'boolean') {
+        nextValue = rawValue;
+      } else {
+        const normalized = String(rawValue ?? '')
+          .trim()
+          .toLowerCase();
+        nextValue = ['true', '1', 'yes', 'on'].includes(normalized);
+      }
+    } else {
+      nextValue = rawValue === null || rawValue === undefined ? '' : String(rawValue);
+    }
+    updateBotRulesDraft({
+      codeParameters: {
+        ...current,
+        [key]: nextValue
+      }
+    });
   };
 
   const openBotPopup = (bot: TradeBotRow) => {
@@ -2386,6 +2590,96 @@ export default function TradeBotsModule() {
                       Save Rules
                     </button>
                   </div>
+                </div>
+
+                <div className="mt-3 space-y-3 rounded-lg border border-white/15 bg-black/35 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Code-driven parameters</p>
+                      <p className="mt-1 text-xs text-gray-300">
+                        Parameters are extracted from bot code and stored per bot. Edit values below, then click Save Rules.
+                      </p>
+                    </div>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
+                      Refresh From Code
+                    </button>
+                  </div>
+
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Bot Source Code (Python)
+                    <textarea
+                      value={activeRules.codeSource || ''}
+                      onChange={(event) => updateBotRulesDraft({ codeSource: event.target.value })}
+                      placeholder="# Paste your bot python code here. Parameters are extracted from constants/dataclass defaults."
+                      className="mt-1 h-40 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-2 text-xs text-gray-100 outline-none"
+                    />
+                  </label>
+
+                  <div className="rounded-md border border-white/10 bg-black/25 px-2 py-2 text-[11px] text-gray-300">
+                    Source status:{' '}
+                    {activeRules.codeSource
+                      ? `loaded (${activeRules.codeSource.length} chars)`
+                      : 'not set'}{' '}
+                    · Parameters detected: {activeCodeParameterSchema.length}
+                    {activeRules.codeParametersUpdatedAt ? ` · Updated ${formatDate(activeRules.codeParametersUpdatedAt)}` : ''}
+                  </div>
+
+                  {activeCodeParameterSchema.length === 0 && (
+                    <p className="text-xs text-amber-200">
+                      No code parameters detected yet. Paste bot code and click <span className="text-amber-100">Refresh From Code</span>.
+                    </p>
+                  )}
+
+                  {activeCodeParameterSchema.length > 0 && (
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {activeCodeParameterSchema.map((param) => {
+                        const currentValue = Object.prototype.hasOwnProperty.call(activeCodeParameterValues, param.key)
+                          ? activeCodeParameterValues[param.key]
+                          : param.defaultValue;
+
+                        return (
+                          <label key={`${param.key}:${param.type}`} className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                            {param.label}
+                            <p className="mt-1 text-[10px] normal-case tracking-normal text-gray-400">
+                              {param.key}
+                              {param.source ? ` · ${param.source}` : ''}
+                              {param.line ? ` · line ${param.line}` : ''}
+                            </p>
+                            {param.description && (
+                              <p className="mt-1 text-[10px] normal-case tracking-normal text-gray-400">{param.description}</p>
+                            )}
+
+                            {param.type === 'boolean' ? (
+                              <select
+                                value={Boolean(currentValue) ? 'true' : 'false'}
+                                onChange={(event) =>
+                                  updateCodeParameterDraftValue(param.key, param.type, event.target.value === 'true')
+                                }
+                                className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                              >
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                              </select>
+                            ) : (
+                              <input
+                                type={param.type === 'number' ? 'number' : 'text'}
+                                step={param.type === 'number' ? 'any' : undefined}
+                                value={currentValue === null || currentValue === undefined ? '' : String(currentValue)}
+                                onChange={(event) =>
+                                  updateCodeParameterDraftValue(
+                                    param.key,
+                                    param.type,
+                                    param.type === 'number' ? event.target.value : event.target.value
+                                  )
+                                }
+                                className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">

@@ -35,6 +35,21 @@ export type TradeBotRuntimeConfig = {
     updatedAt?: string | null;
   };
   rules: Record<string, any> | null;
+  parameters?: {
+    source?: 'code' | 'stored' | 'none' | string;
+    sourceCode?: string | null;
+    schema?: Array<{
+      key: string;
+      label: string;
+      type: 'number' | 'string' | 'boolean';
+      defaultValue: string | number | boolean;
+      source?: string | null;
+      description?: string | null;
+      line?: number | null;
+    }>;
+    values?: Record<string, string | number | boolean | null>;
+    updatedAt?: string | null;
+  } | null;
   updatedAt?: string | null;
 };
 

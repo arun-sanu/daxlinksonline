@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 
 import { prisma } from '../utils/prisma.js';
 import { buildVersion, storagePathsForVersion } from '../builder/build.js';
@@ -112,6 +113,398 @@ function normalizeRuntimeLink(value = null) {
 function normalizeRuntimeRules(value = null) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return JSON.parse(JSON.stringify(value));
+}
+
+const CODE_PARAMETER_TYPE_SET = new Set(['number', 'string', 'boolean']);
+const CODE_PARAMETER_EXCLUDED_KEYS = new Set([
+  'SPEC',
+  'PRICE',
+  'TICKS',
+  'EXIT',
+  'STORE',
+  'EX',
+  'BOT',
+  'APP',
+  'WS_URL'
+]);
+const MAX_CODE_PARAMETER_COUNT = Number(process.env.BOT_CODE_PARAMETER_LIMIT || 200);
+const MAX_CODE_SOURCE_LENGTH = Number(process.env.BOT_CODE_SOURCE_MAX_CHARS || 250000);
+
+function toParameterLabel(key) {
+  return String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function isValidParameterKey(value) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(String(value || ''));
+}
+
+function trimCodeSource(value) {
+  if (typeof value !== 'string') return '';
+  return value.slice(0, MAX_CODE_SOURCE_LENGTH);
+}
+
+function looksLikePythonSource(sourceCode = '') {
+  const sample = String(sourceCode || '')
+    .slice(0, 8000)
+    .trim();
+  if (!sample) return false;
+  return /(from\s+\w+\s+import|import\s+\w+|class\s+\w+|def\s+\w+\s*\(|@dataclass|if\s+__name__\s*==\s*['"]__main__['"])/.test(sample);
+}
+
+function readPythonSourceFromZip(zipPath, preferredFilename = null) {
+  const script = `
+import os
+import sys
+import zipfile
+
+zip_path = sys.argv[1]
+preferred = os.path.basename(sys.argv[2] or '').strip().lower()
+limit = int(sys.argv[3]) if len(sys.argv) > 3 else 250000
+
+def pick_target(names):
+    ranked = []
+    for name in names:
+        lower = name.lower()
+        base = os.path.basename(lower)
+        depth = lower.count('/')
+        score = 1000 - (depth * 10) - len(lower)
+        if preferred and base == preferred:
+            score += 5000
+        if base in ('main.py', 'bot.py', 'app.py', 'runner.py'):
+            score += 900
+        if 'test' in base:
+            score -= 600
+        ranked.append((score, name))
+    ranked.sort(key=lambda row: row[0], reverse=True)
+    return ranked[0][1] if ranked else None
+
+try:
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        names = [
+            name for name in zf.namelist()
+            if name
+            and not name.endswith('/')
+            and name.lower().endswith('.py')
+            and '__macosx/' not in name.lower()
+        ]
+        target = pick_target(names)
+        if not target:
+            print('')
+            raise SystemExit(0)
+        text = zf.read(target).decode('utf-8', 'ignore')
+        print(text[:limit])
+except Exception:
+    print('')
+`;
+
+  const args = ['-c', script, zipPath, preferredFilename || '', String(MAX_CODE_SOURCE_LENGTH)];
+  const options = {
+    encoding: 'utf8',
+    maxBuffer: Math.max(1024 * 1024, MAX_CODE_SOURCE_LENGTH * 3)
+  };
+  const py3 = spawnSync('python3', args, options);
+  const runner = py3.status === 0 ? py3 : spawnSync('python', args, options);
+  if (runner.status !== 0) return '';
+  return trimCodeSource(runner.stdout || '');
+}
+
+function extractPythonSourceFromVersionArtifact(versionId, preferredFilename = null) {
+  const resolvedVersionId = String(versionId || '').trim();
+  if (!resolvedVersionId) return '';
+  const { zipPath } = storagePathsForVersion(resolvedVersionId);
+  if (!zipPath || !fs.existsSync(zipPath)) return '';
+
+  let isZip = false;
+  try {
+    const fd = fs.openSync(zipPath, 'r');
+    const sig = Buffer.alloc(4);
+    fs.readSync(fd, sig, 0, 4, 0);
+    fs.closeSync(fd);
+    isZip = sig[0] === 0x50 && sig[1] === 0x4b && sig[2] === 0x03 && sig[3] === 0x04;
+  } catch {
+    isZip = false;
+  }
+
+  if (!isZip) {
+    try {
+      const text = trimCodeSource(fs.readFileSync(zipPath, 'utf8'));
+      return looksLikePythonSource(text) ? text : '';
+    } catch {
+      return '';
+    }
+  }
+
+  const source = readPythonSourceFromZip(zipPath, preferredFilename);
+  return looksLikePythonSource(source) ? source : '';
+}
+
+function resolveFallbackCodeSourceForBot(bot = null) {
+  if (!bot || !bot.latestVersionId) return '';
+  const notes = parseVersionNotes(bot?.latestVersion?.notes || '');
+  const originalFilename = String(notes?.originalFilename || '').trim();
+  const preferredFilename = originalFilename.toLowerCase().endsWith('.py')
+    ? path.basename(originalFilename)
+    : null;
+  return extractPythonSourceFromVersionArtifact(bot.latestVersionId, preferredFilename);
+}
+
+function hydrateRuntimeRulesWithCodeSource(rules = null, bot = null) {
+  const normalized = rules && typeof rules === 'object' && !Array.isArray(rules) ? { ...rules } : {};
+  if (trimCodeSource(normalized.codeSource || '')) return normalized;
+  const fallbackCode = resolveFallbackCodeSourceForBot(bot);
+  if (fallbackCode) {
+    normalized.codeSource = fallbackCode;
+  }
+  return normalized;
+}
+
+function splitPythonValueAndComment(rawValue = '') {
+  const input = String(rawValue || '');
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (ch === '#' && !inSingle && !inDouble) {
+      return {
+        value: input.slice(0, i).trim(),
+        comment: input.slice(i + 1).trim() || null
+      };
+    }
+  }
+
+  return { value: input.trim(), comment: null };
+}
+
+function parsePythonLiteral(rawValue = '') {
+  const value = String(rawValue || '').trim();
+  if (!value) return null;
+
+  if (value === 'True') return { type: 'boolean', value: true };
+  if (value === 'False') return { type: 'boolean', value: false };
+
+  if (/^-?\d[\d_]*$/.test(value)) {
+    const n = Number(value.replace(/_/g, ''));
+    if (Number.isFinite(n)) return { type: 'number', value: n };
+  }
+  if (/^-?\d[\d_]*\.\d[\d_]*$/.test(value)) {
+    const n = Number(value.replace(/_/g, ''));
+    if (Number.isFinite(n)) return { type: 'number', value: n };
+  }
+
+  const quoted = value.match(/^(['"])([\s\S]*)\1$/);
+  if (quoted) {
+    const unescaped = quoted[2].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+    return { type: 'string', value: unescaped };
+  }
+
+  return null;
+}
+
+function sanitizeCodeParameterSchema(value = null) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue;
+    const key = String(row.key || '').trim();
+    if (!isValidParameterKey(key) || seen.has(key)) continue;
+    const type = String(row.type || '').trim().toLowerCase();
+    if (!CODE_PARAMETER_TYPE_SET.has(type)) continue;
+    const defaultValue = row.defaultValue;
+    if (
+      (type === 'number' && typeof defaultValue !== 'number') ||
+      (type === 'string' && typeof defaultValue !== 'string') ||
+      (type === 'boolean' && typeof defaultValue !== 'boolean')
+    ) {
+      continue;
+    }
+    seen.add(key);
+    out.push({
+      key,
+      label: String(row.label || toParameterLabel(key)),
+      type,
+      defaultValue,
+      source: row.source ? String(row.source) : null,
+      description: row.description ? String(row.description) : null,
+      line: Number.isFinite(Number(row.line)) ? Number(row.line) : null
+    });
+    if (out.length >= MAX_CODE_PARAMETER_COUNT) break;
+  }
+  return out;
+}
+
+function normalizeCodeParameterValue(value, type, fallback) {
+  if (type === 'number') {
+    const n = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value || '')
+      .trim()
+      .toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(text)) return true;
+    if (['false', '0', 'no', 'off'].includes(text)) return false;
+    return fallback;
+  }
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+function normalizeCodeParameterValues(value = null, schema = []) {
+  const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = {};
+  schema.forEach((item) => {
+    normalized[item.key] = normalizeCodeParameterValue(input[item.key], item.type, item.defaultValue);
+  });
+  return normalized;
+}
+
+function extractPythonCodeParameterSchema(sourceCode = '') {
+  const source = trimCodeSource(sourceCode);
+  if (!source) return [];
+  const lines = source.split(/\r?\n/);
+  const out = [];
+  const seen = new Set();
+
+  const addItem = ({ key, type, defaultValue, sourceLabel, description = null, line }) => {
+    if (!isValidParameterKey(key) || seen.has(key) || CODE_PARAMETER_EXCLUDED_KEYS.has(key)) return;
+    if (!CODE_PARAMETER_TYPE_SET.has(type)) return;
+    seen.add(key);
+    out.push({
+      key,
+      label: toParameterLabel(key),
+      type,
+      defaultValue,
+      source: sourceLabel,
+      description,
+      line
+    });
+  };
+
+  let pendingDataclass = false;
+  let inDataclass = false;
+  let dataclassIndent = 0;
+  let dataclassName = '';
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = String(line || '').trim();
+    if (!trimmed) continue;
+
+    const classMatch = line.match(/^(\s*)class\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:(]/);
+    if (pendingDataclass && classMatch) {
+      pendingDataclass = false;
+      inDataclass = true;
+      dataclassIndent = classMatch[1].length;
+      dataclassName = classMatch[2];
+      continue;
+    }
+    if (trimmed.startsWith('@dataclass')) {
+      pendingDataclass = true;
+      continue;
+    }
+    if (pendingDataclass && trimmed && !trimmed.startsWith('#')) {
+      pendingDataclass = false;
+    }
+
+    const currentIndent = line.match(/^\s*/)?.[0]?.length || 0;
+    if (inDataclass && currentIndent <= dataclassIndent && !trimmed.startsWith('#') && !trimmed.startsWith('@')) {
+      inDataclass = false;
+      dataclassName = '';
+    }
+
+    if (inDataclass) {
+      const fieldMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=]+=\s*(.+)$/);
+      if (fieldMatch) {
+        const key = fieldMatch[1];
+        const split = splitPythonValueAndComment(fieldMatch[2]);
+        const literal = parsePythonLiteral(split.value);
+        if (literal) {
+          addItem({
+            key,
+            type: literal.type,
+            defaultValue: literal.value,
+            sourceLabel: `dataclass:${dataclassName || 'unknown'}`,
+            description: split.comment,
+            line: index + 1
+          });
+        }
+      }
+      if (out.length >= MAX_CODE_PARAMETER_COUNT) break;
+      continue;
+    }
+
+    const constMatch = line.match(/^([A-Z][A-Z0-9_]{2,})\s*(?::\s*[^=]+)?=\s*(.+)$/);
+    if (constMatch) {
+      const key = constMatch[1];
+      const split = splitPythonValueAndComment(constMatch[2]);
+      const literal = parsePythonLiteral(split.value);
+      if (literal) {
+        addItem({
+          key,
+          type: literal.type,
+          defaultValue: literal.value,
+          sourceLabel: 'constant',
+          description: split.comment,
+          line: index + 1
+        });
+      }
+    }
+    if (out.length >= MAX_CODE_PARAMETER_COUNT) break;
+  }
+
+  return out;
+}
+
+function resolveRuntimeCodeParameters(rules = null) {
+  const normalized = rules && typeof rules === 'object' && !Array.isArray(rules) ? { ...rules } : {};
+  const sourceCode = trimCodeSource(normalized.codeSource || '');
+  const derivedSchema = sourceCode ? extractPythonCodeParameterSchema(sourceCode) : [];
+  const fallbackSchema = sanitizeCodeParameterSchema(normalized.codeParameterSchema || []);
+  const schema = derivedSchema.length ? derivedSchema : fallbackSchema;
+  const values = normalizeCodeParameterValues(normalized.codeParameters || {}, schema);
+  const updatedAt = normalized.codeParametersUpdatedAt ? String(normalized.codeParametersUpdatedAt) : null;
+
+  if (sourceCode) normalized.codeSource = sourceCode;
+  if (schema.length) normalized.codeParameterSchema = schema;
+  normalized.codeParameters = values;
+  normalized.codeParametersUpdatedAt = updatedAt;
+
+  return {
+    rules: normalized,
+    parameters: {
+      source: sourceCode ? 'code' : schema.length ? 'stored' : 'none',
+      sourceCode: sourceCode || null,
+      schema,
+      values,
+      updatedAt
+    }
+  };
 }
 
 function extractRuntimeConfigMap(workflowConfig = {}) {
@@ -250,6 +643,14 @@ async function assertBotInWorkspace(workspaceId, botId) {
     where: {
       id: botId,
       workspaceId
+    },
+    include: {
+      latestVersion: {
+        select: {
+          id: true,
+          notes: true
+        }
+      }
     }
   });
   if (!bot) {
@@ -545,24 +946,27 @@ export async function getTradeBotDetail(workspaceId, botId) {
 }
 
 export async function getTradeBotRuntimeConfig(workspaceId, botId) {
-  await assertBotInWorkspace(workspaceId, botId);
+  const bot = await assertBotInWorkspace(workspaceId, botId);
   const cfg = await getWorkspaceWorkflowConfig(workspaceId);
   const runtimeMap = extractRuntimeConfigMap(cfg);
   const current = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
   const links = normalizeRuntimeLink(current.links || null);
   const rules = normalizeRuntimeRules(current.rules || null);
+  const hydratedRules = hydrateRuntimeRulesWithCodeSource(rules, bot);
+  const resolved = resolveRuntimeCodeParameters(hydratedRules);
 
   return {
     workspaceId,
     botId,
     links,
-    rules,
+    rules: resolved.rules,
+    parameters: resolved.parameters,
     updatedAt: current.updatedAt || links.updatedAt || null
   };
 }
 
 export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = {}) {
-  await assertBotInWorkspace(workspaceId, botId);
+  const bot = await assertBotInWorkspace(workspaceId, botId);
   const cfg = await getWorkspaceWorkflowConfig(workspaceId);
   const runtimeMap = extractRuntimeConfigMap(cfg);
   const previous = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
@@ -573,10 +977,19 @@ export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = 
   const nextRules = Object.prototype.hasOwnProperty.call(payload, 'rules')
     ? normalizeRuntimeRules(payload.rules || null)
     : normalizeRuntimeRules(previous.rules || null);
+  const hydratedRules = hydrateRuntimeRulesWithCodeSource(nextRules, bot);
+  const resolved = resolveRuntimeCodeParameters(hydratedRules);
+
+  const nextCodeParametersUpdatedAt = Object.prototype.hasOwnProperty.call(payload, 'rules')
+    ? new Date().toISOString()
+    : resolved.parameters.updatedAt || null;
 
   const nextEntry = {
     links: nextLinks,
-    rules: nextRules,
+    rules: {
+      ...resolved.rules,
+      codeParametersUpdatedAt: nextCodeParametersUpdatedAt
+    },
     updatedAt: new Date().toISOString()
   };
 
@@ -597,6 +1010,10 @@ export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = 
   return {
     workspaceId,
     botId,
+    parameters: {
+      ...resolved.parameters,
+      updatedAt: nextEntry.rules.codeParametersUpdatedAt
+    },
     ...nextEntry
   };
 }
