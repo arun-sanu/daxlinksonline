@@ -2904,9 +2904,9 @@ function botConnectivityStatus(bot: TradeBotRow, link?: BotConnectivityLink): Bo
 }
 
 function statusPill(status: BotConnectivityStatus) {
-  if (status === 'online') return 'bg-emerald-400';
-  if (status === 'issue') return 'bg-rose-400';
-  return 'bg-amber-300';
+  if (status === 'online') return 'bg-emerald-300 shadow-[0_0_14px_rgba(16,185,129,0.85)]';
+  if (status === 'issue') return 'bg-rose-300 shadow-[0_0_14px_rgba(251,113,133,0.85)]';
+  return 'bg-amber-300 shadow-[0_0_14px_rgba(252,211,77,0.85)]';
 }
 
 function statusLabel(status: BotConnectivityStatus) {
@@ -2939,47 +2939,68 @@ function ConnectivityMindmap({
   const connectedNodes = nodes.filter((node) => node.connected);
 
   return (
-    <div className="card-shell space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="card-shell relative overflow-hidden space-y-3 border border-cyan-300/20 bg-slate-950/45 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_40px_rgba(34,211,238,0.12)]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_14%,rgba(34,211,238,0.2),transparent_38%),radial-gradient(circle_at_82%_18%,rgba(232,121,249,0.16),transparent_40%),linear-gradient(180deg,rgba(6,8,20,0.76),rgba(2,6,23,0.92))]"></div>
+        <div className="absolute inset-0 opacity-30 bg-[linear-gradient(to_right,rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(34,211,238,0.1)_1px,transparent_1px)] bg-[size:28px_28px]"></div>
+        <div className="absolute left-0 right-0 top-20 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent animate-pulse"></div>
+      </div>
+
+      <div className="relative flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="section-label">Connectivity Map</p>
-          <p className="text-sm text-gray-300">Quick topology view for bot connectivity and readiness. {connectedCount} linked bot(s) visible.</p>
+          <p className="section-label text-cyan-200/90">Connectivity Map</p>
+          <p className="text-sm text-cyan-100/85">
+            Neon topology view for bot connectivity and readiness. {connectedCount} linked bot(s) visible.
+          </p>
         </div>
       </div>
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+
+      <div className="relative rounded-2xl border border-cyan-300/25 bg-slate-950/75 p-4 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.12),0_0_34px_rgba(34,211,238,0.08)]">
         <div className="flex justify-center">
-          <div className="rounded-xl border border-primary-300/40 bg-primary-500/15 px-4 py-2 text-sm font-semibold text-primary-100">
-            Trade Bot Hub
+          <div className="rounded-xl border border-cyan-200/55 bg-gradient-to-r from-cyan-300/25 via-sky-300/20 to-fuchsia-300/25 px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-cyan-100 shadow-[0_0_22px_rgba(56,189,248,0.32)]">
+            Trade Bot Hub Core
           </div>
         </div>
+
         {connectedNodes.length > 0 && (
-          <div className="mt-4 space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-400">Execution Path</p>
+          <div className="mt-4 space-y-2 rounded-xl border border-cyan-300/25 bg-slate-900/65 p-3 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.1)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Execution Path</p>
+              <p className="text-[10px] uppercase tracking-[0.16em] text-fuchsia-200/75">Live pipeline lanes</p>
+            </div>
             {connectedNodes.slice(0, 3).map((node) => (
-              <div key={`path-${node.id}`} className="flex flex-wrap items-center gap-2 text-xs">
+              <div
+                key={`path-${node.id}`}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan-300/20 bg-slate-950/70 px-2 py-1.5 text-xs"
+              >
                 <FlowChip label="DaxLinks Router" />
-                <span className="text-gray-500">→</span>
+                <span className="text-cyan-200/70">→</span>
                 <FlowChip label={node.name} active />
-                <span className="text-gray-500">→</span>
+                <span className="text-cyan-200/70">→</span>
                 <FlowChip label="Exchange" />
               </div>
             ))}
           </div>
         )}
-        {nodes.length === 0 && <p className="mt-4 text-center text-sm text-gray-400">No bots loaded to draw connectivity.</p>}
+
+        {nodes.length === 0 && <p className="mt-4 text-center text-sm text-cyan-100/70">No bots loaded to draw connectivity.</p>}
+
         {nodes.length > 0 && (
           <div className="relative mt-5">
-            <span className="pointer-events-none absolute left-1/2 top-0 h-4 w-px -translate-x-1/2 bg-primary-300/50"></span>
-            <span className="pointer-events-none absolute left-[8%] right-[8%] top-4 h-px bg-primary-300/35"></span>
+            <span className="pointer-events-none absolute left-1/2 top-0 h-4 w-px -translate-x-1/2 bg-cyan-300/60"></span>
+            <span className="pointer-events-none absolute left-[8%] right-[8%] top-4 h-px bg-cyan-300/40"></span>
             <div className="grid gap-3 pt-5 sm:grid-cols-2 lg:grid-cols-3">
               {nodes.map((node) => (
-                <div key={node.id} className="relative rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                  <span className="pointer-events-none absolute -top-5 left-1/2 h-5 w-px -translate-x-1/2 bg-primary-300/35"></span>
+                <div
+                  key={node.id}
+                  className="relative rounded-xl border border-cyan-300/25 bg-slate-900/75 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08),0_0_16px_rgba(14,165,233,0.14)]"
+                >
+                  <span className="pointer-events-none absolute -top-5 left-1/2 h-5 w-px -translate-x-1/2 bg-cyan-300/40"></span>
                   <div className="flex items-center gap-2">
                     <span className={`h-2.5 w-2.5 rounded-full ${statusPill(node.status)}`}></span>
-                    <p className="truncate text-sm font-semibold text-gray-100">{node.name}</p>
+                    <p className="truncate text-sm font-semibold text-cyan-50">{node.name}</p>
                   </div>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-gray-400">{statusLabel(node.status)}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-cyan-200/75">{statusLabel(node.status)}</p>
                 </div>
               ))}
             </div>
@@ -2995,8 +3016,8 @@ function FlowChip({ label, active = false }: { label: string; active?: boolean }
     <span
       className={
         active
-          ? 'rounded-full border border-primary-300/45 bg-primary-500/20 px-2.5 py-1 text-[11px] font-semibold text-primary-100'
-          : 'rounded-full border border-white/15 bg-black/30 px-2.5 py-1 text-[11px] text-gray-200'
+          ? 'rounded-md border border-cyan-200/60 bg-gradient-to-r from-cyan-300 to-fuchsia-300 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.45)]'
+          : 'rounded-md border border-cyan-300/30 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08)]'
       }
     >
       {label}
