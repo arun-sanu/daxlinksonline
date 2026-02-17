@@ -1,3 +1,13 @@
+export type DatabaseTableMeta = {
+  key: string;
+  name: string;
+  purpose?: string | null;
+  records?: number | null;
+  lastExecutedAt?: string | null;
+  lastUpdatedAt?: string | null;
+  queryPath?: string | null;
+};
+
 export type DatabaseInstance = {
   id: string;
   name: string;
@@ -19,6 +29,7 @@ export type DatabaseInstance = {
   updatedAt?: string | null;
   usedGb?: number | null;
   tradesCount?: number | null;
+  tables?: DatabaseTableMeta[] | null;
 };
 
 function authHeaders() {

@@ -62,6 +62,58 @@ function buildWorkspaceWhere(workspaceScope) {
   return { workspaceId: String(workspaceScope) };
 }
 
+function isWorkspaceAccessible(workspaceId, workspaceScope) {
+  if (!workspaceScope) return true;
+
+  if (Array.isArray(workspaceScope)) {
+    if (!workspaceId) return false;
+    return workspaceScope.includes(workspaceId);
+  }
+
+  return workspaceId === String(workspaceScope);
+}
+
+function resolveTradeWorkspaceScope(db, workspaceScope) {
+  if (db?.workspaceId) return db.workspaceId;
+  return workspaceScope || null;
+}
+
+function buildTradeTableDescriptor(dbId, { records = 0, lastExecutedAt = null, lastUpdatedAt = null } = {}) {
+  return {
+    key: 'trade-transactions',
+    name: 'TradeTransaction',
+    purpose: 'Bot trade ledger for compounding, amount/quantity/value math, and PnL analytics',
+    records,
+    lastExecutedAt,
+    lastUpdatedAt,
+    queryPath: `/v1/admin/databases/${dbId}/tables/trade-transactions`
+  };
+}
+
+async function getTradeTableStats(workspaceScope) {
+  const where = {
+    ...buildWorkspaceWhere(workspaceScope)
+  };
+
+  const [tradeCount, latestTrade] = await Promise.all([
+    prisma.tradeTransaction.count({ where }),
+    prisma.tradeTransaction.findFirst({
+      where,
+      orderBy: { executedAt: 'desc' },
+      select: {
+        executedAt: true,
+        updatedAt: true
+      }
+    })
+  ]);
+
+  return {
+    records: tradeCount,
+    lastExecutedAt: asIso(latestTrade?.executedAt),
+    lastUpdatedAt: asIso(latestTrade?.updatedAt)
+  };
+}
+
 function mapTradeTransactionRow(row = {}) {
   const side = String(row.side || '')
     .trim()
@@ -130,16 +182,40 @@ function mapTradeTransactionRow(row = {}) {
   };
 }
 
-export async function listDatabases() {
-  const rows = await prisma.databaseInstance.findMany({ orderBy: { createdAt: 'desc' } });
-  return rows;
+export async function listDatabases({ workspaceScope = null, includeTableStats = false } = {}) {
+  const rows = await prisma.databaseInstance.findMany({
+    where: buildWorkspaceWhere(workspaceScope),
+    orderBy: { createdAt: 'desc' }
+  });
+
+  if (!includeTableStats || rows.length === 0) {
+    return rows;
+  }
+
+  const enrichedRows = await Promise.all(
+    rows.map(async (row) => {
+      const stats = await getTradeTableStats(resolveTradeWorkspaceScope(row, workspaceScope));
+      return {
+        ...row,
+        tradesCount: stats.records,
+        tables: [buildTradeTableDescriptor(row.id, stats)]
+      };
+    })
+  );
+
+  return enrichedRows;
 }
 
-export async function getDatabase(dbId) {
+export async function getDatabase(dbId, { workspaceScope = null } = {}) {
   const row = await prisma.databaseInstance.findUnique({ where: { id: dbId } });
   if (!row) {
     const err = new Error('Database not found');
     err.status = 404;
+    throw err;
+  }
+  if (!isWorkspaceAccessible(row.workspaceId || null, workspaceScope)) {
+    const err = new Error('Workspace access denied');
+    err.status = 403;
     throw err;
   }
   return row;
@@ -209,22 +285,8 @@ export async function deleteDatabase(dbId) {
 }
 
 export async function listDatabaseTables(dbId, { workspaceScope = null } = {}) {
-  const db = await getDatabase(dbId);
-  const where = {
-    ...buildWorkspaceWhere(workspaceScope)
-  };
-
-  const [tradeCount, latestTrade] = await Promise.all([
-    prisma.tradeTransaction.count({ where }),
-    prisma.tradeTransaction.findFirst({
-      where,
-      orderBy: { executedAt: 'desc' },
-      select: {
-        executedAt: true,
-        updatedAt: true
-      }
-    })
-  ]);
+  const db = await getDatabase(dbId, { workspaceScope });
+  const stats = await getTradeTableStats(resolveTradeWorkspaceScope(db, workspaceScope));
 
   return {
     database: {
@@ -233,17 +295,7 @@ export async function listDatabaseTables(dbId, { workspaceScope = null } = {}) {
       engine: db.engine,
       provider: db.provider
     },
-    tables: [
-      {
-        key: 'trade-transactions',
-        name: 'TradeTransaction',
-        purpose: 'Bot trade ledger for compounding, amount/quantity/value math, and PnL analytics',
-        records: tradeCount,
-        lastExecutedAt: asIso(latestTrade?.executedAt),
-        lastUpdatedAt: asIso(latestTrade?.updatedAt),
-        queryPath: `/v1/admin/databases/${db.id}/tables/trade-transactions`
-      }
-    ]
+    tables: [buildTradeTableDescriptor(db.id, stats)]
   };
 }
 
@@ -260,13 +312,14 @@ export async function listTradeTransactionsForDatabase(
     limit = DEFAULT_TABLE_ROWS_LIMIT
   } = {}
 ) {
-  const db = await getDatabase(dbId);
+  const db = await getDatabase(dbId, { workspaceScope });
   const fromDate = parseDateInput(from);
   const toDate = parseDateInput(to, { endOfDayWhenDateOnly: true });
   const rowLimit = normalizeLimit(limit);
+  const effectiveWorkspaceScope = resolveTradeWorkspaceScope(db, workspaceScope);
 
   const where = {
-    ...buildWorkspaceWhere(workspaceScope),
+    ...buildWorkspaceWhere(effectiveWorkspaceScope),
     ...(toUpper(symbol) ? { symbol: toUpper(symbol) } : {}),
     ...(botId ? { botId: String(botId).trim() } : {}),
     ...(botInstanceId ? { botInstanceId: String(botInstanceId).trim() } : {}),
@@ -338,7 +391,7 @@ export async function listTradeTransactionsForDatabase(
       name: 'TradeTransaction'
     },
     filters: {
-      workspaceScope: workspaceScope || null,
+      workspaceScope: effectiveWorkspaceScope || null,
       symbol: toUpper(symbol),
       botId: botId || null,
       botInstanceId: botInstanceId || null,

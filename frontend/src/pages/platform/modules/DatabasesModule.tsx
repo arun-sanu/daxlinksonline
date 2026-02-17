@@ -98,6 +98,25 @@ export default function DatabasesModule() {
     return pct;
   }
 
+  function tradeTable(db: DatabaseInstance | null) {
+    if (!db?.tables || db.tables.length === 0) return null;
+    return db.tables.find((table) => table.key === 'trade-transactions') || db.tables[0] || null;
+  }
+
+  function tradesCount(db: DatabaseInstance | null) {
+    const table = tradeTable(db);
+    if (typeof table?.records === 'number') return table.records;
+    if (typeof db?.tradesCount === 'number') return db.tradesCount;
+    return 0;
+  }
+
+  function asDate(value?: string | null) {
+    if (!value) return 'n/a';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'n/a';
+    return date.toLocaleString();
+  }
+
   return (
     <div className="space-y-8 w-full max-w-6xl mx-auto px-4 md:px-6">
       <header className="space-y-3">
@@ -187,6 +206,7 @@ export default function DatabasesModule() {
                   </div>
                   <p className="text-xs text-gray-400">{db.status}</p>
                   <p className="text-xs text-gray-400">Size · {db.storageGb ?? 0} GB</p>
+                  <p className="text-xs text-gray-400">Trade rows · {tradesCount(db).toLocaleString()}</p>
                   <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/10 storage-animated">
                     <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${storagePct(db)}%` }}></div>
                   </div>
@@ -202,7 +222,7 @@ export default function DatabasesModule() {
                     <div>
                       <h4 className="text-lg font-semibold text-main">{selectedDb.name}</h4>
                       <p className="text-xs text-gray-400">
-                        Created {new Date(selectedDb.createdAt).toLocaleString()} · {(selectedDb.tradesCount || 0).toLocaleString()} trades
+                        Created {new Date(selectedDb.createdAt).toLocaleString()} · {tradesCount(selectedDb).toLocaleString()} trades
                       </p>
                     </div>
                     <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.28em] text-gray-300">
@@ -246,6 +266,24 @@ export default function DatabasesModule() {
                     <div>
                       <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Password</p>
                       <p className="font-mono text-main text-sm">{selectedDb.passwordMasked || 'rotated'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Trade table</p>
+                      <p className="text-main">TradeTransaction</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Table records</p>
+                      <p className="font-mono text-main text-sm">{tradesCount(selectedDb).toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Last executed</p>
+                      <p className="font-mono text-main text-sm">{asDate(tradeTable(selectedDb)?.lastExecutedAt)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Table endpoint</p>
+                      <p className="font-mono text-main text-[11px] break-all">
+                        {tradeTable(selectedDb)?.queryPath || `/v1/admin/databases/${selectedDb.id}/tables/trade-transactions`}
+                      </p>
                     </div>
                   </div>
 
