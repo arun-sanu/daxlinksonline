@@ -21,6 +21,7 @@ const LANGUAGE_ALIASES = Object.freeze({
 });
 
 export const SUPPORTED_BOT_LANGUAGES = Object.freeze(['python', 'go', 'cpp', 'c', 'java']);
+export const SUPPORTED_INSTANCE_CONTROL_ACTIONS = Object.freeze(['start', 'pause', 'stop', 'restart']);
 
 function httpError(message, status = 500) {
   return Object.assign(new Error(message), { status });
@@ -127,6 +128,27 @@ function normalizeInstanceStatus(value) {
   return 'stopped';
 }
 
+export function normalizeInstanceControlAction(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!SUPPORTED_INSTANCE_CONTROL_ACTIONS.includes(normalized)) {
+    throw httpError(
+      `Unsupported bot instance action "${value}". Supported actions: ${SUPPORTED_INSTANCE_CONTROL_ACTIONS.join(', ')}`,
+      400
+    );
+  }
+  return normalized;
+}
+
+function allowedInstanceActions(statusValue) {
+  const status = normalizeInstanceStatus(statusValue);
+  if (status === 'running') return ['pause', 'stop', 'restart'];
+  if (status === 'paused') return ['start', 'stop', 'restart'];
+  if (status === 'error') return ['start', 'stop', 'restart'];
+  return ['start', 'restart'];
+}
+
 function presentBotVersion(version) {
   const meta = parseVersionNotes(version.notes);
   return {
@@ -150,6 +172,8 @@ function presentBotVersion(version) {
 }
 
 function presentBotInstance(instance, { orderCount = 0, runCount = 0, guardrailCount = 0 } = {}) {
+  const normalizedStatus = normalizeInstanceStatus(instance.status);
+  const allowedActions = allowedInstanceActions(normalizedStatus);
   return {
     id: instance.id,
     workspaceId: instance.workspaceId,
@@ -172,13 +196,20 @@ function presentBotInstance(instance, { orderCount = 0, runCount = 0, guardrailC
     slAtrMult: instance.slAtrMult,
     useLimitEntries: instance.useLimitEntries,
     minNotional: instance.minNotional,
-    status: instance.status,
+    status: normalizedStatus,
     webhookToken: instance.webhookToken,
     startedAt: instance.startedAt,
     stoppedAt: instance.stoppedAt,
     lastError: instance.lastError || null,
     createdAt: instance.createdAt,
     updatedAt: instance.updatedAt,
+    lifecycle: {
+      allowedActions,
+      canStart: allowedActions.includes('start'),
+      canPause: allowedActions.includes('pause'),
+      canStop: allowedActions.includes('stop'),
+      canRestart: allowedActions.includes('restart')
+    },
     counts: {
       orders: orderCount,
       runs: runCount,
@@ -238,6 +269,30 @@ async function assertExchangeAccountInWorkspace(workspaceId, exchangeAccountId) 
     throw httpError('Exchange account not found in workspace', 404);
   }
   return exchangeAccount;
+}
+
+async function assertBotInstanceInWorkspace(workspaceId, botId, instanceId) {
+  const instance = await prisma.botInstance.findFirst({
+    where: {
+      id: instanceId,
+      workspaceId,
+      botId
+    },
+    include: {
+      exchange: {
+        select: {
+          id: true,
+          name: true,
+          venue: true,
+          isSandbox: true
+        }
+      }
+    }
+  });
+  if (!instance) {
+    throw httpError('Trade bot instance not found', 404);
+  }
+  return instance;
 }
 
 async function ensureWorkflowNodeForBot(workspaceId, bot) {
@@ -756,6 +811,71 @@ export async function listTradeBotInstances(workspaceId, botId) {
       guardrailCount: guardrailCountsByInstance.get(instance.id) || 0
     })
   );
+}
+
+function buildInstanceControlPatch(instance, action) {
+  const normalizedStatus = normalizeInstanceStatus(instance.status);
+  const normalizedAction = normalizeInstanceControlAction(action);
+  const now = new Date();
+
+  if (normalizedAction === 'start') {
+    if (normalizedStatus === 'running') return null;
+    return {
+      status: 'running',
+      startedAt: now,
+      stoppedAt: null,
+      lastError: null
+    };
+  }
+
+  if (normalizedAction === 'pause') {
+    if (normalizedStatus !== 'running') {
+      throw httpError('Only running instances can be paused', 409);
+    }
+    return {
+      status: 'paused'
+    };
+  }
+
+  if (normalizedAction === 'stop') {
+    if (normalizedStatus === 'stopped') return null;
+    return {
+      status: 'stopped',
+      stoppedAt: now
+    };
+  }
+
+  return {
+    status: 'running',
+    startedAt: now,
+    stoppedAt: null,
+    lastError: null
+  };
+}
+
+export async function controlTradeBotInstance(workspaceId, botId, instanceId, action) {
+  const instance = await assertBotInstanceInWorkspace(workspaceId, botId, instanceId);
+  const patch = buildInstanceControlPatch(instance, action);
+  if (!patch) {
+    return presentBotInstance(instance);
+  }
+
+  const updated = await prisma.botInstance.update({
+    where: { id: instance.id },
+    data: patch,
+    include: {
+      exchange: {
+        select: {
+          id: true,
+          name: true,
+          venue: true,
+          isSandbox: true
+        }
+      }
+    }
+  });
+
+  return presentBotInstance(updated);
 }
 
 export async function listTradeBotOrders(workspaceId, botId, filters = {}) {

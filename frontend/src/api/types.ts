@@ -73,6 +73,12 @@ export interface BotInstance {
   botVersionId: string;
   workspaceId: string;
   exchangeAccountId: string;
+  exchangeAccount?: {
+    id: string;
+    name: string;
+    venue: string;
+    isSandbox: boolean;
+  } | null;
   symbol: string;
   direction: string; // long|short|both
   leverage: number;
@@ -86,6 +92,13 @@ export interface BotInstance {
   lastError?: string | null;
   startedAt?: string | null;
   stoppedAt?: string | null;
+  lifecycle?: {
+    allowedActions?: string[];
+    canStart?: boolean;
+    canPause?: boolean;
+    canStop?: boolean;
+    canRestart?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }

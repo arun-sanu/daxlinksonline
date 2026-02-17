@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getTradeBotRuntimeConfig, listBots, listExchangeAccounts, listRentals, saveTradeBotRuntimeConfig } from '../../../api/tradeBots';
+import {
+  getTradeBotRuntimeConfig,
+  listBots,
+  listExchangeAccounts,
+  listInstances,
+  listRentals,
+  pauseInstance,
+  restartInstance,
+  saveTradeBotRuntimeConfig,
+  startInstance,
+  stopInstance
+} from '../../../api/tradeBots';
 import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
 import { fetchIntegrationDetail, listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
-import type { Bot, ExchangeAccount, Rental } from '../../../api/types';
+import type { Bot, BotInstance, ExchangeAccount, Rental } from '../../../api/types';
 
 type TradeBotRow = Bot & {
   latestVersion?: { id?: string | null; status?: string | null; language?: string | null } | null;
@@ -13,6 +24,7 @@ type TradeBotRow = Bot & {
 
 type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
 type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
+type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
@@ -143,6 +155,38 @@ function formatDecimal(value: unknown, digits = 8) {
   if (!Number.isFinite(n)) return '—';
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function normalizeInstanceState(value?: string | null) {
+  const normalized = String(value || 'stopped')
+    .trim()
+    .toLowerCase();
+  if (['running', 'paused', 'stopped', 'error'].includes(normalized)) return normalized;
+  return 'stopped';
+}
+
+function canRunInstanceAction(instance: BotInstance, action: BotInstanceLifecycleAction) {
+  const lifecycle = (instance as any)?.lifecycle;
+  const allowedActions = Array.isArray(lifecycle?.allowedActions)
+    ? lifecycle.allowedActions.map((value: unknown) => String(value).toLowerCase())
+    : null;
+  if (allowedActions && allowedActions.length > 0) {
+    return allowedActions.includes(action);
+  }
+
+  const status = normalizeInstanceState(instance.status);
+  if (action === 'start') return status !== 'running';
+  if (action === 'pause') return status === 'running';
+  if (action === 'stop') return status !== 'stopped';
+  return true;
+}
+
+function instanceStatusBadgeClass(statusValue?: string | null) {
+  const status = normalizeInstanceState(statusValue);
+  if (status === 'running') return 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100';
+  if (status === 'paused') return 'border-amber-300/45 bg-amber-500/15 text-amber-100';
+  if (status === 'error') return 'border-rose-300/45 bg-rose-500/15 text-rose-100';
+  return 'border-white/25 bg-white/10 text-gray-200';
 }
 
 function normalizeSymbol(value?: string | null) {
@@ -753,6 +797,9 @@ export default function TradeBotsModule() {
   const [webhookProfile, setWebhookProfile] = useState<MyWebhookResponse | null>(null);
   const [exchangeAccounts, setExchangeAccounts] = useState<ExchangeAccount[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(false);
+  const [instanceActionTargetId, setInstanceActionTargetId] = useState<string | null>(null);
   const [testingIntegrationId, setTestingIntegrationId] = useState<string | null>(null);
   const [botLinks, setBotLinks] = useState<Record<string, BotConnectivityLink>>(() => readBotLinks());
   const [botRulesMap, setBotRulesMap] = useState<Record<string, BotTradingRules>>(() => readBotTradingRulesMap());
@@ -1090,6 +1137,10 @@ export default function TradeBotsModule() {
       }),
     [rentals]
   );
+  const runningInstanceCount = useMemo(
+    () => botInstances.filter((instance) => normalizeInstanceState(instance.status) === 'running').length,
+    [botInstances]
+  );
 
   const load = async () => {
     const ws = getWorkspaceId().trim() || DEFAULT_WORKSPACE_ID;
@@ -1119,6 +1170,50 @@ export default function TradeBotsModule() {
 
     setLastLoadedAt(new Date().toISOString());
     setLoading(false);
+  };
+
+  const loadBotInstances = async (botId?: string | null, { silent = false }: { silent?: boolean } = {}) => {
+    if (!botId) {
+      setBotInstances([]);
+      return;
+    }
+    if (!silent) setInstancesLoading(true);
+    try {
+      const result = await listInstances(botId);
+      setBotInstances((result.items || []) as BotInstance[]);
+    } finally {
+      if (!silent) setInstancesLoading(false);
+    }
+  };
+
+  const handleInstanceControl = async (instanceId: string, action: BotInstanceLifecycleAction) => {
+    if (!selectedBot?.id || !instanceId) return;
+    setInstanceActionTargetId(instanceId);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const actionRunner =
+        action === 'start'
+          ? startInstance
+          : action === 'pause'
+            ? pauseInstance
+            : action === 'stop'
+              ? stopInstance
+              : restartInstance;
+      const updated = await actionRunner(selectedBot.id, instanceId);
+      if (!updated) {
+        setModalError(`Failed to ${action} bot instance.`);
+        return;
+      }
+      setBotInstances((prev) => prev.map((item) => (item.id === instanceId ? { ...item, ...updated } : item)));
+      const suffix = action === 'restart' ? 'restarted' : action === 'pause' ? 'paused' : action === 'start' ? 'started' : 'stopped';
+      setModalMessage(`Instance ${instanceId.slice(0, 10)} ${suffix}.`);
+      await loadBotInstances(selectedBot.id, { silent: true });
+    } catch (error: any) {
+      setModalError(error?.message || `Failed to ${action} bot instance.`);
+    } finally {
+      setInstanceActionTargetId(null);
+    }
   };
 
   useEffect(() => {
@@ -1263,6 +1358,9 @@ export default function TradeBotsModule() {
     setBotRulesDraft(null);
     setPineScriptSource('');
     setPineScriptFileName('');
+    setBotInstances([]);
+    setInstancesLoading(false);
+    setInstanceActionTargetId(null);
   };
 
   const loadConnectivityContext = async (botId?: string) => {
@@ -1417,6 +1515,7 @@ export default function TradeBotsModule() {
     if (!selectedBot) return;
     void loadConnectivityContext(selectedBot.id);
     void syncRuntimeConfigFromBackend(selectedBot.id);
+    void loadBotInstances(selectedBot.id);
   }, [selectedBot?.id]);
 
   useEffect(() => {
@@ -1453,6 +1552,9 @@ export default function TradeBotsModule() {
       setTradingDetailsLoading(false);
       setBotRulesDraft(null);
       setActivePopupSection('integrations');
+      setBotInstances([]);
+      setInstancesLoading(false);
+      setInstanceActionTargetId(null);
     }
   }, [activeTab]);
 
@@ -1864,6 +1966,103 @@ export default function TradeBotsModule() {
 
               {activePopupSection === 'integrations' && (
                 <div className="grid gap-3 xl:grid-cols-3">
+                  <section className="rounded-2xl border border-white/15 bg-black/45 p-4 xl:col-span-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Bot runtime controls</p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Start, pause, restart, or stop each deployed instance for this bot.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200">
+                          running {runningInstanceCount}/{botInstances.length}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          onClick={() => loadBotInstances(selectedBot.id)}
+                          disabled={instancesLoading}
+                        >
+                          {instancesLoading ? 'Refreshing...' : 'Refresh Instances'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {instancesLoading && <p className="text-xs text-gray-400">Loading instances...</p>}
+                      {!instancesLoading && botInstances.length === 0 && (
+                        <p className="text-xs text-gray-400">No instances found for this bot. Create or rent an instance to enable runtime controls.</p>
+                      )}
+                      {botInstances.map((instance) => {
+                        const status = normalizeInstanceState(instance.status);
+                        const isBusy = instanceActionTargetId === instance.id;
+                        const canStart = canRunInstanceAction(instance, 'start');
+                        const canPause = canRunInstanceAction(instance, 'pause');
+                        const canStop = canRunInstanceAction(instance, 'stop');
+                        const canRestart = canRunInstanceAction(instance, 'restart');
+                        return (
+                          <div key={instance.id} className="rounded-lg border border-white/15 bg-black/35 p-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-semibold text-gray-100">{String(instance.symbol || 'SYMBOL').toUpperCase()}</p>
+                                  <span className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${instanceStatusBadgeClass(status)}`}>
+                                    {status}
+                                  </span>
+                                  {isBusy && (
+                                    <span className="rounded border border-primary-300/45 bg-primary-500/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                                      applying
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-[11px] text-gray-400">
+                                  Started {formatDate(instance.startedAt)} · Stopped {formatDate(instance.stoppedAt)}
+                                </p>
+                                <p className="mt-1 break-all text-[10px] font-mono text-gray-500">Instance {instance.id}</p>
+                                {instance.lastError && <p className="mt-1 text-[11px] text-rose-200">Last error: {instance.lastError}</p>}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  onClick={() => handleInstanceControl(instance.id, 'start')}
+                                  disabled={isBusy || !canStart}
+                                >
+                                  Start
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  onClick={() => handleInstanceControl(instance.id, 'pause')}
+                                  disabled={isBusy || !canPause}
+                                >
+                                  Pause
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  onClick={() => handleInstanceControl(instance.id, 'restart')}
+                                  disabled={isBusy || !canRestart}
+                                >
+                                  Restart
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  onClick={() => handleInstanceControl(instance.id, 'stop')}
+                                  disabled={isBusy || !canStop}
+                                >
+                                  Stop
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+
                   <section className="rounded-2xl border border-white/15 bg-black/45 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">TradingView ingress</p>

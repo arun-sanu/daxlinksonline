@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  controlTradeBotInstance,
   createTradeBot,
   createTradeBotInstance,
   getTradeBotDetail,
@@ -27,6 +28,13 @@ const workspaceParamSchema = z.object({
 const botParamSchema = z.object({
   workspaceId: z.string().uuid(),
   botId: z.string().min(8)
+});
+
+const botInstanceActionParamSchema = z.object({
+  workspaceId: z.string().uuid(),
+  botId: z.string().min(8),
+  instanceId: z.string().min(8),
+  action: z.enum(['start', 'pause', 'stop', 'restart'])
 });
 
 const createBotSchema = z.object({
@@ -122,6 +130,13 @@ function normalizeUploadPayload(body = {}) {
     userNotes: body.notes ? String(body.notes).trim() : null,
     autoPublish: parseBool(body.autoPublish, false)
   };
+}
+
+function toInstanceAuditAction(action) {
+  if (action === 'start') return 'TRADE_BOT_INSTANCE_STARTED';
+  if (action === 'pause') return 'TRADE_BOT_INSTANCE_PAUSED';
+  if (action === 'restart') return 'TRADE_BOT_INSTANCE_RESTARTED';
+  return 'TRADE_BOT_INSTANCE_STOPPED';
 }
 
 export async function handleListTradeBotLanguages(_req, res) {
@@ -313,6 +328,34 @@ export async function handleCreateTradeBotInstance(req, res, next) {
     } catch {}
 
     res.status(201).json(instance);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleControlTradeBotInstance(req, res, next) {
+  try {
+    const { workspaceId, botId, instanceId, action } = botInstanceActionParamSchema.parse(req.params || {});
+    const instance = await controlTradeBotInstance(workspaceId, botId, instanceId, action);
+
+    try {
+      await recordAudit({
+        userId: req.user?.id,
+        action: toInstanceAuditAction(action),
+        entityType: 'BotInstance',
+        entityId: instance.id,
+        summary: `${instance.symbol} ${action}`,
+        detail: {
+          workspaceId,
+          botId,
+          instanceId,
+          status: instance.status
+        }
+      });
+    } catch {}
+
+    res.json(instance);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);

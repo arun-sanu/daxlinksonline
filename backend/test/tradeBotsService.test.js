@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   normalizeBotLanguage,
+  normalizeInstanceControlAction,
   parseVersionNotes,
   stringifyVersionNotes
 } from '../src/services/tradeBotsService.js';
@@ -20,6 +21,17 @@ test('normalizeBotLanguage maps aliases to canonical values', () => {
 
 test('normalizeBotLanguage rejects unsupported languages', () => {
   assert.throws(() => normalizeBotLanguage('rust'), /Unsupported bot language/);
+});
+
+test('normalizeInstanceControlAction normalizes valid lifecycle actions', () => {
+  assert.equal(normalizeInstanceControlAction('start'), 'start');
+  assert.equal(normalizeInstanceControlAction(' Pause '), 'pause');
+  assert.equal(normalizeInstanceControlAction('STOP'), 'stop');
+  assert.equal(normalizeInstanceControlAction('restart'), 'restart');
+});
+
+test('normalizeInstanceControlAction rejects unsupported lifecycle actions', () => {
+  assert.throws(() => normalizeInstanceControlAction('resume'), /Unsupported bot instance action/);
 });
 
 test('parseVersionNotes supports json and plain text', () => {

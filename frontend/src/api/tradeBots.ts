@@ -235,16 +235,28 @@ export async function updateInstance(id: string, patch: Partial<BotInstance>): P
   ).catch(() => null);
 }
 
-export async function startInstance(id: string): Promise<BotInstance | null> {
+type InstanceControlAction = 'start' | 'pause' | 'stop' | 'restart';
+
+async function controlInstanceAction(botId: string, id: string, action: InstanceControlAction): Promise<BotInstance | null> {
   const ws = getWorkspaceId();
-  const url = `/api/v1/trade-bots/${ws}/instances/${id}/start`;
-  return fetchJson<BotInstance>(url, { method: 'POST', headers: { ...authHeaders() } }, 'Failed to start instance').catch(() => null);
+  const url = `/api/v1/trade-bots/${ws}/bots/${botId}/instances/${id}/actions/${action}`;
+  return fetchJson<BotInstance>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} instance`).catch(() => null);
 }
 
-export async function stopInstance(id: string): Promise<BotInstance | null> {
-  const ws = getWorkspaceId();
-  const url = `/api/v1/trade-bots/${ws}/instances/${id}/stop`;
-  return fetchJson<BotInstance>(url, { method: 'POST', headers: { ...authHeaders() } }, 'Failed to stop instance').catch(() => null);
+export async function startInstance(botId: string, id: string): Promise<BotInstance | null> {
+  return controlInstanceAction(botId, id, 'start');
+}
+
+export async function pauseInstance(botId: string, id: string): Promise<BotInstance | null> {
+  return controlInstanceAction(botId, id, 'pause');
+}
+
+export async function stopInstance(botId: string, id: string): Promise<BotInstance | null> {
+  return controlInstanceAction(botId, id, 'stop');
+}
+
+export async function restartInstance(botId: string, id: string): Promise<BotInstance | null> {
+  return controlInstanceAction(botId, id, 'restart');
 }
 
 export async function getInstanceOrders(id: string): Promise<ListResponse<Order>> {
