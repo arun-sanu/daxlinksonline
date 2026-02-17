@@ -69,6 +69,43 @@ function resolveAccountBalanceAfter({ accountBalanceAfter, accountBalanceBefore,
   return null;
 }
 
+function resolvePositionQty({ input, side, quantity }) {
+  const sizingContext = input?.sizingContext && typeof input.sizingContext === 'object' ? input.sizingContext : {};
+  const sizingDebug = sizingContext?.sizingDebug && typeof sizingContext.sizingDebug === 'object' ? sizingContext.sizingDebug : {};
+  const normalizedSide = asUpperText(side);
+  const absQty = Math.abs(asNumber(quantity) || 0);
+
+  let before = asNumber(
+    input.positionQtyBefore ??
+      input.position?.beforeQty ??
+      input.freeBaseBefore ??
+      input.baseBalanceBefore ??
+      sizingContext.freeBase ??
+      sizingContext.baseBalanceBefore ??
+      sizingDebug.freeBase
+  );
+  let after = asNumber(
+    input.positionQtyAfter ??
+      input.position?.afterQty ??
+      input.freeBaseAfter ??
+      input.baseBalanceAfter ??
+      sizingContext.baseBalanceAfter ??
+      sizingDebug.freeBaseAfter
+  );
+
+  if (before !== null && after === null && absQty > 0) {
+    if (normalizedSide === 'BUY' || normalizedSide === 'LONG') after = before + absQty;
+    if (normalizedSide === 'SELL' || normalizedSide === 'SHORT') after = before - absQty;
+  }
+
+  if (after !== null && before === null && absQty > 0) {
+    if (normalizedSide === 'BUY' || normalizedSide === 'LONG') before = after - absQty;
+    if (normalizedSide === 'SELL' || normalizedSide === 'SHORT') before = after + absQty;
+  }
+
+  return { before, after };
+}
+
 export async function recordTradeTransaction(input = {}, options = {}) {
   const db = options.db || prisma;
 
@@ -92,6 +129,11 @@ export async function recordTradeTransaction(input = {}, options = {}) {
     accountBalanceBefore,
     side,
     value
+  });
+  const positionQty = resolvePositionQty({
+    input,
+    side,
+    quantity
   });
 
   const data = {
@@ -128,8 +170,8 @@ export async function recordTradeTransaction(input = {}, options = {}) {
     accountEquityBefore: asDecimal(input.accountEquityBefore),
     accountEquityAfter: asDecimal(input.accountEquityAfter),
     balanceAsset: asUpperText(input.balanceAsset),
-    positionQtyBefore: asDecimal(input.positionQtyBefore),
-    positionQtyAfter: asDecimal(input.positionQtyAfter),
+    positionQtyBefore: asDecimal(positionQty.before),
+    positionQtyAfter: asDecimal(positionQty.after),
     decisionContext: toJsonSafe(input.decisionContext),
     sizingContext: toJsonSafe(input.sizingContext),
     exchangePayload: toJsonSafe(input.exchangePayload),

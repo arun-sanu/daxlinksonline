@@ -82,6 +82,8 @@ test('compounding defaults to final statuses and derives starting capital from f
       accountEquityBefore: null,
       accountEquityAfter: null,
       balanceAsset: 'USDT',
+      positionQtyBefore: 0,
+      positionQtyAfter: 0.001,
       metadata: null,
       executedAt: new Date('2026-02-10T10:00:00.000Z'),
       createdAt: new Date('2026-02-10T10:00:00.000Z')
@@ -132,6 +134,8 @@ test('compounding defaults to final statuses and derives starting capital from f
       accountEquityBefore: null,
       accountEquityAfter: null,
       balanceAsset: 'USDT',
+      positionQtyBefore: 0.001,
+      positionQtyAfter: 0,
       metadata: null,
       executedAt: new Date('2026-02-10T12:00:00.000Z'),
       createdAt: new Date('2026-02-10T12:00:00.000Z')
@@ -153,6 +157,10 @@ test('compounding defaults to final statuses and derives starting capital from f
   assert.equal(report.summary.startingCapital, 100);
   assert.equal(report.summary.endingCapital, 110);
   assert.equal(report.filters.includeNonFinal, false);
+  assert.equal(report.recentTrades[0].positionQtyBefore, 0.001);
+  assert.equal(report.recentTrades[0].positionQtyAfter, 0);
+  assert.equal(report.recentTrades[0].position.stateBefore, 'LONG');
+  assert.equal(report.recentTrades[0].position.stateAfter, 'FLAT');
 });
 
 test('compounding includes non-final rows when includeNonFinal=true', async (t) => {

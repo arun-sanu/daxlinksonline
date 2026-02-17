@@ -1152,6 +1152,8 @@ function mapTradeTransactionForAnalytics(row = {}) {
     .trim()
     .toUpperCase();
   const quantity = maybeNumber(row.quantity);
+  const positionQtyBefore = maybeNumber(row.positionQtyBefore);
+  const positionQtyAfter = maybeNumber(row.positionQtyAfter);
   const marketPrice = maybeNumber(row.marketPrice);
   const executionPrice = maybeNumber(row.executionPrice);
   const explicitValue = maybeNumber(row.value);
@@ -1194,7 +1196,15 @@ function mapTradeTransactionForAnalytics(row = {}) {
     accountBalanceAfter: maybeNumber(row.accountBalanceAfter),
     accountEquityBefore: maybeNumber(row.accountEquityBefore),
     accountEquityAfter: maybeNumber(row.accountEquityAfter),
-    balanceAsset: row.balanceAsset || null
+    balanceAsset: row.balanceAsset || null,
+    positionQtyBefore,
+    positionQtyAfter,
+    position: {
+      qtyBefore: positionQtyBefore,
+      qtyAfter: positionQtyAfter,
+      stateBefore: positionQtyBefore === null ? 'UNKNOWN' : positionStateFromQty(positionQtyBefore),
+      stateAfter: positionQtyAfter === null ? 'UNKNOWN' : positionStateFromQty(positionQtyAfter)
+    }
   };
 }
 
@@ -1283,6 +1293,8 @@ export async function getWorkspaceTradeCompoundingReport({
         accountEquityBefore: true,
         accountEquityAfter: true,
         balanceAsset: true,
+        positionQtyBefore: true,
+        positionQtyAfter: true,
         metadata: true,
         executedAt: true
       }
