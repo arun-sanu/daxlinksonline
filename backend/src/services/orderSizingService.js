@@ -572,11 +572,25 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     rawRules?.minQuoteSpend
   );
   const minSellNotional = minSellNotionalRaw !== null && minSellNotionalRaw > 0 ? minSellNotionalRaw : 0;
-  const compoundingEnabled = rawRules?.compoundingEnabled === true;
-  const compoundingMode = normalizeCompoundingMode(rawRules?.compoundingMode, sizingMode);
-  const compoundingBaseQuoteRaw = asNumber(rawRules?.compoundingBaseQuote);
+  const compoundingEnabled =
+    rawRules?.compoundingEnabled === true ||
+    rawRules?.reinvestProfits === true ||
+    rawRules?.reinvestProfitsEnabled === true;
+  const compoundingMode = normalizeCompoundingMode(
+    rawRules?.compoundingMode ?? rawRules?.compoundMode,
+    sizingMode
+  );
+  const compoundingBaseQuoteRaw = asNumber(
+    rawRules?.compoundingBaseQuote ??
+    rawRules?.compoundBaseQuote ??
+    rawRules?.reinvestBaseQuote
+  );
   const compoundingBaseQuote = compoundingBaseQuoteRaw !== null && compoundingBaseQuoteRaw > 0 ? compoundingBaseQuoteRaw : null;
-  const compoundingPctRaw = asNumber(rawRules?.compoundingPct);
+  const compoundingPctRaw = asNumber(
+    rawRules?.compoundingPct ??
+    rawRules?.compoundPct ??
+    rawRules?.reinvestProfitsPct
+  );
   const compoundingPct = compoundingPctRaw === null ? 100 : clamp(compoundingPctRaw, 0, 300);
 
   return {

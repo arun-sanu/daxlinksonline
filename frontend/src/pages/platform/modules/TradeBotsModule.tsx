@@ -33,6 +33,7 @@ const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
 
 type ExecutionFunction = 'live_trading' | 'paper_trading' | 'signal_only';
 type SizingMode = 'balance_pct' | 'fixed_quote' | 'risk_per_trade_pct' | 'volatility_adjusted';
+type CompoundingMode = 'full_balance' | 'profit_only';
 type StopType = 'none' | 'percent' | 'fixed_price' | 'rr' | 'atr_multiplier';
 type PreviewSide = 'buy' | 'sell';
 type ReferencePriceSource = 'last' | 'mark' | 'mid';
@@ -83,6 +84,10 @@ type BotTradingRules = {
   sizingMode: SizingMode;
   allocationValue: number;
   reinvestmentPct: number;
+  compoundingEnabled: boolean;
+  compoundingMode: CompoundingMode;
+  compoundingPct: number;
+  compoundingBaseQuote: number | null;
   minQuoteSpend: number;
   maxQuoteSpend: number;
   referencePriceSource: ReferencePriceSource;
@@ -121,6 +126,10 @@ const DEFAULT_TRADING_RULES: BotTradingRules = {
   sizingMode: 'balance_pct',
   allocationValue: 90,
   reinvestmentPct: 90,
+  compoundingEnabled: false,
+  compoundingMode: 'full_balance',
+  compoundingPct: 100,
+  compoundingBaseQuote: null,
   minQuoteSpend: 1.05,
   maxQuoteSpend: 50,
   referencePriceSource: 'last',
@@ -522,6 +531,12 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
   const tpType: StopType = stopTypes.includes(merged.tpType as StopType) ? (merged.tpType as StopType) : 'none';
   const sizingModes: SizingMode[] = ['balance_pct', 'fixed_quote', 'risk_per_trade_pct', 'volatility_adjusted'];
   const sizingMode: SizingMode = sizingModes.includes(merged.sizingMode as SizingMode) ? (merged.sizingMode as SizingMode) : 'balance_pct';
+  const compoundingModes: CompoundingMode[] = ['full_balance', 'profit_only'];
+  const compoundingMode: CompoundingMode = compoundingModes.includes(merged.compoundingMode as CompoundingMode)
+    ? (merged.compoundingMode as CompoundingMode)
+    : DEFAULT_TRADING_RULES.compoundingMode;
+  const compoundingBaseQuoteRaw = normalizeNumber(merged.compoundingBaseQuote, 0);
+  const compoundingBaseQuote = compoundingBaseQuoteRaw > 0 ? compoundingBaseQuoteRaw : null;
   const referencePriceSource: ReferencePriceSource = ['last', 'mark', 'mid'].includes(String(merged.referencePriceSource))
     ? (merged.referencePriceSource as ReferencePriceSource)
     : 'last';
@@ -555,6 +570,10 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
     sizingMode,
     allocationValue: Math.max(0, normalizeNumber(merged.allocationValue, DEFAULT_TRADING_RULES.allocationValue)),
     reinvestmentPct: Math.max(0, Math.min(100, normalizeNumber(merged.reinvestmentPct, DEFAULT_TRADING_RULES.reinvestmentPct))),
+    compoundingEnabled: Boolean(merged.compoundingEnabled),
+    compoundingMode,
+    compoundingPct: Math.max(0, Math.min(300, normalizeNumber(merged.compoundingPct, DEFAULT_TRADING_RULES.compoundingPct))),
+    compoundingBaseQuote,
     minQuoteSpend,
     maxQuoteSpend,
     referencePriceSource,
@@ -1124,7 +1143,35 @@ export default function TradeBotsModule() {
       quoteSpendRawBase = freeQuote * (allocationValue / 100) * volatilityFactor;
     }
 
-    const quoteSpendRaw = rules.sizingMode === 'fixed_quote' ? quoteSpendRawBase : quoteSpendRawBase * reinvestmentFactor;
+    const quoteSpendBeforeCompounding =
+      rules.sizingMode === 'fixed_quote' ? quoteSpendRawBase : quoteSpendRawBase * reinvestmentFactor;
+    const compoundingStrength = Math.max(0, Math.min(3, Number(rules.compoundingPct || 0) / 100));
+    const compoundingBaseQuoteConfigured = Number(rules.compoundingBaseQuote || 0);
+    const compoundingBaseQuote =
+      Number.isFinite(compoundingBaseQuoteConfigured) && compoundingBaseQuoteConfigured > 0
+        ? compoundingBaseQuoteConfigured
+        : null;
+    const inferredCompoundingBaseQuote =
+      rules.compoundingMode === 'full_balance'
+        ? (freeQuote > 0 ? freeQuote : quoteSpendBeforeCompounding)
+        : quoteSpendBeforeCompounding;
+    const compoundingBaseQuoteUsed = compoundingBaseQuote ?? inferredCompoundingBaseQuote;
+    const compoundingProfitQuote = Math.max(0, freeQuote - compoundingBaseQuoteUsed);
+    let compoundingFactor = 1;
+    if (
+      rules.compoundingEnabled &&
+      compoundingStrength > 0 &&
+      quoteSpendBeforeCompounding > 0 &&
+      compoundingBaseQuoteUsed > 0
+    ) {
+      if (rules.compoundingMode === 'profit_only') {
+        compoundingFactor = 1 + (compoundingProfitQuote / compoundingBaseQuoteUsed) * compoundingStrength;
+      } else {
+        const balanceRatio = Math.max(0, freeQuote / compoundingBaseQuoteUsed);
+        compoundingFactor = Math.max(0, 1 + (balanceRatio - 1) * compoundingStrength);
+      }
+    }
+    const quoteSpendRaw = quoteSpendBeforeCompounding * compoundingFactor;
     const quoteSpend = Math.max(minQuoteSpendFloor, Math.min(maxQuoteSpend, quoteSpendRaw));
     const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
     const qtyFinal = roundDownToStep(qtyRaw, stepSize);
@@ -1204,8 +1251,16 @@ export default function TradeBotsModule() {
       effectiveMinNotionalBuy,
       effectiveMinNotionalSell,
       effectiveMinNotional,
+      quoteSpendBeforeCompounding,
       quoteSpendRaw,
       quoteSpend,
+      compoundingEnabled: rules.compoundingEnabled,
+      compoundingMode: rules.compoundingMode,
+      compoundingPct: rules.compoundingPct,
+      compoundingBaseQuoteConfigured: compoundingBaseQuote,
+      compoundingBaseQuoteUsed,
+      compoundingProfitQuote,
+      compoundingFactor,
       qtyRaw,
       qtyFinal,
       notionalAfterRounding,
@@ -1254,6 +1309,12 @@ export default function TradeBotsModule() {
         mode: rules.sizingMode,
         allocationValue: rules.allocationValue,
         reinvestmentPct: rules.reinvestmentPct,
+        compounding: {
+          enabled: rules.compoundingEnabled,
+          mode: rules.compoundingMode,
+          pct: rules.compoundingPct,
+          baseQuote: rules.compoundingBaseQuote
+        },
         minQuoteSpend: rules.minQuoteSpend,
         maxQuoteSpend: rules.maxQuoteSpend,
         minQuoteSpendScope: 'buy_only',
@@ -1268,6 +1329,10 @@ export default function TradeBotsModule() {
           : null,
         preview: rulesPreview
           ? {
+              quoteSpendBeforeCompounding: rulesPreview.quoteSpendBeforeCompounding,
+              compoundingFactor: rulesPreview.compoundingFactor,
+              compoundingProfitQuote: rulesPreview.compoundingProfitQuote,
+              compoundingBaseQuoteUsed: rulesPreview.compoundingBaseQuoteUsed,
               quoteSpend: rulesPreview.quoteSpend,
               qtyFinal: rulesPreview.qtyFinal,
               refPrice: rulesPreview.refPrice,
@@ -1765,7 +1830,7 @@ export default function TradeBotsModule() {
       await loadTradingDetails(selectedBotLink.integrationId);
     }
     setModalError('');
-    setModalMessage('Sizing, risk, SL/TP, and function rules saved for this bot.');
+    setModalMessage('Sizing, compounding, risk, SL/TP, and execution rules saved for this bot.');
   };
 
   const handleRulesReset = () => {
@@ -2840,6 +2905,79 @@ export default function TradeBotsModule() {
                     />
                   </label>
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Enable Compounding
+                    <div className="mt-1 flex h-8 items-center rounded-lg border border-white/15 bg-black/35 px-2">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeRules.compoundingEnabled)}
+                        onChange={(event) => {
+                          const enabled = event.target.checked;
+                          const currentBase = Number(activeRules.compoundingBaseQuote || 0);
+                          const inferredBase = Number(quoteAssetBalance?.free || 0);
+                          updateBotRulesDraft({
+                            compoundingEnabled: enabled,
+                            compoundingBaseQuote:
+                              enabled && currentBase <= 0 && inferredBase > 0
+                                ? inferredBase
+                                : activeRules.compoundingBaseQuote
+                          });
+                        }}
+                        className="h-4 w-4 rounded border-white/40 bg-black/40 text-sky-400 focus:ring-0"
+                      />
+                      <span className="ml-2 text-[11px] normal-case text-gray-300">
+                        Scale size with account growth
+                      </span>
+                    </div>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Compounding Mode
+                    <select
+                      value={activeRules.compoundingMode}
+                      disabled={!activeRules.compoundingEnabled}
+                      onChange={(event) => updateBotRulesDraft({ compoundingMode: event.target.value as CompoundingMode })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    >
+                      <option value="full_balance">Full balance</option>
+                      <option value="profit_only">Profit only</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Compounding Strength %
+                    <input
+                      type="number"
+                      min={0}
+                      max={300}
+                      step="0.0001"
+                      disabled={!activeRules.compoundingEnabled}
+                      value={activeRules.compoundingPct}
+                      onChange={(event) => updateBotRulesDraft({ compoundingPct: Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    Compounding Base Quote
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      disabled={!activeRules.compoundingEnabled}
+                      value={activeRules.compoundingBaseQuote ?? ''}
+                      placeholder={quoteAssetBalance?.free ? String(Number(quoteAssetBalance.free)) : 'optional'}
+                      onChange={(event) =>
+                        updateBotRulesDraft({
+                          compoundingBaseQuote: event.target.value ? Number(event.target.value) : null
+                        })}
+                      className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none disabled:opacity-40"
+                    />
+                  </label>
+                  {activeRules.compoundingEnabled &&
+                    activeRules.compoundingMode === 'full_balance' &&
+                    !activeRules.compoundingBaseQuote && (
+                      <div className="md:col-span-2 xl:col-span-2 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                        Full-balance compounding needs a base quote value. If empty, live size may stay near baseline.
+                      </div>
+                    )}
+                  <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Min Quote Spend
                     <input
                       type="number"
@@ -3067,6 +3205,12 @@ export default function TradeBotsModule() {
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
                       <InfoTile label="Preview Side" value={String(rulesPreview.previewSide || '').toUpperCase()} />
                       <InfoTile label="Ref Price Source" value={String(rulesPreview.referencePriceSource || '').toUpperCase()} />
+                      <InfoTile label="Compounding" value={rulesPreview.compoundingEnabled ? 'ON' : 'OFF'} />
+                      <InfoTile label="Compounding Mode" value={String(rulesPreview.compoundingMode || '').toUpperCase()} />
+                      <InfoTile label="Compounding Base" value={formatDecimal(rulesPreview.compoundingBaseQuoteUsed)} />
+                      <InfoTile label="Compounding Factor" value={formatDecimal(rulesPreview.compoundingFactor, 6)} />
+                      <InfoTile label="Compounding Profit" value={formatDecimal(rulesPreview.compoundingProfitQuote)} />
+                      <InfoTile label="Spend Before Compound" value={formatDecimal(rulesPreview.quoteSpendBeforeCompounding)} />
                       <InfoTile label="Quote Spend" value={formatDecimal(rulesPreview.quoteSpend)} />
                       <InfoTile label="Min Quote Floor (applied)" value={formatDecimal(rulesPreview.minQuoteSpendFloor)} />
                       <InfoTile label="Qty Raw" value={formatDecimal(rulesPreview.qtyRaw, 10)} />
