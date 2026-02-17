@@ -59,17 +59,30 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
   const filters = Array.isArray(symbolInfo?.filters) ? symbolInfo.filters : [];
   const lotSize = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
   const minNotionalFilter = filters.find((f) => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL') || {};
+  // Some MEXC symbols omit MIN_NOTIONAL/NOTIONAL but still enforce a quote-side minimum
+  // (e.g. "The minimum transaction volume cannot be less than：1USDC").
+  // In those cases, quoteAmountPrecisionMarket behaves as the effective min quote notional.
+  const marketQuoteFloor =
+    asNumber(symbolInfo?.quoteAmountPrecisionMarket) ||
+    asNumber(symbolInfo?.quoteAmountPrecision) ||
+    asNumber(symbolInfo?.minQuoteAmount) ||
+    0;
   const basePrecision = asNumber(symbolInfo?.baseSizePrecision);
   const stepSize = basePrecision && basePrecision > 0
     ? basePrecision
     : asNumber(lotSize.stepSize) || 0;
+  const minNotional =
+    asNumber(minNotionalFilter.minNotional) ||
+    asNumber(minNotionalFilter.notional) ||
+    marketQuoteFloor ||
+    0;
   return {
     symbol: symbolInfo?.symbol || String(symbol || '').toUpperCase(),
     baseAsset: symbolInfo?.baseAsset || null,
     quoteAsset: symbolInfo?.quoteAsset || null,
     stepSize,
     minQty: asNumber(lotSize.minQty) || 0,
-    minNotional: asNumber(minNotionalFilter.minNotional) || 0
+    minNotional
   };
 }
 
