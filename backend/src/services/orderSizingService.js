@@ -67,6 +67,18 @@ function toFiniteOrZero(value) {
   return n && n > 0 ? n : 0;
 }
 
+export function resolveEffectiveMinNotional({
+  normalizedSide = null,
+  exchangeMinNotional = 0,
+  minQuoteSpend = 0
+}) {
+  const side = String(normalizedSide || '').trim().toUpperCase();
+  const exchangeFloor = toFiniteOrZero(exchangeMinNotional);
+  // Internal minQuoteSpend floor is a BUY-side sizing control, not a SELL exchange rule.
+  const buySideFloor = side === 'BUY' ? toFiniteOrZero(minQuoteSpend) : 0;
+  return Math.max(exchangeFloor, buySideFloor);
+}
+
 function throwSizingError(message, sizingDebug, rejectedReason) {
   const error = new SizingConfigError(message);
   error.sizingDebug = {
@@ -795,7 +807,8 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
   sizingDebug.compoundingProfitQuote = asNullableNumber(compounded.compoundingProfitQuote);
   sizingDebug.compoundingBaseQuote = asNullableNumber(compounded.compoundingBaseQuote);
 
-  const quoteSpendComputed = clamp(quoteSpendRaw, sizing.minQuoteSpend, sizing.maxQuoteSpend);
+  const minQuoteSpendFloor = normalizedSide === 'BUY' ? sizing.minQuoteSpend : 0;
+  const quoteSpendComputed = clamp(quoteSpendRaw, minQuoteSpendFloor, sizing.maxQuoteSpend);
   if (!quoteSpendComputed || quoteSpendComputed <= 0) {
     throwSizingError('Trade Bot quote spend resolves to zero.', sizingDebug, 'invalid_quote_spend');
   }
@@ -811,7 +824,11 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
   const qtyRaw = quoteSpendComputed / computedPrice;
   let qtyRounded = roundDownToStep(qtyRaw, stepSizeNum);
   let notional = qtyRounded * computedPrice;
-  const effectiveMinNotional = Math.max(minNotionalNum, sizing.minQuoteSpend || 0);
+  const effectiveMinNotional = resolveEffectiveMinNotional({
+    normalizedSide,
+    exchangeMinNotional: minNotionalNum,
+    minQuoteSpend: sizing.minQuoteSpend
+  });
 
   sizingDebug.qtyRaw = asNumber(qtyRaw);
   sizingDebug.effectiveMinNotional = effectiveMinNotional;

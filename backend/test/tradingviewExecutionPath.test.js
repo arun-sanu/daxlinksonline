@@ -10,6 +10,7 @@ import {
   SizingConfigError,
   computeBaseQuantityFromInputs,
   normalizeBaseSizingConfig,
+  resolveEffectiveMinNotional,
   roundDownToStep,
   roundUpToStep
 } from '../src/services/orderSizingService.js';
@@ -184,4 +185,20 @@ test('classifyMinNotionalShortfall keeps below_min_notional when balances can sa
   });
   assert.equal(out.reason, 'below_min_notional');
   assert.equal(out.minQtyExecutable, 0.000288);
+});
+
+test('resolveEffectiveMinNotional applies minQuoteSpend floor only to BUY', () => {
+  const buyFloor = resolveEffectiveMinNotional({
+    normalizedSide: 'BUY',
+    exchangeMinNotional: 0,
+    minQuoteSpend: 1.2
+  });
+  const sellFloor = resolveEffectiveMinNotional({
+    normalizedSide: 'SELL',
+    exchangeMinNotional: 0,
+    minQuoteSpend: 1.2
+  });
+
+  assert.equal(buyFloor, 1.2);
+  assert.equal(sellFloor, 0);
 });

@@ -525,6 +525,25 @@ function roundDownToStep(value: number, stepSize: number) {
   return Math.floor(value / stepSize) * stepSize;
 }
 
+function resolvePreviewMinQuoteSpendFloor(previewSide: PreviewSide, minQuoteSpend: number) {
+  const floor = Math.max(0, Number(minQuoteSpend || 0));
+  return previewSide === 'buy' ? floor : 0;
+}
+
+function resolvePreviewEffectiveMinNotional({
+  previewSide,
+  exchangeMinNotional,
+  minQuoteSpend
+}: {
+  previewSide: PreviewSide;
+  exchangeMinNotional: number;
+  minQuoteSpend: number;
+}) {
+  const exchangeFloor = Math.max(0, Number(exchangeMinNotional || 0));
+  const quoteSpendFloor = resolvePreviewMinQuoteSpendFloor(previewSide, minQuoteSpend);
+  return Math.max(exchangeFloor, quoteSpendFloor);
+}
+
 function hashSignalKey(seed: string) {
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i += 1) {
@@ -912,6 +931,23 @@ export default function TradeBotsModule() {
     if (activeRules.sizingMode === 'risk_per_trade_pct') return 'Risk / Trade %';
     return 'Allocation %';
   }, [activeRules]);
+  const sideAwareMinNotional = useMemo(() => {
+    const minQuoteSpend = Math.max(0, Number(activeRules?.minQuoteSpend || 0));
+    const exchangeMinNotional = Math.max(0, Number(marketFilters?.minNotional || 0));
+    return {
+      exchangeMinNotional,
+      buyFloor: resolvePreviewEffectiveMinNotional({
+        previewSide: 'buy',
+        exchangeMinNotional,
+        minQuoteSpend
+      }),
+      sellFloor: resolvePreviewEffectiveMinNotional({
+        previewSide: 'sell',
+        exchangeMinNotional,
+        minQuoteSpend
+      })
+    };
+  }, [activeRules?.minQuoteSpend, marketFilters?.minNotional]);
   const rulesPreview = useMemo(() => {
     const rules = activeRules;
     if (!rules) return null;
@@ -928,6 +964,7 @@ export default function TradeBotsModule() {
     const exchangeMinNotional = Number(marketFilters?.minNotional || 0);
     const minQuoteSpend = Math.max(0, Number(rules.minQuoteSpend || 0));
     const maxQuoteSpend = Math.max(minQuoteSpend, Number(rules.maxQuoteSpend || 0));
+    const minQuoteSpendFloor = resolvePreviewMinQuoteSpendFloor(rules.previewSide, minQuoteSpend);
     const allocationValue = Math.max(0, Number(rules.allocationValue || 0));
     const reinvestmentFactor = Math.max(0, Math.min(1, Number(rules.reinvestmentPct || 0) / 100));
     const atrValue = Number(marketAtr?.value || 0);
@@ -944,11 +981,21 @@ export default function TradeBotsModule() {
     }
 
     const quoteSpendRaw = rules.sizingMode === 'fixed_quote' ? quoteSpendRawBase : quoteSpendRawBase * reinvestmentFactor;
-    const quoteSpend = Math.max(minQuoteSpend, Math.min(maxQuoteSpend, quoteSpendRaw));
+    const quoteSpend = Math.max(minQuoteSpendFloor, Math.min(maxQuoteSpend, quoteSpendRaw));
     const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
     const qtyFinal = roundDownToStep(qtyRaw, stepSize);
     const notionalAfterRounding = qtyFinal * (refPrice || 0);
-    const effectiveMinNotional = Math.max(exchangeMinNotional, minQuoteSpend);
+    const effectiveMinNotionalBuy = resolvePreviewEffectiveMinNotional({
+      previewSide: 'buy',
+      exchangeMinNotional,
+      minQuoteSpend
+    });
+    const effectiveMinNotionalSell = resolvePreviewEffectiveMinNotional({
+      previewSide: 'sell',
+      exchangeMinNotional,
+      minQuoteSpend
+    });
+    const effectiveMinNotional = rules.previewSide === 'sell' ? effectiveMinNotionalSell : effectiveMinNotionalBuy;
 
     let status: 'ready' | 'warning' | 'rejected' = 'ready';
     let reason = '';
@@ -961,9 +1008,9 @@ export default function TradeBotsModule() {
     } else if (notionalAfterRounding < effectiveMinNotional) {
       status = 'rejected';
       reason = 'Notional after rounding is below min notional';
-    } else if (rules.sizingMode === 'fixed_quote' && quoteSpend > freeQuote) {
+    } else if (rules.previewSide !== 'sell' && quoteSpend > freeQuote) {
       status = 'warning';
-      reason = 'Fixed quote spend is above free quote balance';
+      reason = 'Configured quote spend is above free quote balance';
     } else if (rules.previewSide === 'sell' && qtyFinal > freeBase) {
       status = 'warning';
       reason = 'Sell quantity is above free base balance';
@@ -1003,11 +1050,15 @@ export default function TradeBotsModule() {
     return {
       status,
       reason,
+      previewSide: rules.previewSide,
       freeQuote,
       freeBase,
       refPrice,
       stepSize,
       exchangeMinNotional,
+      minQuoteSpendFloor,
+      effectiveMinNotionalBuy,
+      effectiveMinNotionalSell,
       effectiveMinNotional,
       quoteSpendRaw,
       quoteSpend,
@@ -1061,11 +1112,22 @@ export default function TradeBotsModule() {
         reinvestmentPct: rules.reinvestmentPct,
         minQuoteSpend: rules.minQuoteSpend,
         maxQuoteSpend: rules.maxQuoteSpend,
+        minQuoteSpendScope: 'buy_only',
+        effectiveMinNotional: rulesPreview
+          ? {
+              previewSide: rulesPreview.previewSide,
+              applied: rulesPreview.effectiveMinNotional,
+              buy: rulesPreview.effectiveMinNotionalBuy,
+              sell: rulesPreview.effectiveMinNotionalSell,
+              exchange: rulesPreview.exchangeMinNotional
+            }
+          : null,
         preview: rulesPreview
           ? {
               quoteSpend: rulesPreview.quoteSpend,
               qtyFinal: rulesPreview.qtyFinal,
-              refPrice: rulesPreview.refPrice
+              refPrice: rulesPreview.refPrice,
+              minQuoteSpendFloor: rulesPreview.minQuoteSpendFloor
             }
           : null
       },
@@ -2503,6 +2565,21 @@ export default function TradeBotsModule() {
                       className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                     />
                   </label>
+                  <div className="md:col-span-2 xl:col-span-2 rounded-lg border border-sky-300/25 bg-sky-500/8 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-sky-100">Min Notional Scope</p>
+                    <p className="mt-1 text-[11px] text-sky-50">BUY uses floor: max(exchange minNotional, minQuoteSpend)</p>
+                    <p className="text-[11px] text-sky-50">SELL uses floor: exchange minNotional only</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-md border border-sky-300/25 bg-black/25 px-2 py-1">
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-sky-100">BUY Effective Floor</p>
+                        <p className="mt-1 text-xs font-semibold text-white">{formatDecimal(sideAwareMinNotional.buyFloor)}</p>
+                      </div>
+                      <div className="rounded-md border border-sky-300/25 bg-black/25 px-2 py-1">
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-sky-100">SELL Effective Floor</p>
+                        <p className="mt-1 text-xs font-semibold text-white">{formatDecimal(sideAwareMinNotional.sellFloor)}</p>
+                      </div>
+                    </div>
+                  </div>
 
                   <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                     Stop Loss Type
@@ -2694,11 +2771,16 @@ export default function TradeBotsModule() {
                       {rulesPreview.reason ? ` · ${rulesPreview.reason}` : ''}
                     </div>
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+                      <InfoTile label="Preview Side" value={String(rulesPreview.previewSide || '').toUpperCase()} />
                       <InfoTile label="Ref Price Source" value={String(rulesPreview.referencePriceSource || '').toUpperCase()} />
                       <InfoTile label="Quote Spend" value={formatDecimal(rulesPreview.quoteSpend)} />
+                      <InfoTile label="Min Quote Floor (applied)" value={formatDecimal(rulesPreview.minQuoteSpendFloor)} />
                       <InfoTile label="Qty Raw" value={formatDecimal(rulesPreview.qtyRaw, 10)} />
                       <InfoTile label="Qty Final" value={formatDecimal(rulesPreview.qtyFinal, 10)} />
                       <InfoTile label="Notional" value={formatDecimal(rulesPreview.notionalAfterRounding)} />
+                      <InfoTile label="Min Notional (applied)" value={formatDecimal(rulesPreview.effectiveMinNotional)} />
+                      <InfoTile label="Min Notional BUY" value={formatDecimal(rulesPreview.effectiveMinNotionalBuy)} />
+                      <InfoTile label="Min Notional SELL" value={formatDecimal(rulesPreview.effectiveMinNotionalSell)} />
                       <InfoTile label="ATR" value={formatDecimal(rulesPreview.atrValue)} />
                       <InfoTile label="SL Price" value={formatDecimal(rulesPreview.slPrice)} />
                       <InfoTile label="TP Price" value={formatDecimal(rulesPreview.tpPrice)} />
