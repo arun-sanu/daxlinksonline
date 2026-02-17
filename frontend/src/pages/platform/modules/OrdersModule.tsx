@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
+import {
+  listDatabases,
+  listTradeTransactionsForDatabase,
+  type DatabaseInstance,
+  type TradeTransactionLedgerResponse
+} from '../../../api/databases';
 
 type Integration = Awaited<ReturnType<typeof listIntegrations>>[number];
 
@@ -18,6 +24,13 @@ function statusPill(answer: boolean | null | undefined) {
 function formatDecimal(value: unknown, digits = 8) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '0';
+  if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function formatMaybeDecimal(value: unknown, digits = 8) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
@@ -76,6 +89,15 @@ export default function OrdersModule() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snapshot, setSnapshot] = useState<OrderCheckSnapshot | null>(null);
+  const [ledgerDatabases, setLedgerDatabases] = useState<DatabaseInstance[]>([]);
+  const [ledgerDbId, setLedgerDbId] = useState('');
+  const [ledgerDbLoading, setLedgerDbLoading] = useState(true);
+  const [ledgerDbError, setLedgerDbError] = useState('');
+  const [ledgerSymbol, setLedgerSymbol] = useState('');
+  const [ledgerLimit, setLedgerLimit] = useState(25);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState('');
+  const [ledger, setLedger] = useState<TradeTransactionLedgerResponse | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
     if (!symbol.trim()) {
@@ -132,6 +154,79 @@ export default function OrdersModule() {
     }
   }, [integrationId, integrations]);
 
+  const loadLedger = useCallback(
+    async ({
+      dbId,
+      symbolFilter,
+      limit
+    }: {
+      dbId: string;
+      symbolFilter: string;
+      limit: number;
+    }) => {
+      if (!dbId) {
+        setLedger(null);
+        return;
+      }
+      setLedgerLoading(true);
+      setLedgerError('');
+      try {
+        const payload = await listTradeTransactionsForDatabase(dbId, {
+          symbol: symbolFilter || undefined,
+          limit: Number.isFinite(limit) ? limit : 25
+        });
+        setLedger(payload);
+      } catch (err: any) {
+        setLedgerError(err?.message || 'Failed to load trade transaction table.');
+      } finally {
+        setLedgerLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLedgerDbLoading(true);
+      setLedgerDbError('');
+      try {
+        const rows = await listDatabases();
+        if (!mounted) return;
+        setLedgerDatabases(rows || []);
+        setLedgerDbId((current) => {
+          if (current && rows.some((db) => db.id === current)) return current;
+          return rows[0]?.id || '';
+        });
+      } catch (err: any) {
+        if (!mounted) return;
+        setLedgerDbError(err?.message || 'Failed to load workspace databases.');
+        setLedgerDatabases([]);
+        setLedgerDbId('');
+      } finally {
+        if (mounted) setLedgerDbLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ledgerDbId) {
+      setLedger(null);
+      return;
+    }
+    loadLedger({
+      dbId: ledgerDbId,
+      symbolFilter: ledgerSymbol,
+      limit: ledgerLimit
+    });
+    // Initial ledger load when database changes; symbol/limit refresh is user-triggered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledgerDbId, loadLedger]);
+
   useEffect(() => {
     refreshSnapshot();
     // Load once with default symbol; subsequent checks are user-triggered.
@@ -140,6 +235,15 @@ export default function OrdersModule() {
   const handleRefreshSnapshot = useCallback(() => {
     refreshSnapshot();
   }, [refreshSnapshot]);
+
+  const handleRefreshLedger = useCallback(() => {
+    if (!ledgerDbId) return;
+    loadLedger({
+      dbId: ledgerDbId,
+      symbolFilter: ledgerSymbol,
+      limit: ledgerLimit
+    });
+  }, [ledgerDbId, ledgerSymbol, ledgerLimit, loadLedger]);
 
   const orderData = snapshot?.didTradeHappen?.source?.order?.data || {};
   const tradesData = snapshot?.didTradeHappen?.source?.myTrades?.data || {};
@@ -158,6 +262,10 @@ export default function OrdersModule() {
   const selectedIntegration = useMemo(
     () => integrations.find((integration) => integration.id === integrationId) || null,
     [integrationId, integrations]
+  );
+  const selectedLedgerDatabase = useMemo(
+    () => ledgerDatabases.find((database) => database.id === ledgerDbId) || null,
+    [ledgerDatabases, ledgerDbId]
   );
 
   return (
@@ -438,6 +546,153 @@ export default function OrdersModule() {
           </div>
         </article>
       </section>
+
+      <article className="card-shell space-y-4">
+        <div className="space-y-1">
+          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Trade transaction table</p>
+          <p className="text-sm text-gray-300">
+            Ledger rows used by bots for amount, quantity, buy/sell pricing, market pricing, PnL, and account balance math.
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-xs uppercase tracking-[0.14em] text-gray-400">
+            Database
+            <select
+              value={ledgerDbId}
+              onChange={(event) => setLedgerDbId(event.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100 outline-none transition focus:border-primary-300/60"
+              disabled={ledgerDbLoading}
+            >
+              <option value="">Select database</option>
+              {ledgerDatabases.map((db) => (
+                <option key={db.id} value={db.id}>
+                  {db.name} · {db.region || 'n/a'}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-1 text-xs uppercase tracking-[0.14em] text-gray-400">
+            Symbol filter
+            <input
+              value={ledgerSymbol}
+              onChange={(event) => setLedgerSymbol(event.target.value.toUpperCase())}
+              placeholder="All symbols"
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100 outline-none transition focus:border-primary-300/60"
+            />
+          </label>
+
+          <label className="space-y-1 text-xs uppercase tracking-[0.14em] text-gray-400">
+            Rows
+            <select
+              value={ledgerLimit}
+              onChange={(event) => setLedgerLimit(Math.max(1, Number(event.target.value) || 25))}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100 outline-none transition focus:border-primary-300/60"
+            >
+              {[25, 50, 100, 200, 500].map((count) => (
+                <option key={count} value={count}>
+                  {count}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={handleRefreshLedger}
+              disabled={ledgerLoading || !ledgerDbId}
+              className="btn btn-secondary btn-small btn-rect w-full disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {ledgerLoading ? 'Refreshing...' : 'Refresh ledger'}
+            </button>
+          </div>
+        </div>
+
+        {ledgerDbError && <p className="text-sm text-amber-300">{ledgerDbError}</p>}
+        {ledgerError && <p className="text-sm text-rose-300">{ledgerError}</p>}
+
+        {selectedLedgerDatabase && (
+          <div className="grid gap-3 rounded-2xl border border-white/8 bg-white/5 p-4 text-xs text-gray-300 md:grid-cols-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Database</p>
+              <p className="mt-1 font-semibold text-white">{selectedLedgerDatabase.name}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Records</p>
+              <p className="mt-1 font-semibold text-white">{(ledger?.total || 0).toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Realized PnL</p>
+              <p className="mt-1 font-semibold text-white">{formatMaybeDecimal(ledger?.summary?.realizedPnl, 4)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Total Value</p>
+              <p className="mt-1 font-semibold text-white">{formatMaybeDecimal(ledger?.summary?.totalValue, 4)}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+          <table className="min-w-[1200px] w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                <th className="px-3 py-2">Executed</th>
+                <th className="px-3 py-2">Symbol</th>
+                <th className="px-3 py-2">Side</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Amount</th>
+                <th className="px-3 py-2">Qty</th>
+                <th className="px-3 py-2">Value</th>
+                <th className="px-3 py-2">Mkt Price</th>
+                <th className="px-3 py-2">Exec Price</th>
+                <th className="px-3 py-2">Buy Value</th>
+                <th className="px-3 py-2">Sell Value</th>
+                <th className="px-3 py-2">Realized PnL</th>
+                <th className="px-3 py-2">Bal Before</th>
+                <th className="px-3 py-2">Bal After</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-200">
+              {!ledgerLoading && (!ledger?.items || ledger.items.length === 0) && (
+                <tr>
+                  <td className="px-3 py-4 text-gray-500" colSpan={14}>
+                    No trade transactions found for this filter.
+                  </td>
+                </tr>
+              )}
+              {ledgerLoading && (
+                <tr>
+                  <td className="px-3 py-4 text-gray-500" colSpan={14}>
+                    Loading trade transactions...
+                  </td>
+                </tr>
+              )}
+              {(ledger?.items || []).map((row) => (
+                <tr key={row.id} className="border-t border-white/5">
+                  <td className="px-3 py-2 text-xs text-gray-400">
+                    {row.executedAt ? new Date(row.executedAt).toLocaleString() : '—'}
+                  </td>
+                  <td className="px-3 py-2 font-semibold text-white">{row.symbol || '—'}</td>
+                  <td className="px-3 py-2">{row.side || '—'}</td>
+                  <td className="px-3 py-2">{row.status || '—'}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.amount, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.quantity, 8)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.value, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.marketPrice, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.executionPrice, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.buyValue, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.sellValue, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.realizedPnl, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceBefore, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceAfter, 6)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
 
     </div>
   );

@@ -1,3 +1,5 @@
+import { withApiBase } from './client';
+
 export type DatabaseTableMeta = {
   key: string;
   name: string;
@@ -32,9 +34,87 @@ export type DatabaseInstance = {
   tables?: DatabaseTableMeta[] | null;
 };
 
+export type TradeTransactionLedgerQuery = {
+  workspaceId?: string;
+  symbol?: string;
+  botId?: string;
+  botInstanceId?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
+export type TradeTransactionLedgerSummary = {
+  trades: number;
+  buyTrades: number;
+  sellTrades: number;
+  totalValue: number;
+  buyValue: number;
+  sellValue: number;
+  totalQuantity: number;
+  totalFees: number;
+  realizedPnl: number;
+};
+
+export type TradeTransactionLedgerItem = {
+  id: string;
+  workspaceId: string;
+  symbol: string | null;
+  side: string | null;
+  status: string | null;
+  orderType: string | null;
+  amount: number | null;
+  quantity: number | null;
+  value: number | null;
+  marketPrice: number | null;
+  executionPrice: number | null;
+  buyPrice: number | null;
+  sellPrice: number | null;
+  buyValue: number | null;
+  sellValue: number | null;
+  realizedPnl: number | null;
+  accountBalanceBefore: number | null;
+  accountBalanceAfter: number | null;
+  executedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  decisionContext?: unknown;
+  sizingContext?: unknown;
+  metadata?: unknown;
+};
+
+export type TradeTransactionLedgerResponse = {
+  database: {
+    id: string;
+    name: string;
+  };
+  table: {
+    key: string;
+    name: string;
+  };
+  filters: {
+    workspaceScope: string | string[] | null;
+    symbol: string | null;
+    botId: string | null;
+    botInstanceId: string | null;
+    status: string | null;
+    from: string | null;
+    to: string | null;
+    limit: number;
+  };
+  total: number;
+  returned: number;
+  summary: TradeTransactionLedgerSummary;
+  items: TradeTransactionLedgerItem[];
+};
+
 function authHeaders() {
   try {
-    const token = localStorage.getItem('authToken');
+    const token =
+      localStorage.getItem('authToken') ||
+      localStorage.getItem('daxlinksToken') ||
+      localStorage.getItem('dax_portal_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch {
     return {};
@@ -73,4 +153,23 @@ export async function rotateDatabase(dbId: string) {
 export async function deleteDatabase(dbId: string) {
   return request<{ success: boolean }>(`/api/v1/admin/databases/${encodeURIComponent(dbId)}`, { method: 'DELETE' });
 }
-import { withApiBase } from './client';
+
+export async function listTradeTransactionsForDatabase(
+  dbId: string,
+  query: TradeTransactionLedgerQuery = {}
+): Promise<TradeTransactionLedgerResponse> {
+  const params = new URLSearchParams();
+  if (query.workspaceId) params.set('workspaceId', query.workspaceId.trim());
+  if (query.symbol) params.set('symbol', query.symbol.trim().toUpperCase());
+  if (query.botId) params.set('botId', query.botId.trim());
+  if (query.botInstanceId) params.set('botInstanceId', query.botInstanceId.trim());
+  if (query.status) params.set('status', query.status.trim().toLowerCase());
+  if (query.from) params.set('from', query.from.trim());
+  if (query.to) params.set('to', query.to.trim());
+  if (query.limit && Number.isFinite(Number(query.limit))) {
+    params.set('limit', String(Math.max(1, Math.floor(Number(query.limit)))));
+  }
+  const suffix = params.toString();
+  const path = `/api/v1/admin/databases/${encodeURIComponent(dbId)}/tables/trade-transactions${suffix ? `?${suffix}` : ''}`;
+  return request<TradeTransactionLedgerResponse>(path);
+}
