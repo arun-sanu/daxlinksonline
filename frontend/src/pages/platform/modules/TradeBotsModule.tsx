@@ -2903,89 +2903,43 @@ function botConnectivityStatus(bot: TradeBotRow, link?: BotConnectivityLink): Bo
   return 'idle';
 }
 
-function statusPill(status: BotConnectivityStatus) {
-  if (status === 'online') return 'bg-emerald-300 shadow-[0_0_14px_rgba(16,185,129,0.85)]';
-  if (status === 'issue') return 'bg-rose-300 shadow-[0_0_14px_rgba(251,113,133,0.85)]';
-  return 'bg-amber-300 shadow-[0_0_14px_rgba(252,211,77,0.85)]';
-}
+type TradeBotConnectivityNode = {
+  id: string;
+  label: string;
+  type: 'source' | 'bot' | 'integration';
+  status: 'ok' | 'degraded' | 'down' | 'idle' | 'unknown';
+};
 
-function statusLabel(status: BotConnectivityStatus) {
-  if (status === 'online') return 'connected';
-  if (status === 'issue') return 'issue';
+type TradeBotConnectivityLink = {
+  id: string;
+  from: string;
+  to: string;
+  status: 'ok' | 'degraded' | 'down' | 'idle' | 'unknown';
+  alertsLastWindow?: number;
+};
+
+function toConnectivityState(value: BotConnectivityStatus): TradeBotConnectivityNode['status'] {
+  if (value === 'online') return 'ok';
+  if (value === 'issue') return 'down';
   return 'idle';
 }
 
-function connectivityNodePositions(count: number, compact = false) {
-  const desktopPresets: Record<number, Array<{ x: number; y: number }>> = {
-    1: [{ x: 50, y: 80 }],
-    2: [
-      { x: 32, y: 80 },
-      { x: 68, y: 80 }
-    ],
-    3: [
-      { x: 20, y: 74 },
-      { x: 50, y: 84 },
-      { x: 80, y: 74 }
-    ],
-    4: [
-      { x: 18, y: 70 },
-      { x: 40, y: 86 },
-      { x: 60, y: 86 },
-      { x: 82, y: 70 }
-    ],
-    5: [
-      { x: 14, y: 68 },
-      { x: 32, y: 82 },
-      { x: 50, y: 90 },
-      { x: 68, y: 82 },
-      { x: 86, y: 68 }
-    ],
-    6: [
-      { x: 12, y: 66 },
-      { x: 28, y: 82 },
-      { x: 44, y: 90 },
-      { x: 56, y: 90 },
-      { x: 72, y: 82 },
-      { x: 88, y: 66 }
-    ]
-  };
+function connectivityTone(status?: string | null) {
+  const key = String(status || 'unknown').toLowerCase();
+  if (key === 'ok') return '#34d399';
+  if (key === 'degraded') return '#fbbf24';
+  if (key === 'down') return '#f87171';
+  if (key === 'idle') return 'rgba(52, 211, 153, 0.45)';
+  return '#9ca3af';
+}
 
-  const compactPresets: Record<number, Array<{ x: number; y: number }>> = {
-    1: [{ x: 50, y: 82 }],
-    2: [
-      { x: 28, y: 82 },
-      { x: 72, y: 82 }
-    ],
-    3: [
-      { x: 18, y: 76 },
-      { x: 50, y: 89 },
-      { x: 82, y: 76 }
-    ],
-    4: [
-      { x: 22, y: 72 },
-      { x: 78, y: 72 },
-      { x: 34, y: 89 },
-      { x: 66, y: 89 }
-    ],
-    5: [
-      { x: 20, y: 70 },
-      { x: 50, y: 66 },
-      { x: 80, y: 70 },
-      { x: 32, y: 89 },
-      { x: 68, y: 89 }
-    ],
-    6: [
-      { x: 20, y: 68 },
-      { x: 50, y: 66 },
-      { x: 80, y: 68 },
-      { x: 20, y: 89 },
-      { x: 50, y: 91 },
-      { x: 80, y: 89 }
-    ]
-  };
-
-  const presets = compact ? compactPresets : desktopPresets;
-  return presets[Math.min(Math.max(count, 1), 6)] || presets[6];
+function aggregateConnectivityStatus(nodes: Array<{ status?: string | null }> = []) {
+  const states = nodes.map((node) => String(node.status || 'unknown').toLowerCase());
+  if (states.includes('down')) return 'down';
+  if (states.includes('degraded')) return 'degraded';
+  if (states.includes('ok')) return 'ok';
+  if (states.includes('idle')) return 'idle';
+  return 'unknown';
 }
 
 function ConnectivityMindmap({
@@ -2995,181 +2949,373 @@ function ConnectivityMindmap({
   bots: TradeBotRow[];
   botLinks: Record<string, BotConnectivityLink>;
 }) {
-  const [compactLayout, setCompactLayout] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.matchMedia('(max-width: 640px)').matches;
-  });
+  const scopedBots = useMemo(() => bots.slice(0, 12), [bots]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const media = window.matchMedia('(max-width: 640px)');
-    const onChange = () => setCompactLayout(media.matches);
-    onChange();
-    if (typeof media.addEventListener === 'function') {
-      media.addEventListener('change', onChange);
-      return () => media.removeEventListener('change', onChange);
-    }
-    media.addListener(onChange);
-    return () => media.removeListener(onChange);
-  }, []);
-
-  const nodes = bots
-    .map((bot) => {
-      const link = botLinks[bot.id];
-      const connected = Boolean(link?.webhookUrl && link?.integrationId);
+  const connectivityNodes = useMemo<TradeBotConnectivityNode[]>(() => {
+    const botNodes = scopedBots.map((bot) => {
+      const status = botConnectivityStatus(bot, botLinks[bot.id]);
       return {
-        id: bot.id,
-        name: bot.name,
-        connected,
-        status: botConnectivityStatus(bot, link)
+        id: `bot:${bot.id}`,
+        label: normalizeBotName(bot.name),
+        type: 'bot' as const,
+        status: toConnectivityState(status)
       };
-    })
-    .sort((a, b) => Number(b.connected) - Number(a.connected))
-    .slice(0, 6);
-  const connectedCount = nodes.filter((node) => node.connected).length;
-  const connectedNodes = nodes.filter((node) => node.connected);
-  const nodeCoords = connectivityNodePositions(nodes.length, compactLayout);
-  const plottedNodes = nodes.map((node, idx) => ({
-    ...node,
-    x: nodeCoords[idx]?.x ?? 50,
-    y: nodeCoords[idx]?.y ?? 84
-  }));
+    });
+
+    const integrationStatusMap = new Map<string, TradeBotConnectivityNode['status'][]>();
+    scopedBots.forEach((bot) => {
+      const link = botLinks[bot.id];
+      if (!link?.integrationId) return;
+      const state = toConnectivityState(botConnectivityStatus(bot, link));
+      const key = String(link.integrationId);
+      if (!integrationStatusMap.has(key)) integrationStatusMap.set(key, []);
+      integrationStatusMap.get(key)?.push(state);
+    });
+
+    const integrationNodes = Array.from(integrationStatusMap.entries()).map(([integrationId, states]) => {
+      let status: TradeBotConnectivityNode['status'] = 'unknown';
+      if (states.includes('down')) status = 'down';
+      else if (states.includes('degraded')) status = 'degraded';
+      else if (states.includes('ok')) status = 'ok';
+      else if (states.includes('idle')) status = 'idle';
+
+      return {
+        id: `integration:${integrationId}`,
+        label: `Integration ${integrationId.slice(0, 8)}`,
+        type: 'integration' as const,
+        status
+      };
+    });
+
+    const ingressStatus: TradeBotConnectivityNode['status'] =
+      scopedBots.some((bot) => Boolean(botLinks[bot.id]?.webhookUrl)) ? 'ok' : 'idle';
+
+    return [
+      {
+        id: 'ingress',
+        label: 'TradingView',
+        type: 'source',
+        status: ingressStatus
+      },
+      ...botNodes,
+      ...integrationNodes
+    ];
+  }, [botLinks, scopedBots]);
+
+  const connectivityLinks = useMemo<TradeBotConnectivityLink[]>(() => {
+    const links: TradeBotConnectivityLink[] = [];
+    scopedBots.forEach((bot) => {
+      const link = botLinks[bot.id];
+      if (!link) return;
+      const status = toConnectivityState(botConnectivityStatus(bot, link));
+      const botNodeId = `bot:${bot.id}`;
+
+      if (link.webhookUrl) {
+        links.push({
+          id: `ingress-${bot.id}`,
+          from: 'ingress',
+          to: botNodeId,
+          status
+        });
+      }
+
+      if (link.integrationId) {
+        links.push({
+          id: `${bot.id}-${link.integrationId}`,
+          from: botNodeId,
+          to: `integration:${link.integrationId}`,
+          status,
+          alertsLastWindow: Number(bot.counts?.orders || 0)
+        });
+      }
+    });
+    return links;
+  }, [botLinks, scopedBots]);
+
+  const connectedCount = connectivityNodes.filter((node) => node.type === 'bot' && node.status === 'ok').length;
+
+  const treeLayout = useMemo(() => {
+    const ingress = connectivityNodes.find((node) => node.type === 'source' || node.id === 'ingress');
+    const botGroup = connectivityNodes.filter((node) => node.type === 'bot');
+    const integrationsGroup = connectivityNodes.filter((node) => node.type === 'integration');
+
+    const rootLabel = 'DAX Links Server';
+    const rootLabelLines = ['DAX', 'Links', 'Server'];
+    const rootStatus = aggregateConnectivityStatus(connectivityNodes);
+    const rootWidth = 90;
+    const rootHeight = 90;
+    const root = {
+      id: 'root',
+      label: rootLabel,
+      labelLines: rootLabelLines,
+      status: rootStatus,
+      x: 60,
+      y: 260,
+      width: rootWidth,
+      height: rootHeight,
+      anchorX: 60 + rootWidth,
+      anchorY: 260
+    };
+
+    const groups = [
+      {
+        id: 'group:tradingview',
+        label: ingress?.label || 'TradingView',
+        status: ingress?.status || 'idle',
+        items: []
+      },
+      {
+        id: 'group:bots',
+        label: 'Trade Bots',
+        status: aggregateConnectivityStatus(botGroup),
+        items: botGroup
+      },
+      {
+        id: 'group:integrations',
+        label: 'Integrations',
+        status: aggregateConnectivityStatus(integrationsGroup),
+        items: integrationsGroup
+      }
+    ].filter((group) => group.items.length > 0 || group.id === 'group:tradingview');
+
+    const startY = 100;
+    const endY = 420;
+    const gapY = groups.length > 1 ? (endY - startY) / (groups.length - 1) : 0;
+    const groupX = 320;
+    const bracketX = 520;
+    const itemX = 545;
+    const itemGap = 26;
+
+    const branches: Array<any> = [];
+    const stems: Array<any> = [];
+    const brackets: Array<any> = [];
+    const items: Array<any> = [];
+    const groupLabels: Array<any> = [];
+
+    groups.forEach((group, idx) => {
+      const y = startY + idx * gapY;
+      const labelWidth = Math.max(80, group.label.length * 7);
+      const label = {
+        ...group,
+        x: groupX,
+        y,
+        width: labelWidth,
+        tone: connectivityTone(group.status)
+      };
+      groupLabels.push(label);
+
+      const branchStart = { x: root.anchorX, y: root.anchorY };
+      const branchEndX = groupX - 16;
+      const branchPath = `M ${root.anchorX} ${root.anchorY} L ${branchEndX} ${y}`;
+      branches.push({
+        id: `${root.id}-${group.id}`,
+        path: branchPath,
+        tone: label.tone,
+        start: branchStart,
+        end: { x: branchEndX, y }
+      });
+
+      if (group.items.length) {
+        const maxListHeight = 180;
+        const spacing = group.items.length > 1 ? Math.min(itemGap, maxListHeight / (group.items.length - 1)) : 0;
+        const listTop = y - ((group.items.length - 1) * spacing) / 2;
+        const listItems = group.items.map((item: any, itemIdx: number) => ({
+          id: item.id,
+          label: `[${item.label || item.id}]`,
+          x: itemX,
+          y: listTop + itemIdx * spacing,
+          tone: connectivityTone(item.status)
+        }));
+        items.push(...listItems);
+
+        const bracketTop = listItems[0].y - 10;
+        const bracketBottom = listItems[listItems.length - 1].y + 10;
+        const bracketPath = `M ${bracketX + 10} ${bracketTop} L ${bracketX} ${bracketTop} L ${bracketX} ${bracketBottom} L ${bracketX + 10} ${bracketBottom}`;
+        brackets.push({ id: `${group.id}-bracket`, path: bracketPath, tone: label.tone });
+
+        const stemStartX = groupX + labelWidth + 14;
+        const midY = (bracketTop + bracketBottom) / 2;
+        const stemPath = `M ${stemStartX} ${y} L ${bracketX} ${midY}`;
+        stems.push({
+          id: `${group.id}-stem`,
+          path: stemPath,
+          tone: label.tone,
+          start: { x: stemStartX, y },
+          end: { x: bracketX, y: midY }
+        });
+      }
+    });
+
+    return {
+      root,
+      groupLabels,
+      branches,
+      stems,
+      brackets,
+      items
+    };
+  }, [connectivityNodes]);
+
+  const linkLayout = useMemo(() => {
+    const map = new Map(connectivityNodes.map((node) => [node.id, node]));
+    return connectivityLinks
+      .map((link) => {
+        const from = map.get(link.from);
+        const to = map.get(link.to);
+        return {
+          ...link,
+          from,
+          to,
+          tone: connectivityTone(link.status)
+        };
+      })
+      .filter(Boolean) as Array<
+      TradeBotConnectivityLink & {
+        from: TradeBotConnectivityNode | undefined;
+        to: TradeBotConnectivityNode | undefined;
+        tone: string;
+      }
+    >;
+  }, [connectivityLinks, connectivityNodes]);
 
   return (
-    <div className="card-shell relative overflow-hidden space-y-3 border border-cyan-300/20 bg-slate-950/45 shadow-[0_0_0_1px_rgba(34,211,238,0.08),0_0_40px_rgba(34,211,238,0.12)]">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_14%,rgba(34,211,238,0.2),transparent_38%),radial-gradient(circle_at_82%_18%,rgba(232,121,249,0.16),transparent_40%),linear-gradient(180deg,rgba(6,8,20,0.76),rgba(2,6,23,0.92))]"></div>
-        <div className="absolute inset-0 opacity-30 bg-[linear-gradient(to_right,rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(34,211,238,0.1)_1px,transparent_1px)] bg-[size:28px_28px]"></div>
-        <div className="absolute left-0 right-0 top-20 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent animate-pulse"></div>
-      </div>
-
-      <div className="relative flex flex-wrap items-center justify-between gap-3">
+    <div className="card-shell space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="section-label text-cyan-200/90">Connectivity Map</p>
-          <p className="text-sm text-cyan-100/85">
-            Neon topology view for bot connectivity and readiness. {connectedCount} linked bot(s) visible.
+          <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Connectivity Map</p>
+          <p className="text-sm muted-text">
+            Live metro view of signal flow and link health. {connectedCount} linked bot(s).
           </p>
         </div>
       </div>
 
-      <div className="relative rounded-2xl border border-cyan-300/25 bg-slate-950/75 p-4 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.12),0_0_34px_rgba(34,211,238,0.08)]">
-        <div className="flex justify-center">
-          <div className="rounded-xl border border-cyan-200/55 bg-gradient-to-r from-cyan-300/25 via-sky-300/20 to-fuchsia-300/25 px-4 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-cyan-100 shadow-[0_0_22px_rgba(56,189,248,0.32)]">
-            Trade Bot Hub Core
-          </div>
-        </div>
+      {connectivityNodes.length === 0 && <p className="text-sm text-gray-400">Connectivity unavailable.</p>}
 
-        {connectedNodes.length > 0 && (
-          <div className="mt-4 space-y-2 rounded-xl border border-cyan-300/25 bg-slate-900/65 p-3 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.1)]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Execution Path</p>
-              <p className="text-[10px] uppercase tracking-[0.16em] text-fuchsia-200/75">Live pipeline lanes</p>
-            </div>
-            {connectedNodes.slice(0, 3).map((node) => (
-              <div
-                key={`path-${node.id}`}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-cyan-300/20 bg-slate-950/70 px-2 py-1.5 text-xs"
-              >
-                <FlowChip label="DaxLinks Router" />
-                <span className="text-cyan-200/70">→</span>
-                <FlowChip label={node.name} active />
-                <span className="text-cyan-200/70">→</span>
-                <FlowChip label="Exchange" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {nodes.length === 0 && <p className="mt-4 text-center text-sm text-cyan-100/70">No bots loaded to draw connectivity.</p>}
-
-        {nodes.length > 0 && (
-          <div className="relative mt-5 h-[24rem] sm:h-[22rem] overflow-hidden rounded-xl border border-cyan-300/20 bg-slate-950/70">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(56,189,248,0.2),transparent_36%)]"></div>
-            <div className="pointer-events-none absolute inset-0 opacity-30 bg-[linear-gradient(to_right,rgba(34,211,238,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(34,211,238,0.1)_1px,transparent_1px)] bg-[size:24px_24px]"></div>
-
-            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-              <path d="M8 14 H92" stroke="rgba(34,211,238,0.28)" strokeWidth="0.45" strokeDasharray="1.5 1.8" fill="none">
-                <animate attributeName="stroke-dashoffset" values="0;-22" dur="8s" repeatCount="indefinite" />
-              </path>
-              {plottedNodes.map((node, idx) => {
-                const midY = Math.max(compactLayout ? 30 : 26, node.y - (compactLayout ? 14 : 18));
-                const lineColor =
-                  node.status === 'online'
-                    ? 'rgba(52,211,153,0.9)'
-                    : node.status === 'issue'
-                      ? 'rgba(251,113,133,0.9)'
-                      : 'rgba(250,204,21,0.9)';
-                const dashPattern = node.status === 'online' ? '2.8 2.2' : node.status === 'issue' ? '1.2 1.8' : '2 2.4';
-                const flowDur = `${4 + (idx % 3)}s`;
-                return (
-                  <g key={`mesh-${node.id}`}>
-                    <path
-                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
-                      stroke={lineColor}
-                      strokeWidth={node.status === 'online' ? '1.15' : '0.95'}
-                      fill="none"
-                      opacity="0.28"
-                    />
-                    <path
-                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
-                      stroke={lineColor}
-                      strokeWidth={node.status === 'online' ? '1.05' : '0.9'}
-                      strokeDasharray={dashPattern}
-                      fill="none"
-                      opacity="0.95"
-                    >
-                      <animate attributeName="stroke-dashoffset" values="0;-30" dur={flowDur} repeatCount="indefinite" />
-                    </path>
-                    <path
-                      d={`M50 12 C 50 24 ${node.x} ${midY} ${node.x} ${node.y - 7}`}
-                      stroke={lineColor}
-                      strokeWidth="2.3"
-                      fill="none"
-                      opacity="0.09"
-                    />
-                    <circle cx={node.x} cy={node.y - 7} r="0.95" fill={lineColor}>
-                      <animate attributeName="r" values="0.7;1.1;0.7" dur={`${2.2 + idx * 0.25}s`} repeatCount="indefinite" />
-                    </circle>
+      {connectivityNodes.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+          <div className="connectivity-shell">
+            <svg className="connectivity-svg connectivity-tree" viewBox="0 0 900 520" aria-label="Connectivity diagram">
+              <g className="connectivity-branches">
+                {treeLayout.branches.map((branch: any) => (
+                  <g key={branch.id}>
+                    <path className="connectivity-branch" d={branch.path} stroke={branch.tone} strokeWidth={3} fill="none" />
+                    <circle className="connectivity-endpoint" cx={branch.start.x} cy={branch.start.y} r={4} fill={branch.tone} />
+                    <circle className="connectivity-endpoint" cx={branch.end.x} cy={branch.end.y} r={4} fill={branch.tone} />
                   </g>
-                );
-              })}
+                ))}
+              </g>
+              <g className="connectivity-stems">
+                {treeLayout.stems.map((stem: any) => (
+                  <g key={stem.id}>
+                    <path className="connectivity-stem" d={stem.path} stroke={stem.tone} strokeWidth={2} fill="none" />
+                    <circle className="connectivity-endpoint" cx={stem.start.x} cy={stem.start.y} r={3} fill={stem.tone} />
+                    <circle className="connectivity-endpoint" cx={stem.end.x} cy={stem.end.y} r={3} fill={stem.tone} />
+                  </g>
+                ))}
+              </g>
+              <g className="connectivity-brackets">
+                {treeLayout.brackets.map((bracket: any) => (
+                  <path key={bracket.id} className="connectivity-bracket" d={bracket.path} stroke={bracket.tone} strokeWidth={2} fill="none" />
+                ))}
+              </g>
+              <g className="connectivity-root">
+                <rect
+                  className="connectivity-root-box"
+                  x={treeLayout.root.x}
+                  y={treeLayout.root.y - treeLayout.root.height / 2}
+                  width={treeLayout.root.width}
+                  height={treeLayout.root.height}
+                  rx={10}
+                />
+                <rect
+                  className="connectivity-root-tab"
+                  x={treeLayout.root.x}
+                  y={treeLayout.root.y + treeLayout.root.height / 2 + 6}
+                  width={treeLayout.root.width}
+                  height={24}
+                  rx={8}
+                />
+                <circle
+                  className="connectivity-led"
+                  cx={treeLayout.root.x + 12}
+                  cy={treeLayout.root.y - treeLayout.root.height / 2 + 12}
+                  r={4}
+                  fill={connectivityTone(treeLayout.root.status)}
+                />
+                <text className="connectivity-root-label" x={treeLayout.root.x + treeLayout.root.width / 2} y={treeLayout.root.y - 8} textAnchor="middle">
+                  {(treeLayout.root.labelLines || [treeLayout.root.label]).map((line: string, idx: number) => (
+                    <tspan key={line} x={treeLayout.root.x + treeLayout.root.width / 2} dy={idx === 0 ? 0 : 14}>
+                      {line}
+                    </tspan>
+                  ))}
+                </text>
+                <g
+                  className="connectivity-root-icons"
+                  transform={`translate(${treeLayout.root.x + treeLayout.root.width - 32}, ${treeLayout.root.y + treeLayout.root.height / 2 + 10})`}
+                >
+                  <g transform="scale(0.42)">
+                    <path
+                      d="M12 2l7 3v6c0 5-3.5 9-7 11-3.5-2-7-6-7-11V5l7-3z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinejoin="round"
+                    />
+                  </g>
+                  <g transform="translate(12, 0) scale(0.42)">
+                    <path d="M7 11V8a5 5 0 0110 0v3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    <rect x="6" y="11" width="12" height="9" rx="2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                  </g>
+                </g>
+              </g>
+              <g className="connectivity-groups">
+                {treeLayout.groupLabels.map((group: any) => (
+                  <g key={group.id}>
+                    <circle className="connectivity-dot" cx={group.x - 10} cy={group.y} r={4} fill={group.tone} />
+                    <text className="connectivity-group-label" x={group.x} y={group.y + 4} fill={group.tone}>
+                      {group.label}
+                    </text>
+                  </g>
+                ))}
+              </g>
+              <g className="connectivity-items">
+                {treeLayout.items.map((item: any) => (
+                  <g key={item.id}>
+                    <circle className="connectivity-dot" cx={item.x - 10} cy={item.y} r={3} fill={item.tone} />
+                    <text className="connectivity-item-label" x={item.x} y={item.y + 4} fill={item.tone}>
+                      {item.label}
+                    </text>
+                  </g>
+                ))}
+              </g>
             </svg>
-
-            <div className="pointer-events-none absolute left-1/2 top-[12%] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-cyan-200/60 bg-gradient-to-r from-cyan-300/25 via-sky-300/20 to-fuchsia-300/25 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-100 shadow-[0_0_22px_rgba(56,189,248,0.36)]">
-              Link Router
-            </div>
-
-            {plottedNodes.map((node) => (
-              <div
-                key={node.id}
-                className="absolute w-[5.4rem] sm:w-[7.5rem] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-cyan-300/30 bg-slate-900/85 px-1.5 sm:px-2 py-1.5 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08),0_0_16px_rgba(14,165,233,0.14)]"
-                style={{ left: `${node.x}%`, top: `${node.y}%` }}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusPill(node.status)}`}></span>
-                  <p className="truncate text-[10px] sm:text-[11px] font-semibold text-cyan-50">{node.name}</p>
-                </div>
-                <p className="mt-1 text-[9px] uppercase tracking-[0.16em] text-cyan-200/75">{statusLabel(node.status)}</p>
-              </div>
-            ))}
           </div>
-        )}
-      </div>
+          <aside className="connectivity-panel">
+            <p className="text-xs uppercase tracking-[0.28em] text-gray-500">Link details</p>
+            <p className="text-xs text-gray-400">Derived from linked webhook/integration pairs.</p>
+            <div className="mt-3 space-y-3">
+              {linkLayout.map((link, idx) => (
+                <div key={`panel-${link.id || idx}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-gray-200">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>
+                      {link.from?.label || link.from?.id} → {link.to?.label || link.to?.id}
+                    </span>
+                    <span className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em]" style={{ color: link.tone }}>
+                      <span className="h-2 w-2 rounded-full" style={{ background: link.tone }}></span>
+                      {link.status || 'unknown'}
+                    </span>
+                  </div>
+                  {link.alertsLastWindow != null && (
+                    <p className="text-xs text-gray-400">Orders (summary): {link.alertsLastWindow}</p>
+                  )}
+                </div>
+              ))}
+              {linkLayout.length === 0 && <p className="text-xs text-gray-400">No link details yet. Link TradingView and exchange integrations in bot settings.</p>}
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
-  );
-}
-
-function FlowChip({ label, active = false }: { label: string; active?: boolean }) {
-  return (
-    <span
-      className={
-        active
-          ? 'rounded-md border border-cyan-200/60 bg-gradient-to-r from-cyan-300 to-fuchsia-300 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.45)]'
-          : 'rounded-md border border-cyan-300/30 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.08)]'
-      }
-    >
-      {label}
-    </span>
   );
 }
 
