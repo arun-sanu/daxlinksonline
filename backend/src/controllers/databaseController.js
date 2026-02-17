@@ -2,10 +2,13 @@ import { z } from 'zod';
 import {
   listDatabases,
   getDatabase,
+  listDatabaseTables,
+  listTradeTransactionsForDatabase,
   createDatabase,
   rotateDatabaseCredentials,
   deleteDatabase
 } from '../services/databaseService.js';
+import { prisma } from '../utils/prisma.js';
 
 const createSchema = z.object({
   name: z.string().min(2),
@@ -18,6 +21,47 @@ const createSchema = z.object({
   computeClass: z.string().default('standard'),
   workspaceId: z.string().uuid().nullable().optional()
 });
+
+const tablesQuerySchema = z.object({
+  workspaceId: z.string().uuid().optional()
+});
+
+const tradeTransactionsQuerySchema = z.object({
+  workspaceId: z.string().uuid().optional(),
+  symbol: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9_-]{4,20}$/)
+    .optional(),
+  botId: z.string().trim().min(1).max(64).optional(),
+  botInstanceId: z.string().trim().min(1).max(64).optional(),
+  status: z.string().trim().max(64).optional(),
+  from: z.string().trim().max(64).optional(),
+  to: z.string().trim().max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
+});
+
+async function resolveWorkspaceScope(req, requestedWorkspaceId = null) {
+  if (req.user?.isSuperAdmin) {
+    return requestedWorkspaceId || null;
+  }
+
+  const rows = await prisma.workspace.findMany({
+    where: { ownerId: req.user?.id || '' },
+    select: { id: true }
+  });
+  const ids = rows.map((row) => row.id);
+
+  if (requestedWorkspaceId && !ids.includes(requestedWorkspaceId)) {
+    const error = new Error('Workspace access denied');
+    error.status = 403;
+    throw error;
+  }
+
+  if (requestedWorkspaceId) return requestedWorkspaceId;
+  return ids;
+}
 
 export async function handleList(req, res, next) {
   try {
@@ -33,6 +77,49 @@ export async function handleGet(req, res, next) {
     const row = await getDatabase(req.params.dbId);
     res.json(row);
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleListTables(req, res, next) {
+  try {
+    const { workspaceId } = tablesQuerySchema.parse(req.query || {});
+    const workspaceScope = await resolveWorkspaceScope(req, workspaceId || null);
+    const payload = await listDatabaseTables(req.params.dbId, { workspaceScope });
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleListTradeTransactions(req, res, next) {
+  try {
+    const {
+      workspaceId,
+      symbol,
+      botId,
+      botInstanceId,
+      status,
+      from,
+      to,
+      limit
+    } = tradeTransactionsQuerySchema.parse(req.query || {});
+
+    const workspaceScope = await resolveWorkspaceScope(req, workspaceId || null);
+    const payload = await listTradeTransactionsForDatabase(req.params.dbId, {
+      workspaceScope,
+      symbol,
+      botId,
+      botInstanceId,
+      status,
+      from,
+      to,
+      limit
+    });
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
     next(error);
   }
 }

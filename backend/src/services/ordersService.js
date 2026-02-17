@@ -1148,6 +1148,24 @@ function resolveNetRealizedPnlContribution({
 }
 
 function mapTradeTransactionForAnalytics(row = {}) {
+  const side = String(row.side || '')
+    .trim()
+    .toUpperCase();
+  const quantity = maybeNumber(row.quantity);
+  const marketPrice = maybeNumber(row.marketPrice);
+  const executionPrice = maybeNumber(row.executionPrice);
+  const explicitValue = maybeNumber(row.value);
+  const executionValue =
+    explicitValue !== null
+      ? explicitValue
+      : quantity !== null && executionPrice !== null
+        ? quantity * executionPrice
+        : null;
+  const marketValue =
+    quantity !== null && marketPrice !== null
+      ? quantity * marketPrice
+      : null;
+
   return {
     id: row.id,
     executedAt: row.executedAt,
@@ -1155,14 +1173,19 @@ function mapTradeTransactionForAnalytics(row = {}) {
     botInstanceId: row.botInstanceId || null,
     integrationId: row.integrationId || null,
     symbol: row.symbol || null,
-    side: row.side || null,
+    side: side || null,
     orderType: row.orderType || null,
     status: row.status || null,
     amount: maybeNumber(row.amount),
-    quantity: maybeNumber(row.quantity),
-    value: maybeNumber(row.value),
-    marketPrice: maybeNumber(row.marketPrice),
-    executionPrice: maybeNumber(row.executionPrice),
+    quantity,
+    value: executionValue,
+    marketValue,
+    marketPrice,
+    executionPrice,
+    buyPrice: side === 'BUY' || side === 'LONG' ? executionPrice : null,
+    sellPrice: side === 'SELL' || side === 'SHORT' ? executionPrice : null,
+    buyValue: side === 'BUY' || side === 'LONG' ? executionValue : null,
+    sellValue: side === 'SELL' || side === 'SHORT' ? executionValue : null,
     feeAmount: maybeNumber(row.feeAmount),
     feeAsset: row.feeAsset || null,
     realizedPnl: maybeNumber(row.realizedPnl),
@@ -1338,6 +1361,8 @@ export async function getWorkspaceTradeCompoundingReport({
   let totalBuys = 0;
   let totalSells = 0;
   let totalVolume = 0;
+  let totalBuyValue = 0;
+  let totalSellValue = 0;
   let totalQuantity = 0;
   let totalFees = 0;
   let reportedRealizedPnl = 0;
@@ -1353,6 +1378,10 @@ export async function getWorkspaceTradeCompoundingReport({
   let runningBalance = null;
   let startingCapital = null;
   let endingCapital = null;
+  let buyQuoteForAvgPrice = 0;
+  let sellQuoteForAvgPrice = 0;
+  let buyQtyForAvgPrice = 0;
+  let sellQtyForAvgPrice = 0;
 
   const botAggByKey = new Map();
   const symbolAggByKey = new Map();
@@ -1379,6 +1408,21 @@ export async function getWorkspaceTradeCompoundingReport({
     if (side === 'SELL' || side === 'SHORT') totalSells += 1;
     if (quantity !== null) totalQuantity += Math.abs(quantity);
     if (value !== null) totalVolume += Math.abs(value);
+    if ((side === 'BUY' || side === 'LONG') && value !== null) totalBuyValue += Math.abs(value);
+    if ((side === 'SELL' || side === 'SHORT') && value !== null) totalSellValue += Math.abs(value);
+    if (quantity !== null && quantity > 0) {
+      const px = maybeNumber(row.executionPrice);
+      if (px !== null && px > 0) {
+        if (side === 'BUY' || side === 'LONG') {
+          buyQuoteForAvgPrice += Math.abs(quantity) * px;
+          buyQtyForAvgPrice += Math.abs(quantity);
+        }
+        if (side === 'SELL' || side === 'SHORT') {
+          sellQuoteForAvgPrice += Math.abs(quantity) * px;
+          sellQtyForAvgPrice += Math.abs(quantity);
+        }
+      }
+    }
     totalFees += fee;
 
     const pnlContribution = resolveNetRealizedPnlContribution({
@@ -1629,6 +1673,10 @@ export async function getWorkspaceTradeCompoundingReport({
       buys: totalBuys,
       sells: totalSells,
       volume: roundNumber(totalVolume, 8),
+      buyValue: roundNumber(totalBuyValue, 8),
+      sellValue: roundNumber(totalSellValue, 8),
+      avgBuyPrice: buyQtyForAvgPrice > 0 ? roundNumber(buyQuoteForAvgPrice / buyQtyForAvgPrice, 8) : null,
+      avgSellPrice: sellQtyForAvgPrice > 0 ? roundNumber(sellQuoteForAvgPrice / sellQtyForAvgPrice, 8) : null,
       quantity: roundNumber(totalQuantity, 8),
       fees: roundNumber(totalFees, 8),
       reportedRealizedPnl: roundNumber(reportedRealizedPnl, 8),
