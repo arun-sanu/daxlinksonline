@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon --watch src --ext js,mjs --exec node src/server.js",
     "start": "node src/server.js",
+    "build": "npm run prisma:generate",
     "test:node": "DOTENV_CONFIG_PATH=.env node -r dotenv/config --test test/*.test.js",
     "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --runInBand",
     "test": "npm run test:node && npm run test:e2e",

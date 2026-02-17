@@ -22,6 +22,16 @@ const createSchema = z.object({
   workspaceId: z.string().uuid().nullable().optional()
 });
 
+const getDatabaseQuerySchema = z.object({
+  workspaceId: z.string().uuid().optional(),
+  includeTables: z.coerce.boolean().default(true)
+});
+
+const listDatabaseQuerySchema = z.object({
+  workspaceId: z.string().uuid().optional(),
+  includeTables: z.coerce.boolean().default(true)
+});
+
 const tablesQuerySchema = z.object({
   workspaceId: z.string().uuid().optional()
 });
@@ -65,18 +75,63 @@ async function resolveWorkspaceScope(req, requestedWorkspaceId = null) {
 
 export async function handleList(req, res, next) {
   try {
+    const { workspaceId, includeTables } = listDatabaseQuerySchema.parse(req.query || {});
+    const workspaceScope = await resolveWorkspaceScope(req, workspaceId || null);
     const rows = await listDatabases();
-    res.json(rows);
+
+    if (!includeTables) {
+      return res.json(rows);
+    }
+
+    const tableStub = {
+      key: 'trade-transactions',
+      name: 'TradeTransaction',
+      purpose: 'Bot trade ledger for compounding, amount/quantity/value math, and PnL analytics'
+    };
+
+    const filteredRows = req.user?.isSuperAdmin
+      ? rows
+      : rows.filter((row) => {
+          if (workspaceScope === null) return true;
+          if (Array.isArray(workspaceScope)) return workspaceScope.includes(row.workspaceId);
+          return row.workspaceId === workspaceScope;
+        });
+
+    res.json(
+      filteredRows.map((row) => ({
+        ...row,
+        tables: [tableStub]
+      }))
+    );
   } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
     next(error);
   }
 }
 
 export async function handleGet(req, res, next) {
   try {
+    const { workspaceId, includeTables } = getDatabaseQuerySchema.parse(req.query || {});
+    const workspaceScope = await resolveWorkspaceScope(req, workspaceId || null);
     const row = await getDatabase(req.params.dbId);
-    res.json(row);
+    const isAccessible = req.user?.isSuperAdmin || workspaceScope === null || (Array.isArray(workspaceScope)
+      ? workspaceScope.includes(row.workspaceId)
+      : row.workspaceId === workspaceScope);
+    if (!isAccessible) {
+      return res.status(403).json({ error: 'Workspace access denied' });
+    }
+
+    if (!includeTables) {
+      return res.json(row);
+    }
+
+    const payload = await listDatabaseTables(req.params.dbId, { workspaceScope });
+    res.json({
+      ...row,
+      tables: payload.tables
+    });
   } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
     next(error);
   }
 }
