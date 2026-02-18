@@ -17,6 +17,7 @@
     "prisma:seed": "node prisma/seed.js",
     "create:super-admin": "node scripts/createSuperAdmin.js",
     "bot:register:trade-exec": "node scripts/registerTradeExecBot.js",
+    "bot:register:mexc-macd-bollinger": "node scripts/registerMexcMacdBollingerBot.js",
     "bot:register:moneyplantbot1-robot": "node scripts/registerTradeExecBot.js"
   },
   "dependencies": {

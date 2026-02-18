@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { writeBotOrderResult } from '../services/botSizingReportsService.js';
+import { resolveInternalBotRuntime } from '../services/internalBotService.js';
 
 const payloadSchema = z.object({
   signalId: z.string().optional(),
@@ -18,6 +19,10 @@ const payloadSchema = z.object({
   errors: z.array(z.string()).optional(),
   rawPayload: z.any().optional(),
   meta: z.record(z.any()).optional()
+});
+
+const runtimeParamSchema = z.object({
+  botInstanceId: z.string().min(8)
 });
 
 function timingSafeTokenMatch(expected, incoming) {
@@ -53,6 +58,21 @@ export async function handleInternalBotOrderResult(req, res, next) {
     if (error instanceof z.ZodError) {
       error.status = 400;
       error.message = 'Invalid bot order result payload';
+    }
+    next(error);
+  }
+}
+
+export async function handleGetInternalBotRuntime(req, res, next) {
+  try {
+    assertInternalToken(req);
+    const { botInstanceId } = runtimeParamSchema.parse(req.params || {});
+    const payload = await resolveInternalBotRuntime({ botInstanceId });
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      error.status = 400;
+      error.message = 'Invalid bot runtime request';
     }
     next(error);
   }

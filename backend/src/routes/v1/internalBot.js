@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { handleInternalBotOrderResult } from '../../controllers/internalBotController.js';
+import { handleGetInternalBotRuntime, handleInternalBotOrderResult } from '../../controllers/internalBotController.js';
 
 export const router = Router();
 
+router.get('/runtime-config/:botInstanceId', handleGetInternalBotRuntime);
 router.post('/order-result', handleInternalBotOrderResult);

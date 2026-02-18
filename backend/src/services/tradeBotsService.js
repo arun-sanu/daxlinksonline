@@ -115,6 +115,214 @@ function normalizeRuntimeRules(value = null) {
   return JSON.parse(JSON.stringify(value));
 }
 
+const MEXC_MACD_BOLLINGER_BOT_SLUGS = new Set([
+  'mexc-macd-bollinger-bot',
+  'mexc-macd-bollinger',
+  'arn-hvms-mexc',
+  'arn-hvms',
+  'hvms-mexc'
+]);
+
+function normalizeTextSlug(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeTradingSymbol(value, fallback = 'BTCUSDC') {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  return normalized || fallback;
+}
+
+function isMexcMacdBollingerBot(bot = null) {
+  const slug = normalizeTextSlug(bot?.name || '');
+  if (MEXC_MACD_BOLLINGER_BOT_SLUGS.has(slug)) return true;
+  return slug.includes('mexc') && (slug.includes('bollinger') || slug.includes('hvms'));
+}
+
+function buildMexcMacdBollingerDefaultRules({ symbol = 'BTCUSDC' } = {}) {
+  const normalizedSymbol = normalizeTradingSymbol(symbol, 'BTCUSDC');
+  const parameterSchema = [
+    {
+      key: 'symbol',
+      label: 'Symbol',
+      type: 'string',
+      defaultValue: normalizedSymbol,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Trading symbol used by the bot process.',
+      line: null
+    },
+    {
+      key: 'base_quantity',
+      label: 'Base Quantity',
+      type: 'number',
+      defaultValue: 0.001,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Fixed quantity per market order.',
+      line: null
+    },
+    {
+      key: 'check_interval',
+      label: 'Check Interval',
+      type: 'number',
+      defaultValue: 60,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Seconds between strategy evaluations.',
+      line: null
+    },
+    {
+      key: 'macd_fast',
+      label: 'MACD Fast',
+      type: 'number',
+      defaultValue: 12,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Fast EMA period for MACD.',
+      line: null
+    },
+    {
+      key: 'macd_slow',
+      label: 'MACD Slow',
+      type: 'number',
+      defaultValue: 26,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Slow EMA period for MACD.',
+      line: null
+    },
+    {
+      key: 'macd_signal',
+      label: 'MACD Signal',
+      type: 'number',
+      defaultValue: 9,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Signal EMA period for MACD.',
+      line: null
+    },
+    {
+      key: 'bb_length',
+      label: 'BB Length',
+      type: 'number',
+      defaultValue: 20,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Bollinger middle-band period.',
+      line: null
+    },
+    {
+      key: 'bb_mult',
+      label: 'BB Multiplier',
+      type: 'number',
+      defaultValue: 2.0,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Bollinger standard deviation multiplier.',
+      line: null
+    },
+    {
+      key: 'stop_loss_pct',
+      label: 'Stop Loss %',
+      type: 'number',
+      defaultValue: 2.0,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Stop loss percentage from entry.',
+      line: null
+    },
+    {
+      key: 'risk_reward',
+      label: 'Risk Reward',
+      type: 'number',
+      defaultValue: 5,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Take profit multiple of stop distance.',
+      line: null
+    },
+    {
+      key: 'allow_shorts',
+      label: 'Allow Shorts',
+      type: 'boolean',
+      defaultValue: false,
+      source: 'template:mexc-macd-bollinger',
+      description: 'Enable short entries where supported.',
+      line: null
+    }
+  ];
+
+  return {
+    strategy: 'MACD_Bollinger',
+    source: 'python_bot',
+    exchange: 'MEXC',
+    symbol: normalizedSymbol,
+    baseQuantity: 0.001,
+    checkInterval: 60,
+    macdFast: 12,
+    macdSlow: 26,
+    macdSignal: 9,
+    bbLength: 20,
+    bbMult: 2.0,
+    stopLossPct: 2.0,
+    riskReward: 5,
+    allowShorts: false,
+    resolveExchangeFromBackend: true,
+    runtimeConfigPath: '/api/v1/internal/bot/runtime-config',
+    codeParameterSchema: parameterSchema,
+    codeParameters: {
+      symbol: normalizedSymbol,
+      base_quantity: 0.001,
+      check_interval: 60,
+      macd_fast: 12,
+      macd_slow: 26,
+      macd_signal: 9,
+      bb_length: 20,
+      bb_mult: 2.0,
+      stop_loss_pct: 2.0,
+      risk_reward: 5,
+      allow_shorts: false
+    }
+  };
+}
+
+function getDefaultRuntimeRulesForBot(bot = null, { symbol = null } = {}) {
+  if (!bot) return null;
+  if (isMexcMacdBollingerBot(bot)) {
+    return buildMexcMacdBollingerDefaultRules({ symbol: symbol || bot?.symbol || 'BTCUSDC' });
+  }
+  return null;
+}
+
+function mergeRuntimeRulesWithDefaults(defaultRules = null, currentRules = null) {
+  const defaults = normalizeRuntimeRules(defaultRules);
+  const current = normalizeRuntimeRules(currentRules);
+  if (!defaults) return current;
+  if (!current) return defaults;
+
+  const merged = {
+    ...defaults,
+    ...current
+  };
+
+  const defaultParams =
+    defaults.codeParameters && typeof defaults.codeParameters === 'object' && !Array.isArray(defaults.codeParameters)
+      ? defaults.codeParameters
+      : {};
+  const currentParams =
+    current.codeParameters && typeof current.codeParameters === 'object' && !Array.isArray(current.codeParameters)
+      ? current.codeParameters
+      : {};
+
+  merged.codeParameters = {
+    ...defaultParams,
+    ...currentParams
+  };
+
+  if (!Array.isArray(current.codeParameterSchema) && Array.isArray(defaults.codeParameterSchema)) {
+    merged.codeParameterSchema = defaults.codeParameterSchema;
+  }
+
+  return merged;
+}
+
 const CODE_PARAMETER_TYPE_SET = new Set(['number', 'string', 'boolean']);
 const CODE_PARAMETER_EXCLUDED_KEYS = new Set([
   'SPEC',
@@ -611,7 +819,10 @@ function presentBotInstance(instance, { orderCount = 0, runCount = 0, guardrailC
   };
 }
 
-function presentBotSummary(bot, { workflowNodeIds = new Set(), orderCount = 0, runCount = 0, guardrailCount = 0 } = {}) {
+function presentBotSummary(
+  bot,
+  { workflowNodeIds = new Set(), orderCount = 0, runCount = 0, guardrailCount = 0, instanceCount = null, access = null } = {}
+) {
   const nodeId = createWorkflowNodeId(bot.id);
   return {
     id: bot.id,
@@ -625,12 +836,18 @@ function presentBotSummary(bot, { workflowNodeIds = new Set(), orderCount = 0, r
     updatedAt: bot.updatedAt,
     counts: {
       versions: bot._count?.versions || 0,
-      instances: bot._count?.instances || 0,
+      instances: instanceCount !== null ? Number(instanceCount) : bot._count?.instances || 0,
       rentals: bot._count?.rentals || 0,
       orders: orderCount,
       runs: runCount,
       guardrailEvents: guardrailCount
     },
+    access: access
+      ? {
+          owner: Boolean(access.owner),
+          rented: Boolean(access.rented)
+        }
+      : undefined,
     workflow: {
       nodeId,
       linked: workflowNodeIds.has(nodeId)
@@ -638,11 +855,31 @@ function presentBotSummary(bot, { workflowNodeIds = new Set(), orderCount = 0, r
   };
 }
 
-async function assertBotInWorkspace(workspaceId, botId) {
-  const bot = await prisma.bot.findFirst({
+async function hasWorkspaceAccessToBot(workspaceId, botId) {
+  const [instance, rental] = await Promise.all([
+    prisma.botInstance.findFirst({
+      where: {
+        workspaceId,
+        botId
+      },
+      select: { id: true }
+    }),
+    prisma.rental.findFirst({
+      where: {
+        renterWorkspaceId: workspaceId,
+        botId
+      },
+      select: { id: true }
+    })
+  ]);
+  return Boolean(instance || rental);
+}
+
+async function assertBotInWorkspace(workspaceId, botId, options = {}) {
+  const allowRented = Boolean(options?.allowRented);
+  const bot = await prisma.bot.findUnique({
     where: {
-      id: botId,
-      workspaceId
+      id: botId
     },
     include: {
       latestVersion: {
@@ -656,7 +893,13 @@ async function assertBotInWorkspace(workspaceId, botId) {
   if (!bot) {
     throw httpError('Trade bot not found', 404);
   }
-  return bot;
+  if (bot.workspaceId === workspaceId) {
+    return bot;
+  }
+  if (allowRented && (await hasWorkspaceAccessToBot(workspaceId, botId))) {
+    return bot;
+  }
+  throw httpError('Trade bot not found', 404);
 }
 
 async function assertExchangeAccountInWorkspace(workspaceId, exchangeAccountId) {
@@ -776,7 +1019,7 @@ export function listSupportedBotLanguages() {
 }
 
 export async function listTradeBots(workspaceId) {
-  const [workspace, bots, instances] = await Promise.all([
+  const [workspace, ownedBots, instances] = await Promise.all([
     prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { workflowConfig: true }
@@ -806,6 +1049,32 @@ export async function listTradeBots(workspaceId) {
     })
   ]);
 
+  const ownedBotIds = new Set(ownedBots.map((bot) => bot.id));
+  const externalBotIds = Array.from(
+    new Set(instances.map((instance) => instance.botId).filter((botId) => botId && !ownedBotIds.has(botId)))
+  );
+
+  let externalBots = [];
+  if (externalBotIds.length) {
+    externalBots = await prisma.bot.findMany({
+      where: {
+        id: { in: externalBotIds }
+      },
+      include: {
+        latestVersion: true,
+        _count: {
+          select: {
+            versions: true,
+            instances: true,
+            rentals: true
+          }
+        }
+      }
+    });
+  }
+
+  const bots = [...ownedBots, ...externalBots].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
   const workflowNodeIds = new Set(
     ((workspace?.workflowConfig?.customNodes && Array.isArray(workspace.workflowConfig.customNodes))
       ? workspace.workflowConfig.customNodes
@@ -820,12 +1089,14 @@ export async function listTradeBots(workspaceId) {
   );
 
   const perBotCounts = new Map();
+  const workspaceInstanceCounts = new Map();
   instances.forEach((instance) => {
     const current = perBotCounts.get(instance.botId) || { orders: 0, runs: 0, guardrailEvents: 0 };
     current.orders += orderCountsByInstance.get(instance.id) || 0;
     current.runs += runCountsByInstance.get(instance.id) || 0;
     current.guardrailEvents += guardrailCountsByInstance.get(instance.id) || 0;
     perBotCounts.set(instance.botId, current);
+    workspaceInstanceCounts.set(instance.botId, (workspaceInstanceCounts.get(instance.botId) || 0) + 1);
   });
 
   return bots.map((bot) => {
@@ -834,7 +1105,12 @@ export async function listTradeBots(workspaceId) {
       workflowNodeIds,
       orderCount: summaryCounts.orders,
       runCount: summaryCounts.runs,
-      guardrailCount: summaryCounts.guardrailEvents
+      guardrailCount: summaryCounts.guardrailEvents,
+      instanceCount: workspaceInstanceCounts.get(bot.id) || 0,
+      access: {
+        owner: bot.workspaceId === workspaceId,
+        rented: bot.workspaceId !== workspaceId
+      }
     });
   });
 }
@@ -853,15 +1129,16 @@ export async function createTradeBot(workspaceId, payload) {
 }
 
 export async function getTradeBotDetail(workspaceId, botId) {
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
+
   const [workspace, bot, instances] = await Promise.all([
     prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { workflowConfig: true }
     }),
-    prisma.bot.findFirst({
+    prisma.bot.findUnique({
       where: {
-        id: botId,
-        workspaceId
+        id: botId
       },
       include: {
         latestVersion: true,
@@ -923,7 +1200,12 @@ export async function getTradeBotDetail(workspaceId, botId) {
     workflowNodeIds,
     orderCount,
     runCount,
-    guardrailCount
+    guardrailCount,
+    instanceCount: instances.length,
+    access: {
+      owner: bot.workspaceId === workspaceId,
+      rented: bot.workspaceId !== workspaceId
+    }
   });
 
   return {
@@ -946,12 +1228,13 @@ export async function getTradeBotDetail(workspaceId, botId) {
 }
 
 export async function getTradeBotRuntimeConfig(workspaceId, botId) {
-  const bot = await assertBotInWorkspace(workspaceId, botId);
+  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const cfg = await getWorkspaceWorkflowConfig(workspaceId);
   const runtimeMap = extractRuntimeConfigMap(cfg);
   const current = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
   const links = normalizeRuntimeLink(current.links || null);
-  const rules = normalizeRuntimeRules(current.rules || null);
+  const defaultRules = getDefaultRuntimeRulesForBot(bot, { symbol: current?.rules?.symbol || null });
+  const rules = mergeRuntimeRulesWithDefaults(defaultRules, normalizeRuntimeRules(current.rules || null));
   const hydratedRules = hydrateRuntimeRulesWithCodeSource(rules, bot);
   const resolved = resolveRuntimeCodeParameters(hydratedRules);
 
@@ -966,10 +1249,13 @@ export async function getTradeBotRuntimeConfig(workspaceId, botId) {
 }
 
 export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = {}) {
-  const bot = await assertBotInWorkspace(workspaceId, botId);
+  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const cfg = await getWorkspaceWorkflowConfig(workspaceId);
   const runtimeMap = extractRuntimeConfigMap(cfg);
   const previous = runtimeMap[botId] && typeof runtimeMap[botId] === 'object' ? runtimeMap[botId] : {};
+  const defaultRules = getDefaultRuntimeRulesForBot(bot, {
+    symbol: payload?.rules?.symbol || previous?.rules?.symbol || null
+  });
 
   const nextLinks = Object.prototype.hasOwnProperty.call(payload, 'links')
     ? normalizeRuntimeLink(payload.links || null)
@@ -977,7 +1263,8 @@ export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = 
   const nextRules = Object.prototype.hasOwnProperty.call(payload, 'rules')
     ? normalizeRuntimeRules(payload.rules || null)
     : normalizeRuntimeRules(previous.rules || null);
-  const hydratedRules = hydrateRuntimeRulesWithCodeSource(nextRules, bot);
+  const mergedRules = mergeRuntimeRulesWithDefaults(defaultRules, nextRules);
+  const hydratedRules = hydrateRuntimeRulesWithCodeSource(mergedRules, bot);
   const resolved = resolveRuntimeCodeParameters(hydratedRules);
 
   const nextCodeParametersUpdatedAt = Object.prototype.hasOwnProperty.call(payload, 'rules')
@@ -1199,7 +1486,7 @@ export async function createTradeBotInstance(workspaceId, botId, payload) {
 }
 
 export async function listTradeBotInstances(workspaceId, botId) {
-  await assertBotInWorkspace(workspaceId, botId);
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const instances = await prisma.botInstance.findMany({
     where: {
       workspaceId,
@@ -1271,6 +1558,7 @@ function buildInstanceControlPatch(instance, action) {
 }
 
 export async function controlTradeBotInstance(workspaceId, botId, instanceId, action) {
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const instance = await assertBotInstanceInWorkspace(workspaceId, botId, instanceId);
   const patch = buildInstanceControlPatch(instance, action);
   if (!patch) {
@@ -1296,7 +1584,7 @@ export async function controlTradeBotInstance(workspaceId, botId, instanceId, ac
 }
 
 export async function listTradeBotOrders(workspaceId, botId, filters = {}) {
-  await assertBotInWorkspace(workspaceId, botId);
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const instances = await prisma.botInstance.findMany({
     where: {
       workspaceId,
@@ -1355,7 +1643,7 @@ export async function listTradeBotOrders(workspaceId, botId, filters = {}) {
 }
 
 export async function getTradeBotMonitoring(workspaceId, botId, filters = {}) {
-  await assertBotInWorkspace(workspaceId, botId);
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const instances = await prisma.botInstance.findMany({
     where: {
       workspaceId,
@@ -1449,7 +1737,7 @@ export async function getTradeBotMonitoring(workspaceId, botId, filters = {}) {
 }
 
 export async function getTradeBotWorkflowLink(workspaceId, botId) {
-  const bot = await assertBotInWorkspace(workspaceId, botId);
+  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
   const cfg = await getWorkspaceWorkflowConfig(workspaceId);
   const nodeId = createWorkflowNodeId(bot.id);
   const customNodes = Array.isArray(cfg.customNodes) ? cfg.customNodes : [];
@@ -1593,10 +1881,52 @@ export async function listMarketBots(_workspaceId) {
     });
 }
 
+async function ensureWorkspaceRuntimeConfigForBot({
+  workspaceId,
+  bot,
+  exchangeAccountId = null,
+  symbol = null
+}) {
+  const cfg = await getWorkspaceWorkflowConfig(workspaceId);
+  const runtimeMap = extractRuntimeConfigMap(cfg);
+  const current = runtimeMap[bot.id] && typeof runtimeMap[bot.id] === 'object' ? runtimeMap[bot.id] : {};
+  const currentLinks = normalizeRuntimeLink(current.links || null);
+  const defaultRules = getDefaultRuntimeRulesForBot(bot, { symbol });
+  const mergedRules = mergeRuntimeRulesWithDefaults(defaultRules, normalizeRuntimeRules(current.rules || null));
+  const hydratedRules = hydrateRuntimeRulesWithCodeSource(mergedRules, bot);
+  const resolved = resolveRuntimeCodeParameters(hydratedRules);
+
+  const nowIso = new Date().toISOString();
+  const nextEntry = {
+    links: {
+      ...currentLinks,
+      exchangeAccountId: currentLinks.exchangeAccountId || exchangeAccountId || null,
+      updatedAt: nowIso
+    },
+    rules: {
+      ...resolved.rules,
+      codeParametersUpdatedAt: resolved.parameters.updatedAt || current?.rules?.codeParametersUpdatedAt || nowIso
+    },
+    updatedAt: nowIso
+  };
+
+  const nextRuntimeMap = {
+    ...runtimeMap,
+    [bot.id]: nextEntry
+  };
+
+  const nextConfig = {
+    ...cfg,
+    tradeBots: {
+      ...(cfg.tradeBots && typeof cfg.tradeBots === 'object' ? cfg.tradeBots : {}),
+      runtimeConfigs: nextRuntimeMap
+    }
+  };
+
+  await saveWorkspaceWorkflowConfig(workspaceId, nextConfig);
+}
+
 export async function rentMarketBot(workspaceId, botId, payload = {}) {
-  const symbol = String(payload.symbol || 'BTCUSDT')
-    .trim()
-    .toUpperCase();
   const [workspace, bot, exchangeAccount] = await Promise.all([
     prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -1621,6 +1951,12 @@ export async function rentMarketBot(workspaceId, botId, payload = {}) {
   if (!workspace) throw httpError('Workspace not found', 404);
   if (!bot?.latestVersionId) throw httpError('Bot is not published in marketplace', 404);
   if (!exchangeAccount) throw httpError('Exchange account not found in workspace', 404);
+
+  const requestedSymbol = String(payload.symbol || '')
+    .trim()
+    .toUpperCase();
+  const defaultSymbol = isMexcMacdBollingerBot(bot) ? 'BTCUSDC' : 'BTCUSDT';
+  const symbol = normalizeTradingSymbol(requestedSymbol || defaultSymbol, defaultSymbol);
 
   const [version, plan] = await Promise.all([
     prisma.botVersion.findFirst({
@@ -1669,6 +2005,13 @@ export async function rentMarketBot(workspaceId, botId, payload = {}) {
       status: 'active',
       expiresAt: addDays(new Date(), 30)
     }
+  });
+
+  await ensureWorkspaceRuntimeConfigForBot({
+    workspaceId,
+    bot,
+    exchangeAccountId: exchangeAccount.id,
+    symbol
   });
 
   return {
