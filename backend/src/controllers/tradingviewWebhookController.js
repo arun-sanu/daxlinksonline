@@ -82,7 +82,7 @@ async function resolveSingleExecutionTarget(userId) {
     where: {
       workspace: { ownerId: userId },
       exchange: { equals: 'mexc', mode: 'insensitive' },
-      credential: { isNot: null },
+      credentials: { some: {} },
       status: { in: ['active', 'pending', 'connected'] }
     },
     select: {

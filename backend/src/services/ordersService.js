@@ -176,16 +176,21 @@ async function findMexcIntegration(workspaceId, integrationId) {
       workspaceId,
       ...(integrationId ? { id: integrationId } : {}),
       exchange: { equals: 'mexc', mode: 'insensitive' },
-      ...(integrationId ? {} : { credential: { isNot: null } })
+      ...(integrationId ? {} : { credentials: { some: {} } })
     },
-    include: { credential: true },
+    include: {
+      credentials: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1
+      }
+    },
     orderBy: { updatedAt: 'desc' }
   });
 
   if (!integration) {
     throw Object.assign(new Error('No connected MEXC integration found for this workspace.'), { status: 404 });
   }
-  if (!integration.credential) {
+  if (!integration.credentials?.length) {
     throw Object.assign(new Error('MEXC credentials are missing for the selected integration.'), { status: 400 });
   }
   return integration;
@@ -375,9 +380,10 @@ export async function getMexcSpotSnapshot({
   atrLength
 }) {
   const integration = await findMexcIntegration(workspaceId, integrationId);
+  const activeCredential = integration.credentials[0];
   const credentials = {
-    apiKey: decrypt(integration.credential.apiKey),
-    apiSecret: decrypt(integration.credential.apiSecret)
+    apiKey: decrypt(activeCredential.apiKey),
+    apiSecret: decrypt(activeCredential.apiSecret)
   };
 
   const normalizedSymbol = normalizeSymbol(symbol);

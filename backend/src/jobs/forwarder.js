@@ -208,7 +208,7 @@ async function resolveAutoExecutionTargets({ workspaceId, normalized }) {
   const integrations = await prisma.integration.findMany({
     where: {
       workspaceId,
-      credential: { isNot: null },
+      credentials: { some: {} },
       status: { in: ['active', 'pending', 'connected'] }
     },
     select: {

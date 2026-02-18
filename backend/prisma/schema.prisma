@@ -54,7 +54,7 @@ model Integration {
   updatedAt        DateTime  @updatedAt
 
   credentialEvents CredentialEvent[]
-  credential       IntegrationCredential?
+  credentials      IntegrationCredential[]
 }
 
 model Webhook {
@@ -171,13 +171,15 @@ model AdminSession {
 model IntegrationCredential {
   id            String      @id @default(uuid())
   integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
-  integrationId String      @unique
+  integrationId String
   apiKey        Bytes
   apiSecret     Bytes
   passphrase    Bytes?
   iv            Bytes
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+
+  @@index([integrationId])
 }
 
 model User {

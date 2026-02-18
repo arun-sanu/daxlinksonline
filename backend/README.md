@@ -119,7 +119,9 @@ UI:
 | GET | `/api/v1/dashboard/:workspaceId/bootstrap` | Aggregate dashboard data for the UI |
 | POST | `/api/v1/workspaces` | Create a workspace entry |
 | GET | `/api/v1/integrations/:workspaceId` | List integrations |
+| GET | `/api/v1/integrations/:workspaceId/stream` | Realtime integration updates via SSE |
 | POST | `/api/v1/integrations/:workspaceId` | Create an integration (stores masked credentials) |
+| POST | `/api/v1/integrations/:workspaceId/:integrationId/credentials` | Add another API credential to an existing integration |
 | POST | `/api/v1/integrations/:workspaceId/:integrationId/test` | Validates exchange credentials via SDK |
 | GET | `/api/v1/webhooks/:workspaceId` | List webhooks |
 | POST | `/api/v1/webhooks/:workspaceId` | Create webhook configuration |

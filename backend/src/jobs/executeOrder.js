@@ -243,9 +243,15 @@ export async function executePreparedSignal(signalId) {
 
   const integration = await prisma.integration.findUnique({
     where: { id: signal.integrationId },
-    include: { credential: true }
+    include: {
+      credentials: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1
+      }
+    }
   });
-  if (!integration || !integration.credential) {
+  const activeCredential = integration?.credentials?.[0];
+  if (!integration || !activeCredential) {
     return markSignalExecutionError({
       signalId,
       alertId,
@@ -294,9 +300,9 @@ export async function executePreparedSignal(signalId) {
       return { ok: true, dryRun: true };
     }
 
-    const apiKey = decryptRequired(integration.credential.apiKey, 'API key');
-    const apiSecret = decryptRequired(integration.credential.apiSecret, 'API secret');
-    const passphrase = decryptOptional(integration.credential.passphrase);
+    const apiKey = decryptRequired(activeCredential.apiKey, 'API key');
+    const apiSecret = decryptRequired(activeCredential.apiSecret, 'API secret');
+    const passphrase = decryptOptional(activeCredential.passphrase);
     const clientOrderId = resolveClientOrderId(signal);
 
     const isMexc = String(integration.exchange || '').toLowerCase() === 'mexc';
