@@ -75,7 +75,8 @@ const ruleSchema = z.object({
 
 const applySchema = z.object({
   workspaceId: z.string().uuid(),
-  rules: z.array(ruleSchema)
+  rules: z.array(ruleSchema),
+  mode: z.enum(['replace', 'append']).optional()
 });
 
 const configQuerySchema = z.object({
@@ -224,6 +225,39 @@ export async function handleCreateNode(req, res, next) {
   }
 }
 
+function normalizeRuleList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ruleIdentity(rule = {}) {
+  const id = String(rule?.id || '').trim();
+  if (id) return `id:${id}`;
+  const sourceId = String(rule?.source?.id || '').trim();
+  const destinationId = String(rule?.destination?.id || '').trim();
+  return `srcdst:${sourceId}->${destinationId}`;
+}
+
+function mergeWorkflowRules(existingRules, incomingRules) {
+  const next = [...normalizeRuleList(existingRules)];
+  const indexByIdentity = new Map();
+
+  next.forEach((rule, index) => {
+    indexByIdentity.set(ruleIdentity(rule), index);
+  });
+
+  normalizeRuleList(incomingRules).forEach((rule) => {
+    const identity = ruleIdentity(rule);
+    if (indexByIdentity.has(identity)) {
+      next[indexByIdentity.get(identity)] = rule;
+      return;
+    }
+    indexByIdentity.set(identity, next.length);
+    next.push(rule);
+  });
+
+  return next;
+}
+
 export async function applyWorkflow(req, res, next) {
   try {
     if (!req.user) {
@@ -317,9 +351,13 @@ export async function applyWorkflow(req, res, next) {
     }
 
     const currentCfg = await getWorkspaceWorkflowConfig(payload.workspaceId);
+    const currentRules = normalizeRuleList(currentCfg.rules);
+    const isSingleRuleIncrementalSave = !payload.mode && sanitizedRules.length === 1 && currentRules.length > 0;
+    const shouldAppend = payload.mode === 'append' || isSingleRuleIncrementalSave;
+    const nextRules = shouldAppend ? mergeWorkflowRules(currentRules, sanitizedRules) : sanitizedRules;
     const nextCfg = {
       ...currentCfg,
-      rules: sanitizedRules
+      rules: nextRules
     };
     const saved = await saveWorkspaceWorkflowConfig(payload.workspaceId, nextCfg);
     res.json({ workflowConfig: saved });
