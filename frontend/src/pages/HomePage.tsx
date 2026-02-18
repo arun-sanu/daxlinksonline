@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { HOME_RESOURCE_ICONS, type HomeResourceKey } from '../icons/platformIcons';
 
 const metrics = {
   exchanges: 11,
@@ -6,30 +7,36 @@ const metrics = {
   throughput: '250k/min'
 };
 
-const resources = [
+const resources: Array<{
+  iconKey: HomeResourceKey;
+  title: string;
+  description: string;
+  href: string;
+  linkLabel: string;
+}> = [
   {
-    icon: '📚',
+    iconKey: 'implementationGuides',
     title: 'Implementation Guides',
     description: 'Tailored runbooks for wiring TradingView alerts, Kite Connect credentials, and Pendax adapters.',
     href: 'https://daxlinks.online/docs',
     linkLabel: 'Browse docs'
   },
   {
-    icon: '🧭',
+    iconKey: 'solutionReviews',
     title: 'Solution Reviews',
     description: 'Concierge sessions to pressure-test your execution strategy and resilience patterns.',
     href: 'https://daxlinks.online/support',
     linkLabel: 'Book a review'
   },
   {
-    icon: '🪝',
+    iconKey: 'webhookPlaybooks',
     title: 'Webhook Playbooks',
     description: 'JSON templates, guardrail policies, and post-trade automations for the alert forwarder.',
     href: 'https://daxlinks.online/docs/webhooks',
     linkLabel: 'Use templates'
   },
   {
-    icon: '🛡️',
+    iconKey: 'credentialHardening',
     title: 'Credential Hardening',
     description: 'Rotation, masking, and audit blueprints that mirror the legacy console defaults.',
     href: 'https://daxlinks.online/security',
@@ -101,23 +108,26 @@ export default function HomePage() {
             A curated set of guides, templates, and support channels to accelerate development for your team.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-2">
-            {resources.map((resource) => (
-              <article key={resource.title} className="card-shell flex flex-col">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: 'rgba(107,107,247,0.22)', color: 'var(--primary)' }}>
-                  <span className="text-xl" aria-hidden="true">{resource.icon}</span>
-                </div>
-                <h3 className="mt-4 text-lg font-semibold text-main">
-                  {resource.title}
-                </h3>
-                <p className="mt-2 flex-1 text-sm muted-text">{resource.description}</p>
-                <a href={resource.href} target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center text-sm font-semibold" style={{ color: 'var(--primary)' }}>
-                  {resource.linkLabel}
-                  <svg xmlns="http://www.w3.org/2000/svg" className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5l7 7-7 7" />
-                  </svg>
-                </a>
-              </article>
-            ))}
+            {resources.map((resource) => {
+              const ResourceIcon = HOME_RESOURCE_ICONS[resource.iconKey];
+              return (
+                <article key={resource.title} className="card-shell flex flex-col">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: 'rgba(107,107,247,0.22)', color: 'var(--primary)' }}>
+                    <ResourceIcon className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold text-main">
+                    {resource.title}
+                  </h3>
+                  <p className="mt-2 flex-1 text-sm muted-text">{resource.description}</p>
+                  <a href={resource.href} target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center text-sm font-semibold" style={{ color: 'var(--primary)' }}>
+                    {resource.linkLabel}
+                    <svg xmlns="http://www.w3.org/2000/svg" className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </a>
+                </article>
+              );
+            })}
           </div>
         </div>
         <div className="card-shell">

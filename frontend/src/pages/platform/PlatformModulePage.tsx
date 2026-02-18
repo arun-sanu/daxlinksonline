@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import IntegrationsModule from './modules/IntegrationsModule';
 import DatabasesModule from './modules/DatabasesModule';
 import WebhooksModule from './modules/WebhooksModule';
@@ -14,6 +14,7 @@ import VPNModule from './modules/VPNModule';
 import SupportModule from './modules/SupportModule';
 import AlertsModule from './modules/AlertsModule';
 import ChatModule from './modules/ChatModule';
+import { PLATFORM_MODULE_META, type PlatformModuleId } from '../../icons/platformIcons';
 
 const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   integrations: IntegrationsModule,
@@ -30,23 +31,6 @@ const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
   vpn: VPNModule,
   support: SupportModule,
   chat: ChatModule
-};
-
-const MODULE_META: Record<string, { label: string; icon: string }> = {
-  integrations: { label: 'Integrations', icon: '/icons/hub.svg' },
-  alerts: { label: 'Alert Rail', icon: '/icons/notifications-active.svg' },
-  databases: { label: 'Databases', icon: '/icons/storage.svg' },
-  webhooks: { label: 'Webhooks', icon: '/icons/link.svg' },
-  workflow: { label: 'Workflow', icon: '/icons/route.svg' },
-  monitoring: { label: 'Monitoring', icon: '/icons/monitoring.svg' },
-  orders: { label: 'Orders', icon: '/icons/alert.svg' },
-  'trade-bots': { label: 'Trade Bots', icon: '/icons/smart-toy.svg' },
-  banking: { label: 'Banking', icon: '/icons/account-balance.svg' },
-  dns: { label: 'DNS', icon: '/icons/dns.svg' },
-  deployment: { label: 'Deployment', icon: '/icons/rocket-launch.svg' },
-  vpn: { label: 'VPN', icon: '/icons/vpn-lock.svg' },
-  support: { label: 'Support', icon: '/icons/support-agent.svg' },
-  chat: { label: 'Chat & Channels', icon: '/icons/notifications.svg' }
 };
 
 export default function PlatformModulePage() {
@@ -71,7 +55,8 @@ export default function PlatformModulePage() {
 
   const hoursMinutes = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const seconds = now.getSeconds().toString().padStart(2, '0');
-  const meta = MODULE_META[moduleId];
+  const meta = PLATFORM_MODULE_META[moduleId as PlatformModuleId];
+  const HeaderIcon = meta?.icon;
 
   return (
     <div className="layout-container pt-16 pb-24 space-y-6">
@@ -79,7 +64,7 @@ export default function PlatformModulePage() {
         <div>
           <p className="section-label">Platform · {meta?.label || moduleId}</p>
           <div className="flex items-center gap-3">
-            {meta?.icon && <img src={meta.icon} alt="" className="h-7 w-7" style={{ filter: 'invert(0.9)' }} />}
+            {HeaderIcon && <HeaderIcon className="h-7 w-7 text-white/85" strokeWidth={1.7} aria-hidden="true" />}
             <h1 className="headline text-3xl">{meta?.label || 'Module detail'}</h1>
           </div>
         </div>

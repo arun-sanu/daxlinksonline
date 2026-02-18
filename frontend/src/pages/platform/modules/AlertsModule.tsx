@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ALERT_TOPIC_ICONS } from '../../../icons/platformIcons';
 
 type Prefs = {
   tvSignals: boolean;
@@ -19,13 +20,13 @@ const defaultPrefs: Prefs = {
   promotions: false
 };
 
-const topics = [
-  { key: 'tvSignals', label: 'TradingView Signals', icon: '📈' },
-  { key: 'botTrades', label: 'Bot Trades', icon: '🤖' },
-  { key: 'exchangeFills', label: 'Exchange Fills', icon: '💱' },
-  { key: 'errors', label: 'Errors & Crashes', icon: '⚠️' },
-  { key: 'subscriptions', label: 'Subscriptions', icon: '💳' },
-  { key: 'promotions', label: 'Promotions', icon: '📣' }
+const topics: Array<{ key: keyof Prefs; label: string }> = [
+  { key: 'tvSignals', label: 'TradingView Signals' },
+  { key: 'botTrades', label: 'Bot Trades' },
+  { key: 'exchangeFills', label: 'Exchange Fills' },
+  { key: 'errors', label: 'Errors & Crashes' },
+  { key: 'subscriptions', label: 'Subscriptions' },
+  { key: 'promotions', label: 'Promotions' }
 ];
 
 export default function AlertsModule() {
@@ -136,23 +137,26 @@ export default function AlertsModule() {
 
         {isTopics && (
           <div className="grid gap-3 sm:grid-cols-2">
-            {topics.map((topic) => (
-              <div key={topic.key} className="rounded-2xl border border-white/10 bg-white/5 p-4 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-xl" aria-hidden="true">{topic.icon}</span>
-                  <span className="text-sm text-main">{topic.label}</span>
+            {topics.map((topic) => {
+              const TopicIcon = ALERT_TOPIC_ICONS[topic.key];
+              return (
+                <div key={topic.key} className="rounded-2xl border border-white/10 bg-white/5 p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <TopicIcon className="h-5 w-5 text-white/85" strokeWidth={1.7} aria-hidden="true" />
+                    <span className="text-sm text-main">{topic.label}</span>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs text-gray-300">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-white/30 bg-transparent"
+                      checked={!!prefs[topic.key]}
+                      onChange={() => toggle(topic.key)}
+                    />
+                    <span>Enable</span>
+                  </label>
                 </div>
-                <label className="inline-flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-white/30 bg-transparent"
-                    checked={!!prefs[topic.key as keyof Prefs]}
-                    onChange={() => toggle(topic.key as keyof Prefs)}
-                  />
-                  <span>Enable</span>
-                </label>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

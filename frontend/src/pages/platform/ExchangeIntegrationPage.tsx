@@ -9,6 +9,7 @@ import {
   testIntegration,
   updateIntegrationCredential
 } from '../../api/integrations';
+import { EXCHANGE_INTEGRATION_TAB_ICONS } from '../../icons/platformIcons';
 
 type ExchangeConfig = {
   name: string;
@@ -696,34 +697,30 @@ function TabHeader({
   active: TabKey;
   status?: string;
 }) {
-  const tabs: { key: TabKey; code: string; label: string; to: string; icon: ReactNode }[] = [
+  const tabs: { key: TabKey; code: string; label: string; to: string }[] = [
     {
       key: 'overview',
       code: 'OV',
       label: 'Overview',
-      to: basePath,
-      icon: <img src="/icons/hub.svg" alt="Overview" className="h-6 w-6 opacity-80" style={{ filter: 'invert(1) brightness(0.85)' }} />
+      to: basePath
     },
     {
       key: 'connectivity',
       code: 'CN',
       label: 'Connectivity',
-      to: `${basePath}/connectivity`,
-      icon: <img src="/icons/link.svg" alt="Connectivity" className="h-6 w-6 opacity-80" style={{ filter: 'invert(1) brightness(0.85)' }} />
+      to: `${basePath}/connectivity`
     },
     {
       key: 'data',
       code: 'DB',
       label: 'Data',
-      to: `${basePath}/data`,
-      icon: <img src="/icons/storage.svg" alt="Data" className="h-6 w-6 opacity-80" style={{ filter: 'invert(1) brightness(0.85)' }} />
+      to: `${basePath}/data`
     },
     {
       key: 'settings',
       code: 'ST',
       label: 'Settings',
-      to: `${basePath}/settings`,
-      icon: <SettingsGlyph />
+      to: `${basePath}/settings`
     }
   ];
 
@@ -750,6 +747,7 @@ function TabHeader({
         <div className="mt-3 inline-flex flex-wrap items-center gap-2 ml-24">
           {tabs.map((tab) => {
             const isActive = active === tab.key;
+            const Icon = EXCHANGE_INTEGRATION_TAB_ICONS[tab.key];
             return (
               <Link
                 key={tab.key}
@@ -763,7 +761,7 @@ function TabHeader({
               >
                 <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
                 <span className={`relative z-10 flex h-10 w-10 items-center justify-center text-base font-semibold ${isActive ? 'opacity-100' : 'opacity-70'}`}>
-                  {tab.icon}
+                  <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
                 </span>
                 <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
               </Link>
@@ -1028,13 +1026,4 @@ function Chip({ label, tone }: { label: string; tone?: 'emerald' | 'amber' }) {
       ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
       : 'border-white/15 bg-white/5 text-gray-200';
   return <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${toneClasses}`}>{label}</span>;
-}
-
-function SettingsGlyph() {
-  return (
-    <svg className="h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M11 3 9.4 4.6a2 2 0 0 1-1.4.6H6a2 2 0 0 0-2 2v2a2 2 0 0 1-.6 1.4L2 12l1.4 1.4A2 2 0 0 1 4 14.8V17a2 2 0 0 0 2 2h2a2 2 0 0 1 1.4.6L11 21l1.6-1.4A2 2 0 0 1 14 19h2a2 2 0 0 0 2-2v-2a2 2 0 0 1 .6-1.4L21 12l-1.4-1.4A2 2 0 0 1 19 9.2V7a2 2 0 0 0-2-2h-2a2 2 0 0 1-1.4-.6Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
 }

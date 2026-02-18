@@ -10,6 +10,7 @@
     "lint": "eslint src --ext .ts,.tsx"
   },
   "dependencies": {
+    "lucide-react": "^0.574.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-grid-layout": "^1.5.2",

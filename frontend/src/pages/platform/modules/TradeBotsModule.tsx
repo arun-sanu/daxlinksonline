@@ -16,13 +16,14 @@ import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../ap
 import { fetchIntegrationDetail, listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import type { Bot, BotInstance, ExchangeAccount, Rental } from '../../../api/types';
+import { TRADE_BOT_TAB_ICONS, type TradeBotsTabKey } from '../../../icons/platformIcons';
 
 type TradeBotRow = Bot & {
   latestVersion?: { id?: string | null; status?: string | null; language?: string | null } | null;
   counts?: { versions?: number; instances?: number; rentals?: number; orders?: number };
 };
 
-type TabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
+type TabKey = TradeBotsTabKey;
 type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 
@@ -1997,12 +1998,12 @@ export default function TradeBotsModule() {
     }
   };
 
-  const tabs: { key: TabKey; label: string; icon: string }[] = [
-    { key: 'overview', label: 'Overview', icon: '/icons/hub.svg' },
-    { key: 'bots', label: 'Bots', icon: '/icons/smart-toy.svg' },
-    { key: 'marketplace', label: 'Marketplace', icon: '/icons/account-balance.svg' },
-    { key: 'rentals', label: 'Rentals', icon: '/icons/route.svg' },
-    { key: 'logs-reports', label: 'Logs + Reports', icon: '/icons/hub.svg' }
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'bots', label: 'Bots' },
+    { key: 'marketplace', label: 'Marketplace' },
+    { key: 'rentals', label: 'Rentals' },
+    { key: 'logs-reports', label: 'Logs + Reports' }
   ];
 
   return (
@@ -2023,6 +2024,7 @@ export default function TradeBotsModule() {
         <div className="mt-3 inline-flex flex-wrap items-center gap-2">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.key;
+            const Icon = TRADE_BOT_TAB_ICONS[tab.key];
             return (
               <button
                 key={tab.key}
@@ -2036,7 +2038,7 @@ export default function TradeBotsModule() {
               >
                 <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
                 <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
-                  <img src={tab.icon} alt="" className="h-6 w-6" style={{ filter: 'invert(1) brightness(0.85)' }} />
+                  <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
                 </span>
                 <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
               </button>
