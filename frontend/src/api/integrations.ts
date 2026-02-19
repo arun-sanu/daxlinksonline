@@ -61,6 +61,15 @@ type CreateIntegrationPayload = {
   description?: string;
 };
 
+type IntegrationControlAction = 'pause' | 'resume' | 'restart' | 'delete';
+
+export type IntegrationControlResult = {
+  action?: string;
+  integration?: Integration;
+  testResult?: { status?: string; error?: string };
+  success?: boolean;
+};
+
 const EMPTY_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000';
 
 function isUuid(value: unknown) {
@@ -186,6 +195,34 @@ export async function testIntegration(integrationId: string): Promise<{ status: 
     { method: 'POST' },
     'Failed to test integration'
   );
+}
+
+export async function controlIntegrationAction(
+  integrationId: string,
+  action: IntegrationControlAction
+): Promise<IntegrationControlResult> {
+  const ws = await requireWorkspaceId();
+  return fetchJson<IntegrationControlResult>(
+    `/api/v1/integrations/${encodeURIComponent(ws)}/${encodeURIComponent(integrationId)}/actions/${action}`,
+    { method: 'POST' },
+    `Failed to ${action} integration`
+  );
+}
+
+export async function pauseIntegration(integrationId: string): Promise<IntegrationControlResult> {
+  return controlIntegrationAction(integrationId, 'pause');
+}
+
+export async function resumeIntegration(integrationId: string): Promise<IntegrationControlResult> {
+  return controlIntegrationAction(integrationId, 'resume');
+}
+
+export async function restartIntegration(integrationId: string): Promise<IntegrationControlResult> {
+  return controlIntegrationAction(integrationId, 'restart');
+}
+
+export async function deleteIntegrationAction(integrationId: string): Promise<IntegrationControlResult> {
+  return controlIntegrationAction(integrationId, 'delete');
 }
 
 export async function fetchIntegrationDetail(integrationId: string): Promise<IntegrationDetail | null> {

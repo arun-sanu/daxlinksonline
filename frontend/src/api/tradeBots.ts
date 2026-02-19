@@ -1,3 +1,4 @@
+import { withApiBase } from './client';
 import type {
   Bot,
   BotInstance,
@@ -15,6 +16,7 @@ import type {
 } from './types';
 
 type ListResponse<T> = { items: T[] };
+type BotControlAction = 'pause' | 'resume' | 'restart' | 'delete';
 
 export type VersionScanResult = {
   status: string;
@@ -250,7 +252,7 @@ export async function updateInstance(id: string, patch: Partial<BotInstance>): P
   ).catch(() => null);
 }
 
-type InstanceControlAction = 'start' | 'pause' | 'stop' | 'restart';
+type InstanceControlAction = 'start' | 'resume' | 'pause' | 'stop' | 'restart';
 
 async function controlInstanceAction(botId: string, id: string, action: InstanceControlAction): Promise<BotInstance | null> {
   const ws = getWorkspaceId();
@@ -258,8 +260,34 @@ async function controlInstanceAction(botId: string, id: string, action: Instance
   return fetchJson<BotInstance>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} instance`).catch(() => null);
 }
 
+export async function controlBotAction(botId: string, action: BotControlAction): Promise<any | null> {
+  const ws = getWorkspaceId();
+  const url = `/api/v1/trade-bots/${ws}/bots/${botId}/actions/${action}`;
+  return fetchJson<any>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} bot`).catch(() => null);
+}
+
+export async function pauseBot(botId: string): Promise<any | null> {
+  return controlBotAction(botId, 'pause');
+}
+
+export async function resumeBot(botId: string): Promise<any | null> {
+  return controlBotAction(botId, 'resume');
+}
+
+export async function restartBot(botId: string): Promise<any | null> {
+  return controlBotAction(botId, 'restart');
+}
+
+export async function deleteBot(botId: string): Promise<any | null> {
+  return controlBotAction(botId, 'delete');
+}
+
 export async function startInstance(botId: string, id: string): Promise<BotInstance | null> {
   return controlInstanceAction(botId, id, 'start');
+}
+
+export async function resumeInstance(botId: string, id: string): Promise<BotInstance | null> {
+  return controlInstanceAction(botId, id, 'resume');
 }
 
 export async function pauseInstance(botId: string, id: string): Promise<BotInstance | null> {
@@ -439,4 +467,3 @@ export async function saveTradeBotRuntimeConfig(
     'Failed to save bot runtime config'
   ).catch(() => null);
 }
-import { withApiBase } from './client';

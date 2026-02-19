@@ -1,19 +1,32 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  deleteBot,
   getTradeBotRuntimeConfig,
   listBots,
   listExchangeAccounts,
   listInstances,
   listRentals,
+  pauseBot,
   pauseInstance,
+  restartBot,
   restartInstance,
+  resumeBot,
   saveTradeBotRuntimeConfig,
   startInstance,
   stopInstance
 } from '../../../api/tradeBots';
 import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
-import { fetchIntegrationDetail, listIntegrations, testIntegration, type Integration } from '../../../api/integrations';
+import {
+  deleteIntegrationAction,
+  fetchIntegrationDetail,
+  listIntegrations,
+  pauseIntegration,
+  restartIntegration,
+  resumeIntegration,
+  testIntegration,
+  type Integration
+} from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import type { Bot, BotInstance, ExchangeAccount, Rental } from '../../../api/types';
 import { TRADE_BOT_TAB_ICONS, type TradeBotsTabKey } from '../../../icons/platformIcons';
@@ -26,6 +39,8 @@ type TradeBotRow = Bot & {
 type TabKey = TradeBotsTabKey;
 type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
+type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
+type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
@@ -981,6 +996,9 @@ export default function TradeBotsModule() {
   const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(false);
   const [instanceActionTargetId, setInstanceActionTargetId] = useState<string | null>(null);
+  const [botActionInFlight, setBotActionInFlight] = useState<BotLifecycleAction | null>(null);
+  const [integrationActionTargetId, setIntegrationActionTargetId] = useState<string | null>(null);
+  const [integrationActionInFlight, setIntegrationActionInFlight] = useState<IntegrationLifecycleAction | null>(null);
   const [testingIntegrationId, setTestingIntegrationId] = useState<string | null>(null);
   const [botLinks, setBotLinks] = useState<Record<string, BotConnectivityLink>>(() => readBotLinks());
   const [botRulesMap, setBotRulesMap] = useState<Record<string, BotTradingRules>>(() => readBotTradingRulesMap());
@@ -1488,6 +1506,78 @@ export default function TradeBotsModule() {
     }
   };
 
+  const handleBotControl = async (action: BotLifecycleAction) => {
+    if (!selectedBot?.id) return;
+    if (action === 'delete') {
+      const confirmed = window.confirm(`Delete bot "${selectedBot.name}"? This cannot be undone.`);
+      if (!confirmed) return;
+    }
+
+    setBotActionInFlight(action);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const runner =
+        action === 'pause'
+          ? pauseBot
+          : action === 'resume'
+            ? resumeBot
+            : action === 'restart'
+              ? restartBot
+              : deleteBot;
+      const result = await runner(selectedBot.id);
+      if (!result) {
+        setModalError(`Failed to ${action} bot.`);
+        return;
+      }
+
+      if (action === 'delete') {
+        const removedBotId = selectedBot.id;
+        setBots((prev) => prev.filter((bot) => bot.id !== removedBotId));
+        setBotLinks((prev) => {
+          const next = { ...prev };
+          delete next[removedBotId];
+          writeBotLinks(next);
+          return next;
+        });
+        setBotRulesMap((prev) => {
+          const next = { ...prev };
+          delete next[removedBotId];
+          writeBotTradingRulesMap(next);
+          return next;
+        });
+        closeBotPopup();
+        return;
+      }
+
+      const nextInstances = Array.isArray((result as any)?.instances) ? ((result as any).instances as BotInstance[]) : [];
+      if (nextInstances.length > 0) {
+        setBotInstances(nextInstances);
+      } else {
+        await loadBotInstances(selectedBot.id, { silent: true });
+      }
+      const updatedCount = Number((result as any)?.updated || 0);
+      const suffix = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'restarted';
+      setModalMessage(`Bot ${suffix}. ${updatedCount} instance${updatedCount === 1 ? '' : 's'} updated.`);
+      setBots((prev) =>
+        prev.map((bot) => {
+          if (bot.id !== selectedBot.id) return bot;
+          return {
+            ...bot,
+            counts: {
+              ...(bot.counts || {}),
+              instances: Number((result as any)?.totalInstances || bot.counts?.instances || 0)
+            }
+          };
+        })
+      );
+    } catch (error: any) {
+      setModalError(error?.message || `Failed to ${action} bot.`);
+    } finally {
+      setBotActionInFlight(null);
+    }
+  };
+
   useEffect(() => {
     const existing = getWorkspaceId();
     const ws = existing || DEFAULT_WORKSPACE_ID;
@@ -1693,6 +1783,9 @@ export default function TradeBotsModule() {
     setBotInstances([]);
     setInstancesLoading(false);
     setInstanceActionTargetId(null);
+    setBotActionInFlight(null);
+    setIntegrationActionTargetId(null);
+    setIntegrationActionInFlight(null);
   };
 
   const loadConnectivityContext = async (botId?: string) => {
@@ -1887,6 +1980,9 @@ export default function TradeBotsModule() {
       setBotInstances([]);
       setInstancesLoading(false);
       setInstanceActionTargetId(null);
+      setBotActionInFlight(null);
+      setIntegrationActionTargetId(null);
+      setIntegrationActionInFlight(null);
     }
   }, [activeTab]);
 
@@ -1995,6 +2091,61 @@ export default function TradeBotsModule() {
       setModalError(error?.message || 'Exchange connectivity check failed.');
     } finally {
       setTestingIntegrationId(null);
+    }
+  };
+
+  const handleIntegrationControl = async (integrationId: string, action: IntegrationLifecycleAction) => {
+    if (!selectedBot) return;
+    if (action === 'delete') {
+      const confirmed = window.confirm('Delete this integration? Linked workflow references will be removed.');
+      if (!confirmed) return;
+    }
+
+    setIntegrationActionTargetId(integrationId);
+    setIntegrationActionInFlight(action);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const runner =
+        action === 'pause'
+          ? pauseIntegration
+          : action === 'resume'
+            ? resumeIntegration
+            : action === 'restart'
+              ? restartIntegration
+              : deleteIntegrationAction;
+      const result = await runner(integrationId);
+
+      if (action === 'delete') {
+        setIntegrations((prev) => prev.filter((integration) => integration.id !== integrationId));
+        if (selectedBotLink.integrationId === integrationId) {
+          const links = upsertBotLink(selectedBot.id, { integrationId: null });
+          const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+          if (!persisted) return;
+          setIntegrationDetail(null);
+          setExchangeSnapshot(null);
+          setTradingDetailsError('');
+        }
+        setModalMessage('Integration deleted.');
+        return;
+      }
+
+      const nextIntegration = (result as any)?.integration || null;
+      if (nextIntegration?.id) {
+        setIntegrations((prev) =>
+          prev.map((integration) => (integration.id === integrationId ? { ...integration, ...nextIntegration } : integration))
+        );
+      }
+      if (selectedBotLink.integrationId === integrationId) {
+        await loadTradingDetails(integrationId);
+      }
+      const label = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'restarted';
+      setModalMessage(`Integration ${label}.`);
+    } catch (error: any) {
+      setModalError(error?.message || `Failed to ${action} integration.`);
+    } finally {
+      setIntegrationActionTargetId(null);
+      setIntegrationActionInFlight(null);
     }
   };
 
@@ -2304,10 +2455,47 @@ export default function TradeBotsModule() {
                       <div>
                         <p className="text-sm font-semibold text-white">Bot runtime controls</p>
                         <p className="mt-1 text-xs text-gray-400">
-                          Start, pause, restart, or stop each deployed instance for this bot.
+                          Control all bot instances at once, or run lifecycle actions on individual instances.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => handleBotControl('pause')}
+                          disabled={Boolean(botActionInFlight)}
+                        >
+                          Pause Bot
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => handleBotControl('resume')}
+                          disabled={Boolean(botActionInFlight)}
+                        >
+                          Resume Bot
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => handleBotControl('restart')}
+                          disabled={Boolean(botActionInFlight)}
+                        >
+                          Restart Bot
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-rose-400/45 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => handleBotControl('delete')}
+                          disabled={Boolean(botActionInFlight)}
+                        >
+                          Delete Bot
+                        </button>
+                        {botActionInFlight && (
+                          <span className="rounded-lg border border-primary-300/45 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                            Applying {botActionInFlight}
+                          </span>
+                        )}
                         <span className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200">
                           running {runningInstanceCount}/{botInstances.length}
                         </span>
@@ -2445,6 +2633,8 @@ export default function TradeBotsModule() {
                     {integrations.map((integration) => {
                       const linked = selectedBotLink.integrationId === integration.id;
                       const healthy = integrationIsHealthy(integration.status);
+                      const isActionBusy = integrationActionTargetId === integration.id;
+                      const statusTone = String(integration.status || '').toLowerCase();
                       return (
                         <div key={integration.id} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <div className="flex items-start justify-between gap-2">
@@ -2459,11 +2649,17 @@ export default function TradeBotsModule() {
                             </span>
                           </div>
                           <p className="mt-1 text-[11px] text-gray-400">Last tested {formatDate(integration.lastTestedAt || null)}</p>
+                          {isActionBusy && (
+                            <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                              Applying {integrationActionInFlight}
+                            </p>
+                          )}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <button
                               type="button"
                               className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
                               onClick={() => handleLinkIntegration(integration.id)}
+                              disabled={isActionBusy}
                             >
                               {linked ? 'Linked' : 'Link'}
                             </button>
@@ -2471,9 +2667,41 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleTestIntegration(integration.id)}
-                              disabled={testingIntegrationId === integration.id}
+                              disabled={testingIntegrationId === integration.id || isActionBusy}
                             >
                               {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleIntegrationControl(integration.id, 'pause')}
+                              disabled={isActionBusy || statusTone === 'paused'}
+                            >
+                              Pause
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleIntegrationControl(integration.id, 'resume')}
+                              disabled={isActionBusy || statusTone !== 'paused'}
+                            >
+                              Resume
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleIntegrationControl(integration.id, 'restart')}
+                              disabled={isActionBusy}
+                            >
+                              Restart
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleIntegrationControl(integration.id, 'delete')}
+                              disabled={isActionBusy}
+                            >
+                              Delete
                             </button>
                           </div>
                         </div>

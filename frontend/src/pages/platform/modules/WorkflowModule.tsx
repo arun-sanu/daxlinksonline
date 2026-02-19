@@ -2,9 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchWorkflowNodes,
   fetchRoutingRules,
+  fetchWorkflowConfig,
   fetchWorkflowEvents,
   fetchExecutionHistory,
   applyRoutingConfig,
+  controlWorkflowAction,
+  deleteWorkflow,
+  controlWorkflowRuleAction,
+  deleteWorkflowRule,
   createNode,
   simulateRouting
 } from '../../../services/workflowApi';
@@ -193,6 +198,8 @@ const PORT_RADIUS = 7;
 const SERVER_ID = 'server-core';
 type Mode = 'view' | 'create';
 type PortKind = 'input' | 'output' | 'logic' | 'notify';
+type WorkflowLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
+type WorkflowRuleLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
 
 function RuleModal({
   open,
@@ -892,6 +899,11 @@ export default function WorkflowModule() {
   const [activityTab, setActivityTab] = useState<'executions' | 'events'>('executions');
   const [viewTab, setViewTab] = useState<'graph' | 'catalog'>('graph');
   const [savingRules, setSavingRules] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<'active' | 'paused'>('active');
+  const [workflowActionInFlight, setWorkflowActionInFlight] = useState<WorkflowLifecycleAction | null>(null);
+  const [ruleActionTargetId, setRuleActionTargetId] = useState<string | null>(null);
+  const [ruleActionInFlight, setRuleActionInFlight] = useState<WorkflowRuleLifecycleAction | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -1152,15 +1164,18 @@ export default function WorkflowModule() {
         return;
       }
       try {
-        const [nodesRespRaw, rulesRespRaw, eventsRespRaw, tradeBotsResp] = await Promise.all([
+        const [nodesRespRaw, rulesRespRaw, eventsRespRaw, workflowConfigResp, tradeBotsResp] = await Promise.all([
           fetchWorkflowNodes(workspaceId),
           fetchRoutingRules(workspaceId),
           fetchWorkflowEvents(workspaceId),
+          fetchWorkflowConfig(workspaceId),
           listBots().catch(() => ({ items: [] }))
         ]);
         const nodesResp = nodesRespRaw && typeof nodesRespRaw === 'object' ? nodesRespRaw : {};
         const rulesResp = toArray(rulesRespRaw);
         const eventsResp = toArray(eventsRespRaw);
+        const statusRaw = String((workflowConfigResp as any)?.workflowConfig?.status || 'active').toLowerCase();
+        const resolvedStatus = statusRaw === 'paused' ? 'paused' : 'active';
         const { webhooks = [], bots = [], integrations = [] } = nodesResp || {};
         const linksMap = readBotConnectivityLinks();
         const connectedLinks = extractConnectedBotWorkflowLinks(linksMap);
@@ -1172,6 +1187,7 @@ export default function WorkflowModule() {
         if (!mounted) return;
         setConnectedBotLinks(connectedLinks);
         setConnectedBotCatalog(connectedCatalog);
+        setWorkflowStatus(resolvedStatus);
         const nodesBuilt = buildNodes(toArray(webhooks), toArray(bots), toArray(integrations), connectedCatalog, connectedLinks);
         console.log('[WM] Nodes loaded:', nodesBuilt);
         const edgesBuilt = buildEdges(nodesBuilt, rulesResp, eventsResp, connectedLinks);
@@ -1195,7 +1211,7 @@ export default function WorkflowModule() {
     return () => {
       mounted = false;
     };
-  }, [workspaceId, workspaceReady]);
+  }, [workspaceId, workspaceReady, reloadNonce]);
 
   useEffect(() => {
     function handleMove(e: MouseEvent) {
@@ -1387,28 +1403,68 @@ export default function WorkflowModule() {
   const sourceOptions = safeNodes.filter((n) => n.role === 'source');
   const destinationOptions = safeNodes.filter((n) => n.role === 'destination');
 
-  async function handleDeleteRule(ruleId: string) {
+  async function handleWorkflowLifecycleAction(action: WorkflowLifecycleAction) {
     if (!workspaceReady) {
-      setError('Workspace ID missing or placeholder. Log in again to edit routing rules.');
+      setError('Workspace ID missing or placeholder. Log in again to control workflow.');
       return;
     }
-    const safeRuleList = Array.isArray(rules) ? rules : [];
-    const nextRules = safeRuleList.filter((r) => r.id !== ruleId);
-    setSavingRules(true);
+    if (action === 'delete') {
+      const confirmed = window.confirm('Delete workflow config and all routing rules?');
+      if (!confirmed) return;
+    }
+
+    setWorkflowActionInFlight(action);
+    setError(null);
     try {
-      await applyRoutingConfig(workspaceId, nextRules);
-      const [rulesResp, eventsResp] = await Promise.all([fetchRoutingRules(workspaceId), fetchWorkflowEvents(workspaceId)]);
-      const reRules = Array.isArray(rulesResp) ? rulesResp : [];
-      const edgesBuilt = buildEdges(safeNodes, reRules, eventsResp || [], connectedBotLinks);
-      const nodesWithHealth = applyNodeHealth(safeNodes, edgesBuilt, eventsResp || []);
-      setRules(reRules);
-      setEvents(eventsResp || []);
-      setEdges(edgesBuilt);
-      setNodes(nodesWithHealth);
+      if (action === 'delete') {
+        await deleteWorkflow(workspaceId);
+      } else {
+        await controlWorkflowAction(workspaceId, action);
+      }
+      setWorkflowStatus(action === 'pause' ? 'paused' : 'active');
+      setReloadNonce((value) => value + 1);
+      const suffix = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'restart' ? 'restarted' : 'deleted';
+      showToast(`Workflow ${suffix}`, 'success');
     } catch (err: any) {
-      setError(err?.message || 'Failed to delete rule');
+      const message = err?.message || `Failed to ${action} workflow`;
+      setError(message);
+      showToast(message, 'error');
+    } finally {
+      setWorkflowActionInFlight(null);
+    }
+  }
+
+  async function handleRuleLifecycleAction(ruleId: string, action: WorkflowRuleLifecycleAction) {
+    if (!workspaceReady) {
+      setError('Workspace ID missing or placeholder. Log in again to control workflow rules.');
+      return;
+    }
+    if (action === 'delete') {
+      const confirmed = window.confirm('Delete this rule?');
+      if (!confirmed) return;
+    }
+
+    setRuleActionTargetId(ruleId);
+    setRuleActionInFlight(action);
+    setSavingRules(true);
+    setError(null);
+    try {
+      if (action === 'delete') {
+        await deleteWorkflowRule(workspaceId, ruleId);
+      } else {
+        await controlWorkflowRuleAction(workspaceId, ruleId, action);
+      }
+      setReloadNonce((value) => value + 1);
+      const suffix = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'restart' ? 'restarted' : 'deleted';
+      showToast(`Rule ${suffix}`, 'success');
+    } catch (err: any) {
+      const message = err?.message || `Failed to ${action} rule`;
+      setError(message);
+      showToast(message, 'error');
     } finally {
       setSavingRules(false);
+      setRuleActionTargetId(null);
+      setRuleActionInFlight(null);
     }
   }
 
@@ -1459,20 +1515,61 @@ export default function WorkflowModule() {
               <span className="text-gray-500">Workspace</span>
               <span className="text-white">{workspaceId || 'not-set'}</span>
             </span>
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${
+                workflowStatus === 'paused'
+                  ? 'border-amber-300/45 bg-amber-500/15 text-amber-100'
+                  : 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100'
+              }`}
+            >
+              {workflowStatus}
+            </span>
           </div>
-          <div className="inline-flex rounded-full border border-white/15 bg-black/40 p-1 text-xs text-gray-200">
-            <button
-              className={`px-3 py-1.5 rounded-full transition ${viewTab === 'graph' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
-              onClick={() => setViewTab('graph')}
-            >
-              Graph
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-full transition ${viewTab === 'catalog' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
-              onClick={() => setViewTab('catalog')}
-            >
-              Catalog
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="rounded-lg border border-amber-300/45 bg-amber-500/15 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => handleWorkflowLifecycleAction('pause')}
+                disabled={Boolean(workflowActionInFlight) || workflowStatus === 'paused'}
+              >
+                Pause
+              </button>
+              <button
+                className="rounded-lg border border-emerald-300/45 bg-emerald-500/15 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => handleWorkflowLifecycleAction('resume')}
+                disabled={Boolean(workflowActionInFlight) || workflowStatus !== 'paused'}
+              >
+                Resume
+              </button>
+              <button
+                className="rounded-lg border border-primary-300/45 bg-primary-500/15 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => handleWorkflowLifecycleAction('restart')}
+                disabled={Boolean(workflowActionInFlight)}
+              >
+                Restart
+              </button>
+              <button
+                className="rounded-lg border border-rose-300/45 bg-rose-500/15 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => handleWorkflowLifecycleAction('delete')}
+                disabled={Boolean(workflowActionInFlight)}
+              >
+                Delete
+              </button>
+            </div>
+            <div className="inline-flex rounded-full border border-white/15 bg-black/40 p-1 text-xs text-gray-200">
+              <button
+                className={`px-3 py-1.5 rounded-full transition ${viewTab === 'graph' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
+                onClick={() => setViewTab('graph')}
+              >
+                Graph
+              </button>
+              <button
+                className={`px-3 py-1.5 rounded-full transition ${viewTab === 'catalog' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
+                onClick={() => setViewTab('catalog')}
+              >
+                Catalog
+              </button>
+            </div>
           </div>
         </div>
         {viewTab === 'catalog' && (
@@ -1676,7 +1773,29 @@ export default function WorkflowModule() {
               </div>
               <div className="flex justify-end gap-2 text-xs">
                 <button
+                  className="px-3 py-1 rounded-lg border border-amber-300/40 text-amber-100 hover:border-amber-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled === false}
+                  onClick={() => handleRuleLifecycleAction(rule.id, 'pause')}
+                >
+                  Pause
+                </button>
+                <button
+                  className="px-3 py-1 rounded-lg border border-emerald-300/40 text-emerald-100 hover:border-emerald-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled !== false}
+                  onClick={() => handleRuleLifecycleAction(rule.id, 'resume')}
+                >
+                  Resume
+                </button>
+                <button
+                  className="px-3 py-1 rounded-lg border border-primary-300/40 text-primary-100 hover:border-primary-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={savingRules || ruleActionTargetId === rule.id}
+                  onClick={() => handleRuleLifecycleAction(rule.id, 'restart')}
+                >
+                  Restart
+                </button>
+                <button
                   className="px-3 py-1 rounded-lg border border-white/10 text-gray-200 hover:border-white/30"
+                  disabled={savingRules || ruleActionTargetId === rule.id}
                   onClick={() =>
                     setRuleModal({
                       open: true,
@@ -1690,15 +1809,16 @@ export default function WorkflowModule() {
                 </button>
                 <button
                   className="px-3 py-1 rounded-lg border border-red-400/40 text-red-200 hover:border-red-300/80"
-                  disabled={savingRules}
-                  onClick={() => {
-                    if (window.confirm('Delete this rule?')) {
-                      handleDeleteRule(rule.id);
-                    }
-                  }}
+                  disabled={savingRules || ruleActionTargetId === rule.id}
+                  onClick={() => handleRuleLifecycleAction(rule.id, 'delete')}
                 >
                   Delete
                 </button>
+                {ruleActionTargetId === rule.id && (
+                  <span className="px-2 py-1 rounded-lg border border-primary-300/40 text-primary-100">
+                    {ruleActionInFlight}
+                  </span>
+                )}
               </div>
             </div>
           ))}

@@ -1,6 +1,7 @@
 import { withApiBase } from '../api/client';
 
 const defaultHeaders = { 'Content-Type': 'application/json' };
+type WorkflowControlAction = 'pause' | 'resume' | 'restart' | 'delete';
 
 function generateRuleId() {
   try {
@@ -133,6 +134,14 @@ export async function fetchRoutingRules(workspaceId: string) {
   return normalized;
 }
 
+export async function fetchWorkflowConfig(workspaceId: string) {
+  const ws = workspaceId || getWorkspaceId();
+  const data = await safeFetch<any>(`/api/v1/workflow/config?workspaceId=${encodeURIComponent(ws)}`, undefined, {
+    workflowConfig: { status: 'active', rules: [] }
+  });
+  return data || { workflowConfig: { status: 'active', rules: [] } };
+}
+
 export async function fetchWorkflowEvents(workspaceId: string) {
   const ws = workspaceId || getWorkspaceId();
   const data = await safeFetch<any>(`/api/v1/workflow/events?workspaceId=${encodeURIComponent(ws)}`, undefined, { events: [] });
@@ -153,6 +162,53 @@ export async function applyRoutingConfig(workspaceId: string, rules: any[]) {
     headers: { ...defaultHeaders, ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify(payload)
+  });
+  return handleJson<any>(res);
+}
+
+export async function controlWorkflowAction(workspaceId: string, action: WorkflowControlAction) {
+  const ws = workspaceId || getWorkspaceId();
+  const res = await fetch(withApiBase(`/api/v1/workflow/actions/${action}?workspaceId=${encodeURIComponent(ws)}`), {
+    method: 'POST',
+    headers: { ...defaultHeaders, ...authHeaders() },
+    credentials: 'include'
+  });
+  return handleJson<any>(res);
+}
+
+export async function deleteWorkflow(workspaceId: string) {
+  const ws = workspaceId || getWorkspaceId();
+  const res = await fetch(withApiBase(`/api/v1/workflow/config?workspaceId=${encodeURIComponent(ws)}`), {
+    method: 'DELETE',
+    headers: { ...defaultHeaders, ...authHeaders() },
+    credentials: 'include'
+  });
+  return handleJson<any>(res);
+}
+
+export async function controlWorkflowRuleAction(
+  workspaceId: string,
+  ruleId: string,
+  action: WorkflowControlAction
+) {
+  const ws = workspaceId || getWorkspaceId();
+  const res = await fetch(
+    withApiBase(`/api/v1/workflow/rules/${encodeURIComponent(ruleId)}/actions/${action}?workspaceId=${encodeURIComponent(ws)}`),
+    {
+      method: 'POST',
+      headers: { ...defaultHeaders, ...authHeaders() },
+      credentials: 'include'
+    }
+  );
+  return handleJson<any>(res);
+}
+
+export async function deleteWorkflowRule(workspaceId: string, ruleId: string) {
+  const ws = workspaceId || getWorkspaceId();
+  const res = await fetch(withApiBase(`/api/v1/workflow/rules/${encodeURIComponent(ruleId)}?workspaceId=${encodeURIComponent(ws)}`), {
+    method: 'DELETE',
+    headers: { ...defaultHeaders, ...authHeaders() },
+    credentials: 'include'
   });
   return handleJson<any>(res);
 }
