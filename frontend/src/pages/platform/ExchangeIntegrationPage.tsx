@@ -2,11 +2,16 @@ import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   createIntegration,
+  deleteIntegrationAction,
   deleteIntegration,
   fetchIntegrationDetail,
   listIntegrations,
+  pauseIntegration,
   purgeIntegrationCredentials,
+  restartIntegration,
+  resumeIntegration,
   testIntegration,
+  unlinkIntegration,
   updateIntegrationCredential
 } from '../../api/integrations';
 import { EXCHANGE_INTEGRATION_TAB_ICONS } from '../../icons/platformIcons';
@@ -56,6 +61,7 @@ type SavedCredential = {
 
 type ConnectivityLog = { id: string; status: string; message: string; createdAt: string };
 type TabKey = 'overview' | 'connectivity' | 'data' | 'settings';
+type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'unlink' | 'delete';
 
 export default function ExchangeIntegrationPage() {
   const { exchangeId } = useParams<{ exchangeId: string }>();
@@ -89,6 +95,7 @@ export default function ExchangeIntegrationPage() {
   const [auditTrailEnabled, setAuditTrailEnabled] = useState(true);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [defaultEnvironment, setDefaultEnvironment] = useState('live');
+  const [lifecycleActionInFlight, setLifecycleActionInFlight] = useState<IntegrationLifecycleAction | null>(null);
 
   const title = useMemo(() => (config ? `${config.name} Integration` : 'Integration'), [config]);
 
@@ -235,6 +242,77 @@ export default function ExchangeIntegrationPage() {
       setError(err?.message || 'Failed to delete integration');
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  async function handleIntegrationLifecycle(action: IntegrationLifecycleAction) {
+    if (!integrationId) {
+      setError('Create the integration before running lifecycle actions.');
+      return;
+    }
+
+    if (action === 'delete') {
+      const confirmed = window.confirm('Delete this integration and all stored credentials? This cannot be undone.');
+      if (!confirmed) return;
+    }
+
+    if (action === 'unlink') {
+      const confirmed = window.confirm(
+        'Unlink this integration from workflow routes and runtime links? The integration and credentials will be kept.'
+      );
+      if (!confirmed) return;
+    }
+
+    setLifecycleActionInFlight(action);
+    setError(null);
+    setMessage(null);
+    try {
+      const runner =
+        action === 'pause'
+          ? pauseIntegration
+          : action === 'resume'
+            ? resumeIntegration
+            : action === 'restart'
+              ? restartIntegration
+              : action === 'unlink'
+                ? unlinkIntegration
+                : deleteIntegrationAction;
+      const result = await runner(integrationId);
+
+      if (action === 'delete') {
+        setSavedCreds([]);
+        setIntegrationId(null);
+        setIntegrationStatus(null);
+        setLogs([]);
+        setMessage('Integration deleted.');
+        navigate('/platform/integrations');
+        return;
+      }
+
+      const nextStatus = (result as any)?.integration?.status || null;
+      if (nextStatus) {
+        setIntegrationStatus(nextStatus);
+      }
+
+      if (action === 'unlink') {
+        const unlinkSummary = (result as any)?.unlinkResult || null;
+        if (unlinkSummary?.changed) {
+          const removedRules = Number(unlinkSummary.removedRules || 0);
+          const clearedRuntimeLinks = Number(unlinkSummary.clearedRuntimeLinks || 0);
+          setMessage(`Integration unlinked (rules ${removedRules}, runtime links ${clearedRuntimeLinks}).`);
+        } else {
+          setMessage('Integration already had no active workflow/runtime links.');
+        }
+        return;
+      }
+
+      const label = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'restarted';
+      setMessage(`Integration ${label}.`);
+      await hydrateDetail(integrationId);
+    } catch (err: any) {
+      setError(err?.message || `Failed to ${action} integration.`);
+    } finally {
+      setLifecycleActionInFlight(null);
     }
   }
 
@@ -578,6 +656,58 @@ export default function ExchangeIntegrationPage() {
               }
               helper={config.supportsSandbox ? 'Toggle applies to the primary key.' : 'Sandbox not provided for this venue.'}
             />
+
+            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-sm font-semibold text-main">Lifecycle controls</p>
+              <p className="text-xs text-gray-400">Pause, resume, restart, unlink, or delete this integration.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleIntegrationLifecycle('pause')}
+                  disabled={!integrationId || lifecycleActionInFlight !== null || integrationStatus === 'paused'}
+                  className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Pause
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleIntegrationLifecycle('resume')}
+                  disabled={!integrationId || lifecycleActionInFlight !== null || integrationStatus !== 'paused'}
+                  className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleIntegrationLifecycle('restart')}
+                  disabled={!integrationId || lifecycleActionInFlight !== null}
+                  className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Restart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleIntegrationLifecycle('unlink')}
+                  disabled={!integrationId || lifecycleActionInFlight !== null}
+                  className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Unlink
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleIntegrationLifecycle('delete')}
+                  disabled={!integrationId || lifecycleActionInFlight !== null}
+                  className="rounded-lg border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Delete
+                </button>
+              </div>
+              {lifecycleActionInFlight && (
+                <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-primary-100">
+                  Applying {lifecycleActionInFlight}
+                </p>
+              )}
+            </div>
 
             <SettingRow
               title="Status webhooks"

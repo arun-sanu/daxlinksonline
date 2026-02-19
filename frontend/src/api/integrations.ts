@@ -61,12 +61,13 @@ type CreateIntegrationPayload = {
   description?: string;
 };
 
-type IntegrationControlAction = 'pause' | 'resume' | 'restart' | 'delete';
+type IntegrationControlAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
 
 export type IntegrationControlResult = {
   action?: string;
   integration?: Integration;
   testResult?: { status?: string; error?: string };
+  unlinkResult?: { changed?: boolean; removedRules?: number; clearedRuntimeLinks?: number };
   success?: boolean;
 };
 
@@ -223,6 +224,10 @@ export async function restartIntegration(integrationId: string): Promise<Integra
 
 export async function deleteIntegrationAction(integrationId: string): Promise<IntegrationControlResult> {
   return controlIntegrationAction(integrationId, 'delete');
+}
+
+export async function unlinkIntegration(integrationId: string): Promise<IntegrationControlResult> {
+  return controlIntegrationAction(integrationId, 'unlink');
 }
 
 export async function fetchIntegrationDetail(integrationId: string): Promise<IntegrationDetail | null> {

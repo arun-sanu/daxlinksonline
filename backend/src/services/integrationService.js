@@ -2,8 +2,10 @@ import { prisma } from '../utils/prisma.js';
 import { maskCredential, createCredentialReference } from './workspaceService.js';
 import { createExchange } from '../sdk/index.js';
 import { encrypt, decrypt } from '../lib/kms.js';
+import { getWorkspaceWorkflowConfig, saveWorkspaceWorkflowConfig } from './workflowService.js';
 
 const EMPTY_API_KEY_MASK = '****';
+export const SUPPORTED_INTEGRATION_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'restart', 'delete', 'unlink']);
 
 function normalizeSecret(value, label) {
   const trimmed = typeof value === 'string' ? value.trim() : String(value || '').trim();
@@ -148,6 +150,84 @@ function viewForCredential(integration, credentials, credentialId) {
     index,
     primaryCredentialId: primary ? primary.id : null
   });
+}
+
+function normalizeIntegrationControlAction(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!SUPPORTED_INTEGRATION_CONTROL_ACTIONS.includes(normalized)) {
+    throw Object.assign(
+      new Error(
+        `Unsupported integration action "${value}". Supported actions: ${SUPPORTED_INTEGRATION_CONTROL_ACTIONS.join(', ')}`
+      ),
+      { status: 400 }
+    );
+  }
+  return normalized;
+}
+
+async function assertIntegrationInWorkspace(workspaceId, integrationId) {
+  const integration = await prisma.integration.findFirst({
+    where: {
+      id: integrationId,
+      workspaceId
+    }
+  });
+  if (!integration) {
+    throw Object.assign(new Error('Integration not found'), { status: 404 });
+  }
+  return integration;
+}
+
+async function cleanupWorkflowReferencesForIntegration(workspaceId, integrationId) {
+  const cfg = await getWorkspaceWorkflowConfig(workspaceId);
+  const currentRules = Array.isArray(cfg.rules) ? cfg.rules : [];
+  const runtimeConfigsRaw = cfg?.tradeBots?.runtimeConfigs;
+  const runtimeConfigs =
+    runtimeConfigsRaw && typeof runtimeConfigsRaw === 'object' && !Array.isArray(runtimeConfigsRaw)
+      ? runtimeConfigsRaw
+      : {};
+
+  const nextRules = currentRules.filter(
+    (rule) => !(rule?.destination?.type === 'integration' && rule?.destination?.id === integrationId)
+  );
+  const removedRules = currentRules.length - nextRules.length;
+  let runtimeChanged = false;
+  let clearedRuntimeLinks = 0;
+  const nextRuntimeConfigs = {};
+  for (const [botId, entry] of Object.entries(runtimeConfigs)) {
+    const safeEntry = entry && typeof entry === 'object' ? { ...entry } : {};
+    const safeLinks = safeEntry.links && typeof safeEntry.links === 'object' ? { ...safeEntry.links } : {};
+    if (safeLinks.integrationId === integrationId) {
+      safeLinks.integrationId = null;
+      safeLinks.updatedAt = new Date().toISOString();
+      runtimeChanged = true;
+      clearedRuntimeLinks += 1;
+    }
+    nextRuntimeConfigs[botId] = { ...safeEntry, links: safeLinks };
+  }
+
+  const rulesChanged = nextRules.length !== currentRules.length;
+  if (!rulesChanged && !runtimeChanged) {
+    return { changed: false, removedRules: 0, clearedRuntimeLinks: 0 };
+  }
+
+  const nextConfig = {
+    ...cfg,
+    rules: nextRules,
+    tradeBots: {
+      ...(cfg.tradeBots && typeof cfg.tradeBots === 'object' ? cfg.tradeBots : {}),
+      runtimeConfigs: nextRuntimeConfigs
+    }
+  };
+
+  await saveWorkspaceWorkflowConfig(workspaceId, nextConfig);
+  return {
+    changed: true,
+    removedRules,
+    clearedRuntimeLinks
+  };
 }
 
 export async function listIntegrations(workspaceId) {
@@ -382,6 +462,84 @@ export async function testIntegration(workspaceId, integrationId) {
   }
 }
 
+export async function controlIntegration(workspaceId, integrationId, action) {
+  const normalizedAction = normalizeIntegrationControlAction(action);
+  await assertIntegrationInWorkspace(workspaceId, integrationId);
+
+  if (normalizedAction === 'delete') {
+    return deleteIntegration(workspaceId, integrationId);
+  }
+
+  if (normalizedAction === 'restart') {
+    await prisma.integration.update({
+      where: { id: integrationId },
+      data: {
+        status: 'pending',
+        lastTestedAt: null
+      }
+    });
+    await prisma.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.restarted',
+        detail: 'Integration restart requested'
+      }
+    });
+    const testResult = await testIntegration(workspaceId, integrationId);
+    const integration = await prisma.integration.findUnique({
+      where: { id: integrationId }
+    });
+    return {
+      action: normalizedAction,
+      integration,
+      testResult
+    };
+  }
+
+  if (normalizedAction === 'unlink') {
+    const unlinkResult = await cleanupWorkflowReferencesForIntegration(workspaceId, integrationId);
+    const integration = await prisma.integration.findUnique({
+      where: { id: integrationId }
+    });
+    await prisma.credentialEvent.create({
+      data: {
+        workspaceId,
+        integrationId,
+        eventType: 'integration.unlinked',
+        detail: unlinkResult?.changed
+          ? `Integration unlinked from workflow references (rules=${unlinkResult.removedRules}, runtimeLinks=${unlinkResult.clearedRuntimeLinks})`
+          : 'Integration unlink requested but no workflow references were linked'
+      }
+    });
+    return {
+      action: normalizedAction,
+      integration,
+      unlinkResult: unlinkResult || { changed: false, removedRules: 0, clearedRuntimeLinks: 0 }
+    };
+  }
+
+  const status = normalizedAction === 'pause' ? 'paused' : 'active';
+  const integration = await prisma.integration.update({
+    where: { id: integrationId },
+    data: {
+      status
+    }
+  });
+  await prisma.credentialEvent.create({
+    data: {
+      workspaceId,
+      integrationId,
+      eventType: normalizedAction === 'pause' ? 'integration.paused' : 'integration.resumed',
+      detail: normalizedAction === 'pause' ? 'Integration paused by user' : 'Integration resumed by user'
+    }
+  });
+  return {
+    action: normalizedAction,
+    integration
+  };
+}
+
 export async function renameIntegration(workspaceId, integrationId, patch) {
   const existing = await prisma.integration.findFirst({ where: { id: integrationId, workspaceId } });
   if (!existing) {
@@ -515,6 +673,7 @@ export async function deleteIntegration(workspaceId, integrationId) {
   }
 
   await prisma.integration.delete({ where: { id: integrationId } });
+  await cleanupWorkflowReferencesForIntegration(workspaceId, integrationId);
 
   return { success: true };
 }

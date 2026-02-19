@@ -25,6 +25,7 @@ import {
   restartIntegration,
   resumeIntegration,
   testIntegration,
+  unlinkIntegration,
   type Integration
 } from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
@@ -40,7 +41,7 @@ type TabKey = TradeBotsTabKey;
 type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
-type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
+type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
@@ -2100,6 +2101,12 @@ export default function TradeBotsModule() {
       const confirmed = window.confirm('Delete this integration? Linked workflow references will be removed.');
       if (!confirmed) return;
     }
+    if (action === 'unlink') {
+      const confirmed = window.confirm(
+        'Unlink this integration from workflow routes and runtime links? The integration and credentials will be kept.'
+      );
+      if (!confirmed) return;
+    }
 
     setIntegrationActionTargetId(integrationId);
     setIntegrationActionInFlight(action);
@@ -2113,7 +2120,9 @@ export default function TradeBotsModule() {
             ? resumeIntegration
             : action === 'restart'
               ? restartIntegration
-              : deleteIntegrationAction;
+              : action === 'unlink'
+                ? unlinkIntegration
+                : deleteIntegrationAction;
       const result = await runner(integrationId);
 
       if (action === 'delete') {
@@ -2136,6 +2145,27 @@ export default function TradeBotsModule() {
           prev.map((integration) => (integration.id === integrationId ? { ...integration, ...nextIntegration } : integration))
         );
       }
+
+      if (action === 'unlink') {
+        if (selectedBotLink.integrationId === integrationId) {
+          const links = upsertBotLink(selectedBot.id, { integrationId: null });
+          const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+          if (!persisted) return;
+          setIntegrationDetail(null);
+          setExchangeSnapshot(null);
+          setTradingDetailsError('');
+        }
+        const unlinkSummary = (result as any)?.unlinkResult || null;
+        if (unlinkSummary?.changed) {
+          const removedRules = Number(unlinkSummary.removedRules || 0);
+          const clearedRuntimeLinks = Number(unlinkSummary.clearedRuntimeLinks || 0);
+          setModalMessage(`Integration unlinked (rules ${removedRules}, runtime links ${clearedRuntimeLinks}).`);
+        } else {
+          setModalMessage('Integration already had no active workflow/runtime links.');
+        }
+        return;
+      }
+
       if (selectedBotLink.integrationId === integrationId) {
         await loadTradingDetails(integrationId);
       }
@@ -2694,6 +2724,14 @@ export default function TradeBotsModule() {
                               disabled={isActionBusy}
                             >
                               Restart
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => handleIntegrationControl(integration.id, 'unlink')}
+                              disabled={isActionBusy}
+                            >
+                              Unlink
                             </button>
                             <button
                               type="button"

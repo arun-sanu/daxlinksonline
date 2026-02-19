@@ -1,6 +1,7 @@
 // Removed duplicate handlePurgeIntegrationCredentials declaration
 import { z } from 'zod';
 import {
+  controlIntegration,
   listIntegrations,
   createIntegration,
   createIntegrationCredential,
@@ -21,6 +22,12 @@ const workspaceParamSchema = z.object({ workspaceId: z.string().uuid() });
 const integrationParamSchema = z.object({
   workspaceId: z.string().uuid(),
   integrationId: z.string().uuid()
+});
+
+const integrationActionParamSchema = z.object({
+  workspaceId: z.string().uuid(),
+  integrationId: z.string().uuid(),
+  action: z.enum(['pause', 'resume', 'restart', 'delete', 'unlink'])
 });
 
 const credentialParamSchema = z.object({
@@ -152,6 +159,36 @@ export async function handleGetIntegrationDetail(req, res, next) {
     const { workspaceId, integrationId } = integrationParamSchema.parse(req.params);
     const detail = await getIntegrationDetail(workspaceId, integrationId);
     res.json(detail);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleControlIntegration(req, res, next) {
+  try {
+    const { workspaceId, integrationId, action } = integrationActionParamSchema.parse(req.params || {});
+    const result = await controlIntegration(workspaceId, integrationId, action);
+
+    try {
+      await recordAudit({
+        userId: req.user?.id,
+        action: `INTEGRATION_${action.toUpperCase()}`,
+        entityType: 'Integration',
+        entityId: integrationId,
+        summary: `${integrationId} ${action}`,
+        detail: {
+          workspaceId,
+          integrationId,
+          action
+        }
+      });
+    } catch {}
+
+    res.json(result);
+    const reason =
+      action === 'delete' ? 'integration.deleted' : action === 'unlink' ? 'integration.unlinked' : `integration.${action}`;
+    broadcastSnapshot(workspaceId, reason, { integrationId });
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
