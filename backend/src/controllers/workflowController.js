@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { listWorkflowEvents, getWorkspaceWorkflowConfig, saveWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
+import {
+  listWorkflowEvents,
+  getWorkspaceWorkflowConfig,
+  saveWorkspaceWorkflowConfig,
+  simulateRules,
+  controlWorkflow,
+  controlWorkflowRule,
+  deleteWorkflowConfig
+} from '../services/workflowService.js';
 import { prisma } from '../utils/prisma.js';
 import crypto from 'crypto';
 import { buildWebhookHostname } from '../lib/webhookDomains.js';
@@ -83,6 +91,19 @@ const configQuerySchema = z.object({
   workspaceId: z.string().uuid()
 });
 
+const workflowActionParamSchema = z.object({
+  action: z.enum(['pause', 'resume', 'restart', 'delete'])
+});
+
+const workflowRuleActionParamSchema = z.object({
+  ruleId: z.string().min(1),
+  action: z.enum(['pause', 'resume', 'restart', 'delete'])
+});
+
+const workflowRuleParamSchema = z.object({
+  ruleId: z.string().min(1)
+});
+
 const nodeCreateSchema = z.object({
   workspaceId: z.string().uuid(),
   label: z.string().min(1),
@@ -106,12 +127,18 @@ async function assertWorkspaceAccess(workspaceId, userId) {
   return ws;
 }
 
+function parseWorkspaceId(req) {
+  return configQuerySchema.parse({
+    workspaceId: req.params?.workspaceId || req.query?.workspaceId || req.body?.workspaceId
+  }).workspaceId;
+}
+
 export async function handleGetWorkflowConfig(req, res, next) {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    const { workspaceId } = configQuerySchema.parse(req.query || {});
+    const workspaceId = parseWorkspaceId(req);
     await assertWorkspaceAccess(workspaceId, req.user.id);
     const workflowConfig = await getWorkspaceWorkflowConfig(workspaceId);
     res.json({ workflowConfig });
@@ -126,7 +153,7 @@ export async function handleListNodes(req, res, next) {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    const { workspaceId } = configQuerySchema.parse(req.query || {});
+    const workspaceId = parseWorkspaceId(req);
     await assertWorkspaceAccess(workspaceId, req.user.id);
     const [webhooks, integrations, workflowConfig, userProfile, dnsRecords] = await Promise.all([
       prisma.webhook.findMany({ where: { workspaceId } }),
@@ -198,6 +225,75 @@ export async function handleListNodes(req, res, next) {
       .filter((n) => n.side === 'destination')
       .map((n) => ({ id: n.id, name: n.label, type: n.nodeType, description: n.description }));
     res.json({ webhooks: webhookNodes, integrations: [...normalizedIntegrations, ...extraIntegrations], bots });
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleControlWorkflow(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const { action } = workflowActionParamSchema.parse(req.params || {});
+    const workspaceId = parseWorkspaceId(req);
+    await assertWorkspaceAccess(workspaceId, req.user.id);
+    const workflowConfig = await controlWorkflow(workspaceId, action);
+    res.json({
+      action,
+      workflowConfig
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleDeleteWorkflow(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const workspaceId = parseWorkspaceId(req);
+    await assertWorkspaceAccess(workspaceId, req.user.id);
+    const workflowConfig = await deleteWorkflowConfig(workspaceId);
+    res.json({
+      action: 'delete',
+      workflowConfig
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleControlWorkflowRule(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const workspaceId = parseWorkspaceId(req);
+    const { ruleId, action } = workflowRuleActionParamSchema.parse(req.params || {});
+    await assertWorkspaceAccess(workspaceId, req.user.id);
+    const result = await controlWorkflowRule(workspaceId, ruleId, action);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleDeleteWorkflowRule(req, res, next) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const workspaceId = parseWorkspaceId(req);
+    const { ruleId } = workflowRuleParamSchema.parse(req.params || {});
+    await assertWorkspaceAccess(workspaceId, req.user.id);
+    const result = await controlWorkflowRule(workspaceId, ruleId, 'delete');
+    res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);
@@ -380,7 +476,13 @@ export async function simulateRouting(req, res, next) {
     }
     await assertWorkspaceAccess(workspaceId, req.user.id);
     const cfg = await getWorkspaceWorkflowConfig(workspaceId);
-    const { matchedRules, skippedRules } = await simulateRules({ workspaceId, rules: cfg.rules || [], source, signal });
+    const { matchedRules, skippedRules } = await simulateRules({
+      workspaceId,
+      rules: cfg.rules || [],
+      source,
+      signal,
+      workflowStatus: cfg.status
+    });
     res.json({ matchedRules, skippedRules });
   } catch (error) {
     next(error);
@@ -396,10 +498,34 @@ export async function listExecutions(req, res, next) {
     if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required' });
     await assertWorkspaceAccess(workspaceId, req.user.id);
 
+    let allowedIntegrationIds = [];
+    if (integrationId) {
+      const integration = await prisma.integration.findFirst({
+        where: {
+          id: integrationId,
+          workspaceId
+        },
+        select: { id: true }
+      });
+      if (!integration) {
+        return res.json([]);
+      }
+      allowedIntegrationIds = [integration.id];
+    } else {
+      const integrations = await prisma.integration.findMany({
+        where: { workspaceId },
+        select: { id: true }
+      });
+      allowedIntegrationIds = integrations.map((row) => row.id);
+    }
+
+    if (!allowedIntegrationIds.length) {
+      return res.json([]);
+    }
+
     const where = {
-      integration: { workspaceId }
+      integrationId: { in: allowedIntegrationIds }
     };
-    if (integrationId) where.integrationId = integrationId;
     if (sourceWebhookId) {
       where.payload = { path: ['raw', 'source', 'id'], equals: sourceWebhookId };
     }

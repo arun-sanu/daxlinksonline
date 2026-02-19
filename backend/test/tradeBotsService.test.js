@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   normalizeBotLanguage,
+  normalizeBotControlAction,
   normalizeInstanceControlAction,
   parseVersionNotes,
   stringifyVersionNotes
@@ -25,13 +26,25 @@ test('normalizeBotLanguage rejects unsupported languages', () => {
 
 test('normalizeInstanceControlAction normalizes valid lifecycle actions', () => {
   assert.equal(normalizeInstanceControlAction('start'), 'start');
+  assert.equal(normalizeInstanceControlAction('resume'), 'resume');
   assert.equal(normalizeInstanceControlAction(' Pause '), 'pause');
   assert.equal(normalizeInstanceControlAction('STOP'), 'stop');
   assert.equal(normalizeInstanceControlAction('restart'), 'restart');
 });
 
 test('normalizeInstanceControlAction rejects unsupported lifecycle actions', () => {
-  assert.throws(() => normalizeInstanceControlAction('resume'), /Unsupported bot instance action/);
+  assert.throws(() => normalizeInstanceControlAction('delete'), /Unsupported bot instance action/);
+});
+
+test('normalizeBotControlAction normalizes valid bot actions', () => {
+  assert.equal(normalizeBotControlAction('pause'), 'pause');
+  assert.equal(normalizeBotControlAction(' Resume '), 'resume');
+  assert.equal(normalizeBotControlAction('RESTART'), 'restart');
+  assert.equal(normalizeBotControlAction('delete'), 'delete');
+});
+
+test('normalizeBotControlAction rejects unsupported bot actions', () => {
+  assert.throws(() => normalizeBotControlAction('start'), /Unsupported bot action/);
 });
 
 test('parseVersionNotes supports json and plain text', () => {

@@ -1,5 +1,30 @@
 import { prisma } from '../utils/prisma.js';
 
+export const SUPPORTED_WORKFLOW_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'restart', 'delete']);
+
+function normalizeWorkflowStatus(value = null) {
+  const normalized = String(value || 'active')
+    .trim()
+    .toLowerCase();
+  if (['paused', 'disabled', 'stop', 'stopped'].includes(normalized)) return 'paused';
+  return 'active';
+}
+
+function normalizeWorkflowControlAction(value = null) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!SUPPORTED_WORKFLOW_CONTROL_ACTIONS.includes(normalized)) {
+    throw Object.assign(
+      new Error(
+        `Unsupported workflow action "${value}". Supported actions: ${SUPPORTED_WORKFLOW_CONTROL_ACTIONS.join(', ')}`
+      ),
+      { status: 400 }
+    );
+  }
+  return normalized;
+}
+
 function parseEdgeKey(edgeKey) {
   if (!edgeKey) return null;
   if (edgeKey.startsWith('src:webhook:') && edgeKey.endsWith('->server')) {
@@ -149,12 +174,13 @@ export async function listWorkflowEvents({ workspaceId, edgeKey, since, limit = 
 export async function getWorkspaceWorkflowConfig(workspaceId) {
   const ws = await prisma.workspace.findUnique({ where: { id: workspaceId } });
   if (!ws || !ws.workflowConfig) {
-    return { version: 1, rules: [], customNodes: [] };
+    return { version: 1, status: 'active', rules: [], customNodes: [] };
   }
   const cfg = ws.workflowConfig || {};
   return {
     ...cfg,
     version: typeof cfg.version === 'number' ? cfg.version : 1,
+    status: normalizeWorkflowStatus(cfg.status),
     rules: Array.isArray(cfg.rules) ? cfg.rules : [],
     customNodes: Array.isArray(cfg.customNodes) ? cfg.customNodes : []
   };
@@ -162,7 +188,7 @@ export async function getWorkspaceWorkflowConfig(workspaceId) {
 
 export async function saveWorkspaceWorkflowConfig(workspaceId, config) {
   const nextVersion = (config?.version || 1) + 1;
-  const payload = { ...config, version: nextVersion };
+  const payload = { ...config, version: nextVersion, status: normalizeWorkflowStatus(config?.status) };
   await prisma.workspace.update({
     where: { id: workspaceId },
     data: { workflowConfig: payload }
@@ -170,9 +196,112 @@ export async function saveWorkspaceWorkflowConfig(workspaceId, config) {
   return payload;
 }
 
-export async function simulateRules({ workspaceId, rules, source, signal }) {
+export async function deleteWorkflowConfig(workspaceId) {
+  const current = await getWorkspaceWorkflowConfig(workspaceId);
+  const next = {
+    ...current,
+    status: 'active',
+    rules: [],
+    customNodes: [],
+    deletedAt: new Date().toISOString()
+  };
+  return saveWorkspaceWorkflowConfig(workspaceId, next);
+}
+
+export async function controlWorkflow(workspaceId, action) {
+  const normalizedAction = normalizeWorkflowControlAction(action);
+  if (normalizedAction === 'delete') {
+    return deleteWorkflowConfig(workspaceId);
+  }
+
+  const current = await getWorkspaceWorkflowConfig(workspaceId);
+  const nowIso = new Date().toISOString();
+  let next = {
+    ...current
+  };
+
+  if (normalizedAction === 'pause') {
+    next = {
+      ...next,
+      status: 'paused',
+      pausedAt: nowIso
+    };
+  } else if (normalizedAction === 'resume') {
+    next = {
+      ...next,
+      status: 'active',
+      resumedAt: nowIso
+    };
+  } else {
+    next = {
+      ...next,
+      status: 'active',
+      restartedAt: nowIso
+    };
+  }
+
+  return saveWorkspaceWorkflowConfig(workspaceId, next);
+}
+
+export async function controlWorkflowRule(workspaceId, ruleId, action) {
+  const normalizedAction = normalizeWorkflowControlAction(action);
+  const normalizedRuleId = String(ruleId || '').trim();
+  if (!normalizedRuleId) {
+    throw Object.assign(new Error('Rule id is required'), { status: 400 });
+  }
+
+  const current = await getWorkspaceWorkflowConfig(workspaceId);
+  const rules = Array.isArray(current.rules) ? [...current.rules] : [];
+  const ruleIndex = rules.findIndex((rule) => String(rule?.id || '').trim() === normalizedRuleId);
+  if (ruleIndex < 0) {
+    throw Object.assign(new Error('Workflow rule not found'), { status: 404 });
+  }
+
+  const nowIso = new Date().toISOString();
+  const previousRule = rules[ruleIndex];
+  let nextRule = previousRule;
+
+  if (normalizedAction === 'delete') {
+    rules.splice(ruleIndex, 1);
+  } else {
+    const safeRule =
+      previousRule && typeof previousRule === 'object' && !Array.isArray(previousRule) ? { ...previousRule } : {};
+    if (normalizedAction === 'pause') {
+      safeRule.enabled = false;
+    } else {
+      safeRule.enabled = true;
+      if (normalizedAction === 'restart') {
+        safeRule.restartedAt = nowIso;
+      }
+    }
+    safeRule.updatedAt = nowIso;
+    rules[ruleIndex] = safeRule;
+    nextRule = safeRule;
+  }
+
+  const saved = await saveWorkspaceWorkflowConfig(workspaceId, {
+    ...current,
+    rules
+  });
+
+  return {
+    action: normalizedAction,
+    ruleId: normalizedRuleId,
+    rule: normalizedAction === 'delete' ? previousRule : nextRule,
+    workflowConfig: saved
+  };
+}
+
+export async function simulateRules({ workspaceId: _workspaceId, rules, source, signal, workflowStatus = 'active' }) {
   const matchedRules = [];
   const skippedRules = [];
+  const status = normalizeWorkflowStatus(workflowStatus);
+  if (status === 'paused') {
+    return {
+      matchedRules,
+      skippedRules: [{ ruleId: 'workflow', reason: 'workflow paused' }]
+    };
+  }
   const symbol = (signal?.symbol || '').toUpperCase();
   const side = (signal?.side || '').toLowerCase();
   const notional = Number(signal?.notional || signal?.amount || 0);

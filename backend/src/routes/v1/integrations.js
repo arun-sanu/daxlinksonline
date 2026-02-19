@@ -6,6 +6,7 @@ import {
   handleIntegrationsStream,
   handleListAvailableExchanges,
   handleRenameIntegration,
+  handleControlIntegration,
   handleGetIntegrationDetail,
   handleCreateIntegrationCredential,
   handleUpdateIntegrationCredential,
@@ -42,6 +43,7 @@ router.get('/:workspaceId/stream', injectBearerFromQuery, requireAuth, handleInt
 router.get('/:workspaceId/:integrationId', requireAuth, handleGetIntegrationDetail);
 router.post('/:workspaceId/:integrationId/test', requireAuth, handleTestIntegration);
 router.patch('/:workspaceId/:integrationId', requireAuth, handleRenameIntegration);
+router.post('/:workspaceId/:integrationId/actions/:action', requireAuth, handleControlIntegration);
 router.delete('/:workspaceId/:integrationId', requireAuth, handleDeleteIntegration);
 router.post('/:workspaceId/:integrationId/credentials', requireAuth, handleCreateIntegrationCredential);
 router.delete('/:workspaceId/:integrationId/credentials', requireAuth, handlePurgeIntegrationCredentials);

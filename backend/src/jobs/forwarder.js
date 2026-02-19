@@ -40,9 +40,20 @@ export async function processForwardJob(job) {
     const executionTargets = [];
     for (const workspaceId of workspaceIds) {
       const config = await getWorkspaceWorkflowConfig(workspaceId);
+      const workflowStatus = String(config?.status || 'active').toLowerCase();
+      if (workflowStatus === 'paused') {
+        console.log(`[forwarder] Workflow paused for workspace ${workspaceId}; skipping routing`);
+        continue;
+      }
       const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
       const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
-      const simulation = await simulateRules({ workspaceId, rules: config.rules || [], source, signal });
+      const simulation = await simulateRules({
+        workspaceId,
+        rules: config.rules || [],
+        source,
+        signal,
+        workflowStatus: config.status
+      });
       if (simulation.matchedRules.length > 0) {
         executionTargets.push(...simulation.matchedRules.map((rule) => ({ ...rule, workspaceId })));
         continue;

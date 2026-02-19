@@ -7,6 +7,7 @@ import {
   adjustQuantityUpToMinNotional,
   applyCompoundingToQuoteSpend,
   classifyMinNotionalShortfall,
+  deriveCompoundingBaseQuoteForTargetSpend,
   SizingConfigError,
   computeBaseQuantityFromInputs,
   normalizeBaseSizingConfig,
@@ -146,6 +147,33 @@ test('applyCompoundingToQuoteSpend is disabled by default', () => {
   });
   assert.equal(out.compoundingFactor, 1);
   assert.equal(out.quoteSpend, 10);
+});
+
+test('deriveCompoundingBaseQuoteForTargetSpend matches target spend in full_balance mode', () => {
+  const out = deriveCompoundingBaseQuoteForTargetSpend({
+    baseQuoteSpend: 131.19923619,
+    freeQuote: 291.5538582,
+    compoundingEnabled: true,
+    compoundingMode: 'full_balance',
+    compoundingPct: 100,
+    targetSpendRatio: 0.9305
+  });
+  assert.ok(out !== null);
+  assert.ok(Math.abs(out - 141) < 0.01);
+});
+
+test('applyCompoundingToQuoteSpend auto-targets spend ratio when targetSpendRatio is provided', () => {
+  const out = applyCompoundingToQuoteSpend({
+    baseQuoteSpend: 131.19923619,
+    freeQuote: 291.5538582,
+    compoundingEnabled: true,
+    compoundingMode: 'full_balance',
+    compoundingPct: 100,
+    targetSpendRatio: 0.9305
+  });
+  assert.equal(out.targetSpendApplied, true);
+  assert.ok(Math.abs(out.quoteSpend - 291.5538582 * 0.9305) < 1e-6);
+  assert.ok(Math.abs(out.compoundingBaseQuote - 141) < 0.01);
 });
 
 test('classifyMinNotionalShortfall maps BUY shortfall to quote insufficiency', () => {

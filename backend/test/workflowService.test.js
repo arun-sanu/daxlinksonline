@@ -48,3 +48,27 @@ test('simulateRules maps percent sizing with positive value', async () => {
   assert.equal(result.matchedRules.length, 1);
   assert.equal(result.matchedRules[0].mappedOrder.size, '25%');
 });
+
+test('simulateRules returns no matches when workflow is paused', async () => {
+  const rules = [
+    {
+      id: 'rule-3',
+      enabled: true,
+      source: { id: 'tv:moneyplantbot1' },
+      destination: { type: 'integration', id: 'integration-1' },
+      conditions: { symbols: ['*'] },
+      mapping: { orderType: 'market', positionSizeType: 'absolute', positionSizeValue: 1 }
+    }
+  ];
+
+  const result = await simulateRules({
+    workspaceId: 'workspace-1',
+    rules,
+    source: { id: 'tv:moneyplantbot1' },
+    signal: { symbol: 'BTCUSDC', side: 'buy', amount: 1, notional: 1 },
+    workflowStatus: 'paused'
+  });
+
+  assert.equal(result.matchedRules.length, 0);
+  assert.equal(result.skippedRules[0].reason, 'workflow paused');
+});

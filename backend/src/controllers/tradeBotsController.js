@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 import {
+  controlTradeBot,
   controlTradeBotInstance,
   createTradeBot,
   createTradeBotInstance,
+  deleteTradeBot,
   getTradeBotDetail,
   getTradeBotRuntimeConfig,
   getTradeBotMonitoring,
@@ -34,7 +36,13 @@ const botInstanceActionParamSchema = z.object({
   workspaceId: z.string().uuid(),
   botId: z.string().min(8),
   instanceId: z.string().min(8),
-  action: z.enum(['start', 'pause', 'stop', 'restart'])
+  action: z.enum(['start', 'resume', 'pause', 'stop', 'restart'])
+});
+
+const botActionParamSchema = z.object({
+  workspaceId: z.string().uuid(),
+  botId: z.string().min(8),
+  action: z.enum(['pause', 'resume', 'restart', 'delete'])
 });
 
 const createBotSchema = z.object({
@@ -134,9 +142,17 @@ function normalizeUploadPayload(body = {}) {
 
 function toInstanceAuditAction(action) {
   if (action === 'start') return 'TRADE_BOT_INSTANCE_STARTED';
+  if (action === 'resume') return 'TRADE_BOT_INSTANCE_RESUMED';
   if (action === 'pause') return 'TRADE_BOT_INSTANCE_PAUSED';
   if (action === 'restart') return 'TRADE_BOT_INSTANCE_RESTARTED';
   return 'TRADE_BOT_INSTANCE_STOPPED';
+}
+
+function toBotAuditAction(action) {
+  if (action === 'pause') return 'TRADE_BOT_PAUSED';
+  if (action === 'resume') return 'TRADE_BOT_RESUMED';
+  if (action === 'restart') return 'TRADE_BOT_RESTARTED';
+  return 'TRADE_BOT_DELETED';
 }
 
 export async function handleListTradeBotLanguages(_req, res) {
@@ -356,6 +372,62 @@ export async function handleControlTradeBotInstance(req, res, next) {
     } catch {}
 
     res.json(instance);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleControlTradeBot(req, res, next) {
+  try {
+    const { workspaceId, botId, action } = botActionParamSchema.parse(req.params || {});
+    const result = await controlTradeBot(workspaceId, botId, action);
+
+    try {
+      await recordAudit({
+        userId: req.user?.id,
+        action: toBotAuditAction(action),
+        entityType: 'Bot',
+        entityId: botId,
+        summary: `${botId} ${action}`,
+        detail: {
+          workspaceId,
+          botId,
+          action,
+          updated: result?.updated || null,
+          totalInstances: result?.totalInstances || null
+        }
+      });
+    } catch {}
+
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) error.status = 400;
+    next(error);
+  }
+}
+
+export async function handleDeleteTradeBot(req, res, next) {
+  try {
+    const { workspaceId, botId } = botParamSchema.parse(req.params || {});
+    const result = await deleteTradeBot(workspaceId, botId);
+
+    try {
+      await recordAudit({
+        userId: req.user?.id,
+        action: 'TRADE_BOT_DELETED',
+        entityType: 'Bot',
+        entityId: botId,
+        summary: result?.name || botId,
+        detail: {
+          workspaceId,
+          botId,
+          deleted: result?.deleted || null
+        }
+      });
+    } catch {}
+
+    res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;
     next(error);

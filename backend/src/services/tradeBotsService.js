@@ -22,7 +22,8 @@ const LANGUAGE_ALIASES = Object.freeze({
 });
 
 export const SUPPORTED_BOT_LANGUAGES = Object.freeze(['python', 'go', 'cpp', 'c', 'java']);
-export const SUPPORTED_INSTANCE_CONTROL_ACTIONS = Object.freeze(['start', 'pause', 'stop', 'restart']);
+export const SUPPORTED_INSTANCE_CONTROL_ACTIONS = Object.freeze(['start', 'resume', 'pause', 'stop', 'restart']);
+export const SUPPORTED_BOT_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'restart', 'delete']);
 
 function httpError(message, status = 500) {
   return Object.assign(new Error(message), { status });
@@ -113,6 +114,58 @@ function normalizeRuntimeLink(value = null) {
 function normalizeRuntimeRules(value = null) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return JSON.parse(JSON.stringify(value));
+}
+
+function asFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTakeProfitMode(value = null) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'trailing' || normalized === 'trail') return 'trailing';
+  if (normalized === 'percent' || normalized === 'fixed') return normalized;
+  return 'fixed';
+}
+
+function summarizeTakeProfitRules(rules = null) {
+  const safeRules = rules && typeof rules === 'object' && !Array.isArray(rules) ? rules : {};
+  const mode = normalizeTakeProfitMode(safeRules.tpType || safeRules.tp_type);
+  const tpValue = asFiniteNumber(safeRules.tpValue ?? safeRules.tp_value);
+  const trailingPct = asFiniteNumber(
+    safeRules.trailingTpPct ??
+    safeRules.trailing_tp_pct ??
+    safeRules.trailingTakeProfitPct ??
+    safeRules.trailing_take_profit_pct ??
+    (mode === 'trailing' ? tpValue : null)
+  );
+  const trailingEnabledRaw =
+    safeRules.trailingTakeProfitEnabled ??
+    safeRules.trailing_take_profit_enabled ??
+    safeRules.trailingTpEnabled;
+  const trailingEnabled =
+    trailingEnabledRaw === undefined || trailingEnabledRaw === null
+      ? mode === 'trailing'
+      : Boolean(trailingEnabledRaw);
+
+  const valuePct = mode === 'trailing' ? trailingPct : tpValue;
+  const label =
+    mode === 'trailing'
+      ? valuePct !== null
+        ? `trailing (${valuePct}%)`
+        : 'trailing'
+      : valuePct !== null
+        ? `${mode} (${valuePct}%)`
+        : mode;
+
+  return {
+    mode,
+    valuePct,
+    trailingEnabled,
+    label
+  };
 }
 
 const MEXC_MACD_BOLLINGER_BOT_SLUGS = new Set([
@@ -742,12 +795,25 @@ export function normalizeInstanceControlAction(value) {
   return normalized;
 }
 
+export function normalizeBotControlAction(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!SUPPORTED_BOT_CONTROL_ACTIONS.includes(normalized)) {
+    throw httpError(
+      `Unsupported bot action "${value}". Supported actions: ${SUPPORTED_BOT_CONTROL_ACTIONS.join(', ')}`,
+      400
+    );
+  }
+  return normalized;
+}
+
 function allowedInstanceActions(statusValue) {
   const status = normalizeInstanceStatus(statusValue);
   if (status === 'running') return ['pause', 'stop', 'restart'];
-  if (status === 'paused') return ['start', 'stop', 'restart'];
-  if (status === 'error') return ['start', 'stop', 'restart'];
-  return ['start', 'restart'];
+  if (status === 'paused') return ['start', 'resume', 'stop', 'restart'];
+  if (status === 'error') return ['start', 'resume', 'stop', 'restart'];
+  return ['start', 'resume', 'restart'];
 }
 
 function presentBotVersion(version) {
@@ -807,6 +873,7 @@ function presentBotInstance(instance, { orderCount = 0, runCount = 0, guardrailC
     lifecycle: {
       allowedActions,
       canStart: allowedActions.includes('start'),
+      canResume: allowedActions.includes('resume'),
       canPause: allowedActions.includes('pause'),
       canStop: allowedActions.includes('stop'),
       canRestart: allowedActions.includes('restart')
@@ -1243,6 +1310,7 @@ export async function getTradeBotRuntimeConfig(workspaceId, botId) {
     botId,
     links,
     rules: resolved.rules,
+    takeProfit: summarizeTakeProfitRules(resolved.rules),
     parameters: resolved.parameters,
     updatedAt: current.updatedAt || links.updatedAt || null
   };
@@ -1297,6 +1365,7 @@ export async function upsertTradeBotRuntimeConfig(workspaceId, botId, payload = 
   return {
     workspaceId,
     botId,
+    takeProfit: summarizeTakeProfitRules(nextEntry.rules),
     parameters: {
       ...resolved.parameters,
       updatedAt: nextEntry.rules.codeParametersUpdatedAt
@@ -1522,7 +1591,7 @@ function buildInstanceControlPatch(instance, action) {
   const normalizedAction = normalizeInstanceControlAction(action);
   const now = new Date();
 
-  if (normalizedAction === 'start') {
+  if (normalizedAction === 'start' || normalizedAction === 'resume') {
     if (normalizedStatus === 'running') return null;
     return {
       status: 'running',
@@ -1581,6 +1650,215 @@ export async function controlTradeBotInstance(workspaceId, botId, instanceId, ac
   });
 
   return presentBotInstance(updated);
+}
+
+async function removeWorkflowArtifactsForBot(workspaceId, botId) {
+  const cfg = await getWorkspaceWorkflowConfig(workspaceId);
+  const nodeId = createWorkflowNodeId(botId);
+  const currentRules = Array.isArray(cfg.rules) ? cfg.rules : [];
+  const currentCustomNodes = Array.isArray(cfg.customNodes) ? cfg.customNodes : [];
+  const currentRuntimeMap = extractRuntimeConfigMap(cfg);
+
+  const nextRules = currentRules.filter((rule) => rule?.source?.id !== nodeId && rule?.destination?.id !== nodeId);
+  const nextCustomNodes = currentCustomNodes.filter((node) => node?.id !== nodeId);
+  const nextRuntimeMap = {
+    ...currentRuntimeMap
+  };
+  const hadRuntime = Object.prototype.hasOwnProperty.call(nextRuntimeMap, botId);
+  if (hadRuntime) {
+    delete nextRuntimeMap[botId];
+  }
+
+  const changed =
+    nextRules.length !== currentRules.length ||
+    nextCustomNodes.length !== currentCustomNodes.length ||
+    hadRuntime;
+
+  if (!changed) {
+    return;
+  }
+
+  const nextConfig = {
+    ...cfg,
+    rules: nextRules,
+    customNodes: nextCustomNodes,
+    tradeBots: {
+      ...(cfg.tradeBots && typeof cfg.tradeBots === 'object' ? cfg.tradeBots : {}),
+      runtimeConfigs: nextRuntimeMap
+    }
+  };
+  await saveWorkspaceWorkflowConfig(workspaceId, nextConfig);
+}
+
+export async function deleteTradeBot(workspaceId, botId) {
+  const bot = await prisma.bot.findUnique({
+    where: { id: botId },
+    select: {
+      id: true,
+      name: true,
+      workspaceId: true
+    }
+  });
+
+  if (!bot || bot.workspaceId !== workspaceId) {
+    throw httpError('Trade bot not found', 404);
+  }
+
+  const [activeRentals, instances] = await Promise.all([
+    prisma.rental.count({
+      where: {
+        botId,
+        status: 'active'
+      }
+    }),
+    prisma.botInstance.findMany({
+      where: { botId },
+      select: {
+        id: true,
+        workspaceId: true
+      }
+    })
+  ]);
+
+  if (activeRentals > 0) {
+    throw httpError('Cannot delete bot while active rentals exist', 409);
+  }
+
+  const externalInstances = instances.filter((instance) => instance.workspaceId !== workspaceId);
+  if (externalInstances.length > 0) {
+    throw httpError('Cannot delete bot while external workspace instances exist', 409);
+  }
+
+  const instanceIds = instances.map((instance) => instance.id);
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const deletedRentals = await tx.rental.deleteMany({
+      where: { botId }
+    });
+
+    let deletedInstances = 0;
+    if (instanceIds.length > 0) {
+      await Promise.all([
+        tx.guardrailEvent.deleteMany({ where: { botInstanceId: { in: instanceIds } } }),
+        tx.botRun.deleteMany({ where: { botInstanceId: { in: instanceIds } } }),
+        tx.signal.deleteMany({ where: { botInstanceId: { in: instanceIds } } }),
+        tx.position.deleteMany({ where: { botInstanceId: { in: instanceIds } } }),
+        tx.order.deleteMany({ where: { botInstanceId: { in: instanceIds } } })
+      ]);
+
+      const removedInstances = await tx.botInstance.deleteMany({
+        where: { id: { in: instanceIds } }
+      });
+      deletedInstances = removedInstances.count;
+    }
+
+    await tx.bot.update({
+      where: { id: botId },
+      data: { latestVersionId: null }
+    });
+
+    const deletedVersions = await tx.botVersion.deleteMany({
+      where: { botId }
+    });
+
+    await tx.bot.delete({
+      where: { id: botId }
+    });
+
+    return {
+      rentals: deletedRentals.count,
+      instances: deletedInstances,
+      versions: deletedVersions.count
+    };
+  });
+
+  await removeWorkflowArtifactsForBot(workspaceId, botId);
+
+  return {
+    success: true,
+    botId,
+    name: bot.name,
+    deleted
+  };
+}
+
+export async function controlTradeBot(workspaceId, botId, action) {
+  const normalizedAction = normalizeBotControlAction(action);
+
+  if (normalizedAction === 'delete') {
+    return deleteTradeBot(workspaceId, botId);
+  }
+
+  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: false });
+  if (bot.workspaceId !== workspaceId) {
+    throw httpError('Trade bot not found', 404);
+  }
+
+  const now = new Date();
+  let where = {
+    workspaceId,
+    botId
+  };
+  let data = null;
+
+  if (normalizedAction === 'pause') {
+    where = {
+      ...where,
+      status: 'running'
+    };
+    data = {
+      status: 'paused'
+    };
+  } else if (normalizedAction === 'resume') {
+    where = {
+      ...where,
+      status: 'paused'
+    };
+    data = {
+      status: 'running',
+      startedAt: now,
+      stoppedAt: null,
+      lastError: null
+    };
+  } else {
+    data = {
+      status: 'running',
+      startedAt: now,
+      stoppedAt: null,
+      lastError: null
+    };
+  }
+
+  const updateResult = await prisma.botInstance.updateMany({
+    where,
+    data
+  });
+
+  const instances = await prisma.botInstance.findMany({
+    where: {
+      workspaceId,
+      botId
+    },
+    include: {
+      exchange: {
+        select: {
+          id: true,
+          name: true,
+          venue: true,
+          isSandbox: true
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  return {
+    botId,
+    action: normalizedAction,
+    updated: updateResult.count,
+    totalInstances: instances.length,
+    instances: instances.map((instance) => presentBotInstance(instance))
+  };
 }
 
 export async function listTradeBotOrders(workspaceId, botId, filters = {}) {
@@ -1643,7 +1921,13 @@ export async function listTradeBotOrders(workspaceId, botId, filters = {}) {
 }
 
 export async function getTradeBotMonitoring(workspaceId, botId, filters = {}) {
-  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
+  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
+  const workflowConfig = await getWorkspaceWorkflowConfig(workspaceId);
+  const runtimeMap = extractRuntimeConfigMap(workflowConfig);
+  const runtimeEntry = runtimeMap[bot.id] && typeof runtimeMap[bot.id] === 'object' ? runtimeMap[bot.id] : {};
+  const runtimeRules = normalizeRuntimeRules(runtimeEntry.rules || null);
+  const takeProfit = summarizeTakeProfitRules(runtimeRules);
+
   const instances = await prisma.botInstance.findMany({
     where: {
       workspaceId,
@@ -1669,6 +1953,7 @@ export async function getTradeBotMonitoring(workspaceId, botId, filters = {}) {
         stopped: 0,
         error: 0
       },
+      takeProfit,
       runs: [],
       guardrailEvents: [],
       positions: []
@@ -1705,6 +1990,7 @@ export async function getTradeBotMonitoring(workspaceId, botId, filters = {}) {
 
   return {
     summary,
+    takeProfit,
     instances,
     runs: runs.map((run) => ({
       id: run.id,

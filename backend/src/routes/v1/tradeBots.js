@@ -6,10 +6,12 @@ import {
   handleListExchangeAccounts
 } from '../../controllers/exchangeAccountController.js';
 import {
+  handleControlTradeBot,
   handleControlTradeBotInstance,
   handleCreateTradeBot,
   handleCreateTradeBotInstance,
   handleCreateTradeBotWithUpload,
+  handleDeleteTradeBot,
   handleGetTradeBot,
   handleGetTradeBotRuntimeConfig,
   handleListMarketBots,
@@ -48,6 +50,8 @@ router.get('/:workspaceId/market', handleListMarketBots);
 router.post('/:workspaceId/bots', handleCreateTradeBot);
 router.post('/:workspaceId/bots/upload', upload.single('file'), handleCreateTradeBotWithUpload);
 router.get('/:workspaceId/bots/:botId', handleGetTradeBot);
+router.delete('/:workspaceId/bots/:botId', handleDeleteTradeBot);
+router.post('/:workspaceId/bots/:botId/actions/:action', handleControlTradeBot);
 router.get('/:workspaceId/bots/:botId/runtime-config', handleGetTradeBotRuntimeConfig);
 router.put('/:workspaceId/bots/:botId/runtime-config', handleUpsertTradeBotRuntimeConfig);
 router.post('/:workspaceId/bots/:botId/rent', handleRentMarketBot);

@@ -431,12 +431,14 @@ export function applyCompoundingToQuoteSpend({
   compoundingEnabled = false,
   compoundingMode = 'full_balance',
   compoundingBaseQuote = null,
-  compoundingPct = 100
+  compoundingPct = 100,
+  targetSpendRatio = null
 }) {
   const baseSpend = asNumber(baseQuoteSpend);
   const freeQuoteNum = asNumber(freeQuote) || 0;
   const pct = clamp(compoundingPct, 0, 300);
   const strength = pct === null ? 1 : pct / 100;
+  const targetRatio = asNumber(targetSpendRatio);
 
   if (!baseSpend || baseSpend <= 0) {
     return {
@@ -444,14 +446,24 @@ export function applyCompoundingToQuoteSpend({
       baseQuoteSpend: 0,
       compoundingFactor: 1,
       compoundingProfitQuote: 0,
-      compoundingBaseQuote: asNumber(compoundingBaseQuote) || 0
+      compoundingBaseQuote: asNumber(compoundingBaseQuote) || 0,
+      targetSpendRatio: targetRatio && targetRatio > 0 ? targetRatio : null,
+      targetSpendApplied: false
     };
   }
 
   const inferredBaseQuote = compoundingMode === 'full_balance'
     ? (freeQuoteNum > 0 ? freeQuoteNum : baseSpend)
     : baseSpend;
-  const baseQuote = toFiniteOrZero(compoundingBaseQuote) || inferredBaseQuote;
+  const autoBaseQuote = deriveCompoundingBaseQuoteForTargetSpend({
+    baseQuoteSpend: baseSpend,
+    freeQuote: freeQuoteNum,
+    compoundingEnabled,
+    compoundingMode,
+    compoundingPct,
+    targetSpendRatio: targetRatio
+  });
+  const baseQuote = toFiniteOrZero(autoBaseQuote) || toFiniteOrZero(compoundingBaseQuote) || inferredBaseQuote;
   const profitQuote = Math.max(0, freeQuoteNum - baseQuote);
 
   if (!compoundingEnabled || strength <= 0 || baseQuote <= 0) {
@@ -460,7 +472,9 @@ export function applyCompoundingToQuoteSpend({
       baseQuoteSpend: baseSpend,
       compoundingFactor: 1,
       compoundingProfitQuote: profitQuote,
-      compoundingBaseQuote: baseQuote
+      compoundingBaseQuote: baseQuote,
+      targetSpendRatio: targetRatio && targetRatio > 0 ? targetRatio : null,
+      targetSpendApplied: false
     };
   }
 
@@ -478,8 +492,38 @@ export function applyCompoundingToQuoteSpend({
     baseQuoteSpend: baseSpend,
     compoundingFactor: factor,
     compoundingProfitQuote: profitQuote,
-    compoundingBaseQuote: baseQuote
+    compoundingBaseQuote: baseQuote,
+    targetSpendRatio: targetRatio && targetRatio > 0 ? targetRatio : null,
+    targetSpendApplied: toFiniteOrZero(autoBaseQuote) > 0
   };
+}
+
+export function deriveCompoundingBaseQuoteForTargetSpend({
+  baseQuoteSpend,
+  freeQuote,
+  compoundingEnabled = false,
+  compoundingMode = 'full_balance',
+  compoundingPct = 100,
+  targetSpendRatio = null
+}) {
+  const baseSpend = asNumber(baseQuoteSpend);
+  const freeQuoteNum = asNumber(freeQuote) || 0;
+  const ratio = asNumber(targetSpendRatio);
+  const pct = clamp(compoundingPct, 0, 300);
+  const strength = pct === null ? 1 : pct / 100;
+
+  if (!compoundingEnabled || compoundingMode !== 'full_balance') return null;
+  if (!baseSpend || baseSpend <= 0 || !freeQuoteNum || freeQuoteNum <= 0) return null;
+  if (!ratio || ratio <= 0) return null;
+  if (strength <= 0) return null;
+
+  const targetSpend = freeQuoteNum * ratio;
+  const requiredFactor = targetSpend / baseSpend;
+  const denominator = requiredFactor - 1 + strength;
+  if (!denominator || denominator <= 0) return null;
+
+  const baseQuote = (strength * freeQuoteNum) / denominator;
+  return baseQuote > 0 ? baseQuote : null;
 }
 
 export function classifyMinNotionalShortfall({
@@ -592,6 +636,20 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     rawRules?.reinvestProfitsPct
   );
   const compoundingPct = compoundingPctRaw === null ? 100 : clamp(compoundingPctRaw, 0, 300);
+  const targetSpendPctRaw = asNumber(
+    rawRules?.targetSpendPct ??
+    rawRules?.targetSpendPercent ??
+    rawRules?.targetQuoteSpendPct ??
+    rawRules?.targetQuoteSpendPercent
+  );
+  let targetSpendPct = null;
+  if (targetSpendPctRaw !== null) {
+    const normalizedTarget = targetSpendPctRaw <= 1 ? targetSpendPctRaw * 100 : targetSpendPctRaw;
+    if (normalizedTarget <= 0 || normalizedTarget > 100) {
+      throw new SizingConfigError('Trade Bot targetSpendPct must be greater than 0 and at most 100.');
+    }
+    targetSpendPct = normalizedTarget;
+  }
 
   return {
     sizingMode,
@@ -604,6 +662,7 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     compoundingMode,
     compoundingBaseQuote,
     compoundingPct,
+    targetSpendPct,
     referencePriceSource: normalizeReferencePriceSource(rawRules?.referencePriceSource)
   };
 }
@@ -738,6 +797,7 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     compoundingMode: sizing.compoundingMode,
     compoundingPct: sizing.compoundingPct,
     compoundingBaseQuote: sizing.compoundingBaseQuote,
+    targetSpendPct: sizing.targetSpendPct,
     compoundingFactor: 1,
     compoundingProfitQuote: 0,
     baseQuoteSpend: null,
@@ -856,13 +916,16 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
       compoundingEnabled: sizing.compoundingEnabled,
       compoundingMode: sizing.compoundingMode,
       compoundingBaseQuote: sizing.compoundingBaseQuote,
-      compoundingPct: sizing.compoundingPct
+      compoundingPct: sizing.compoundingPct,
+      targetSpendRatio: sizing.targetSpendPct ? sizing.targetSpendPct / 100 : null
     });
     quoteSpendRaw = compounded.quoteSpend;
     sizingDebug.baseQuoteSpend = asNullableNumber(compounded.baseQuoteSpend);
     sizingDebug.compoundingFactor = asNullableNumber(compounded.compoundingFactor);
     sizingDebug.compoundingProfitQuote = asNullableNumber(compounded.compoundingProfitQuote);
     sizingDebug.compoundingBaseQuote = asNullableNumber(compounded.compoundingBaseQuote);
+    sizingDebug.targetSpendRatio = asNullableNumber(compounded.targetSpendRatio);
+    sizingDebug.targetSpendApplied = compounded.targetSpendApplied === true;
 
     const minQuoteSpendFloor = normalizedSide === 'BUY' ? sizing.minQuoteSpend : 0;
     quoteSpendComputed = clamp(quoteSpendRaw, minQuoteSpendFloor, sizing.maxQuoteSpend);
