@@ -38,7 +38,7 @@ type TradeBotRow = Bot & {
 };
 
 type TabKey = TradeBotsTabKey;
-type BotPopupSection = 'integrations' | 'parameters' | 'exchange' | 'trade-history';
+type BotPopupSection = 'integrations' | 'parameters' | 'algo' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
 type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
@@ -105,6 +105,7 @@ type BotTradingRules = {
   compoundingMode: CompoundingMode;
   compoundingPct: number;
   compoundingBaseQuote: number | null;
+  targetSpendPct: number | null;
   minQuoteSpend: number;
   maxQuoteSpend: number;
   referencePriceSource: ReferencePriceSource;
@@ -147,6 +148,7 @@ const DEFAULT_TRADING_RULES: BotTradingRules = {
   compoundingMode: 'full_balance',
   compoundingPct: 100,
   compoundingBaseQuote: null,
+  targetSpendPct: null,
   minQuoteSpend: 1.05,
   maxQuoteSpend: 50,
   referencePriceSource: 'last',
@@ -340,6 +342,147 @@ function createDefaultTradingRules(symbol = 'BTCUSDC'): BotTradingRules {
 function normalizeNumber(value: unknown, fallback: number) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeTargetSpendPct(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const normalized = n <= 1 ? n * 100 : n;
+  if (normalized <= 0) return null;
+  return Math.min(100, normalized);
+}
+
+function deriveCompoundingBaseQuoteForTargetSpend({
+  baseQuoteSpend,
+  freeQuote,
+  compoundingEnabled = false,
+  compoundingMode = 'full_balance',
+  compoundingPct = 100,
+  targetSpendPct = null
+}: {
+  baseQuoteSpend: number;
+  freeQuote: number;
+  compoundingEnabled?: boolean;
+  compoundingMode?: CompoundingMode;
+  compoundingPct?: number;
+  targetSpendPct?: number | null;
+}) {
+  const baseSpend = Number(baseQuoteSpend);
+  const freeQuoteNum = Number(freeQuote);
+  const normalizedTargetPct = normalizeTargetSpendPct(targetSpendPct);
+  const targetRatio = normalizedTargetPct ? normalizedTargetPct / 100 : null;
+  const strength = Math.max(0, Math.min(3, Number(compoundingPct || 0) / 100));
+
+  if (!compoundingEnabled || compoundingMode !== 'full_balance') return null;
+  if (!Number.isFinite(baseSpend) || baseSpend <= 0) return null;
+  if (!Number.isFinite(freeQuoteNum) || freeQuoteNum <= 0) return null;
+  if (!targetRatio || targetRatio <= 0) return null;
+  if (strength <= 0) return null;
+
+  const targetSpend = freeQuoteNum * targetRatio;
+  const requiredFactor = targetSpend / baseSpend;
+  const denominator = requiredFactor - 1 + strength;
+  if (!Number.isFinite(denominator) || denominator <= 0) return null;
+
+  const baseQuote = (strength * freeQuoteNum) / denominator;
+  if (!Number.isFinite(baseQuote) || baseQuote <= 0) return null;
+  return baseQuote;
+}
+
+function applyCompoundingToQuoteSpendMath({
+  baseQuoteSpend,
+  freeQuote,
+  compoundingEnabled = false,
+  compoundingMode = 'full_balance',
+  compoundingBaseQuote = null,
+  compoundingPct = 100,
+  targetSpendPct = null
+}: {
+  baseQuoteSpend: number;
+  freeQuote: number;
+  compoundingEnabled?: boolean;
+  compoundingMode?: CompoundingMode;
+  compoundingBaseQuote?: number | null;
+  compoundingPct?: number;
+  targetSpendPct?: number | null;
+}) {
+  const baseSpend = Number(baseQuoteSpend);
+  const freeQuoteNum = Number(freeQuote) || 0;
+  const strength = Math.max(0, Math.min(3, Number(compoundingPct || 0) / 100));
+  const configuredBaseQuote = Number(compoundingBaseQuote || 0);
+  const manualBaseQuote =
+    Number.isFinite(configuredBaseQuote) && configuredBaseQuote > 0
+      ? configuredBaseQuote
+      : null;
+  const normalizedTargetPct = normalizeTargetSpendPct(targetSpendPct);
+  const targetRatio = normalizedTargetPct ? normalizedTargetPct / 100 : null;
+
+  if (!Number.isFinite(baseSpend) || baseSpend <= 0) {
+    return {
+      quoteSpend: 0,
+      baseQuoteSpend: 0,
+      compoundingFactor: 1,
+      compoundingProfitQuote: 0,
+      compoundingBaseQuoteUsed: manualBaseQuote || 0,
+      compoundingBaseQuoteConfigured: manualBaseQuote,
+      compoundingBaseQuoteAuto: null as number | null,
+      targetSpendPct: normalizedTargetPct,
+      targetSpendRatio: targetRatio,
+      targetSpendApplied: false
+    };
+  }
+
+  const inferredBaseQuote =
+    compoundingMode === 'full_balance'
+      ? (freeQuoteNum > 0 ? freeQuoteNum : baseSpend)
+      : baseSpend;
+  const autoBaseQuote = deriveCompoundingBaseQuoteForTargetSpend({
+    baseQuoteSpend: baseSpend,
+    freeQuote: freeQuoteNum,
+    compoundingEnabled,
+    compoundingMode,
+    compoundingPct,
+    targetSpendPct: normalizedTargetPct
+  });
+  const compoundingBaseQuoteUsed = autoBaseQuote ?? manualBaseQuote ?? inferredBaseQuote;
+  const compoundingProfitQuote = Math.max(0, freeQuoteNum - compoundingBaseQuoteUsed);
+
+  if (!compoundingEnabled || strength <= 0 || compoundingBaseQuoteUsed <= 0) {
+    return {
+      quoteSpend: baseSpend,
+      baseQuoteSpend: baseSpend,
+      compoundingFactor: 1,
+      compoundingProfitQuote,
+      compoundingBaseQuoteUsed,
+      compoundingBaseQuoteConfigured: manualBaseQuote,
+      compoundingBaseQuoteAuto: autoBaseQuote,
+      targetSpendPct: normalizedTargetPct,
+      targetSpendRatio: targetRatio,
+      targetSpendApplied: false
+    };
+  }
+
+  let compoundingFactor = 1;
+  if (compoundingMode === 'profit_only') {
+    compoundingFactor = 1 + (compoundingProfitQuote / compoundingBaseQuoteUsed) * strength;
+  } else {
+    const balanceRatio = Math.max(0, freeQuoteNum / compoundingBaseQuoteUsed);
+    compoundingFactor = Math.max(0, 1 + (balanceRatio - 1) * strength);
+  }
+
+  return {
+    quoteSpend: baseSpend * compoundingFactor,
+    baseQuoteSpend: baseSpend,
+    compoundingFactor,
+    compoundingProfitQuote,
+    compoundingBaseQuoteUsed,
+    compoundingBaseQuoteConfigured: manualBaseQuote,
+    compoundingBaseQuoteAuto: autoBaseQuote,
+    targetSpendPct: normalizedTargetPct,
+    targetSpendRatio: targetRatio,
+    targetSpendApplied: autoBaseQuote !== null
+  };
 }
 
 function sanitizePineInputSettings(value: unknown): PineInputSetting[] {
@@ -554,6 +697,7 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
     : DEFAULT_TRADING_RULES.compoundingMode;
   const compoundingBaseQuoteRaw = normalizeNumber(merged.compoundingBaseQuote, 0);
   const compoundingBaseQuote = compoundingBaseQuoteRaw > 0 ? compoundingBaseQuoteRaw : null;
+  const targetSpendPct = normalizeTargetSpendPct((merged as any).targetSpendPct);
   const referencePriceSource: ReferencePriceSource = ['last', 'mark', 'mid'].includes(String(merged.referencePriceSource))
     ? (merged.referencePriceSource as ReferencePriceSource)
     : 'last';
@@ -591,6 +735,7 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
     compoundingMode,
     compoundingPct: Math.max(0, Math.min(300, normalizeNumber(merged.compoundingPct, DEFAULT_TRADING_RULES.compoundingPct))),
     compoundingBaseQuote,
+    targetSpendPct,
     minQuoteSpend,
     maxQuoteSpend,
     referencePriceSource,
@@ -1011,6 +1156,8 @@ export default function TradeBotsModule() {
   const [tradingDetailsError, setTradingDetailsError] = useState('');
   const [pineScriptSource, setPineScriptSource] = useState('');
   const [pineScriptFileName, setPineScriptFileName] = useState('');
+  const [algoBaseStart, setAlgoBaseStart] = useState(10);
+  const [algoBaseEnd, setAlgoBaseEnd] = useState(50);
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -1165,33 +1312,16 @@ export default function TradeBotsModule() {
 
     const quoteSpendBeforeCompounding =
       rules.sizingMode === 'fixed_quote' ? quoteSpendRawBase : quoteSpendRawBase * reinvestmentFactor;
-    const compoundingStrength = Math.max(0, Math.min(3, Number(rules.compoundingPct || 0) / 100));
-    const compoundingBaseQuoteConfigured = Number(rules.compoundingBaseQuote || 0);
-    const compoundingBaseQuote =
-      Number.isFinite(compoundingBaseQuoteConfigured) && compoundingBaseQuoteConfigured > 0
-        ? compoundingBaseQuoteConfigured
-        : null;
-    const inferredCompoundingBaseQuote =
-      rules.compoundingMode === 'full_balance'
-        ? (freeQuote > 0 ? freeQuote : quoteSpendBeforeCompounding)
-        : quoteSpendBeforeCompounding;
-    const compoundingBaseQuoteUsed = compoundingBaseQuote ?? inferredCompoundingBaseQuote;
-    const compoundingProfitQuote = Math.max(0, freeQuote - compoundingBaseQuoteUsed);
-    let compoundingFactor = 1;
-    if (
-      rules.compoundingEnabled &&
-      compoundingStrength > 0 &&
-      quoteSpendBeforeCompounding > 0 &&
-      compoundingBaseQuoteUsed > 0
-    ) {
-      if (rules.compoundingMode === 'profit_only') {
-        compoundingFactor = 1 + (compoundingProfitQuote / compoundingBaseQuoteUsed) * compoundingStrength;
-      } else {
-        const balanceRatio = Math.max(0, freeQuote / compoundingBaseQuoteUsed);
-        compoundingFactor = Math.max(0, 1 + (balanceRatio - 1) * compoundingStrength);
-      }
-    }
-    const quoteSpendRaw = quoteSpendBeforeCompounding * compoundingFactor;
+    const compoundingMath = applyCompoundingToQuoteSpendMath({
+      baseQuoteSpend: quoteSpendBeforeCompounding,
+      freeQuote,
+      compoundingEnabled: rules.compoundingEnabled,
+      compoundingMode: rules.compoundingMode,
+      compoundingBaseQuote: rules.compoundingBaseQuote,
+      compoundingPct: rules.compoundingPct,
+      targetSpendPct: rules.targetSpendPct
+    });
+    const quoteSpendRaw = compoundingMath.quoteSpend;
     const quoteSpend = Math.max(minQuoteSpendFloor, Math.min(maxQuoteSpend, quoteSpendRaw));
     const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
     const qtyFinal = roundDownToStep(qtyRaw, stepSize);
@@ -1277,10 +1407,14 @@ export default function TradeBotsModule() {
       compoundingEnabled: rules.compoundingEnabled,
       compoundingMode: rules.compoundingMode,
       compoundingPct: rules.compoundingPct,
-      compoundingBaseQuoteConfigured: compoundingBaseQuote,
-      compoundingBaseQuoteUsed,
-      compoundingProfitQuote,
-      compoundingFactor,
+      compoundingBaseQuoteConfigured: compoundingMath.compoundingBaseQuoteConfigured,
+      compoundingBaseQuoteAuto: compoundingMath.compoundingBaseQuoteAuto,
+      compoundingBaseQuoteUsed: compoundingMath.compoundingBaseQuoteUsed,
+      compoundingProfitQuote: compoundingMath.compoundingProfitQuote,
+      compoundingFactor: compoundingMath.compoundingFactor,
+      targetSpendPct: compoundingMath.targetSpendPct,
+      targetSpendRatio: compoundingMath.targetSpendRatio,
+      targetSpendApplied: compoundingMath.targetSpendApplied,
       qtyRaw,
       qtyFinal,
       notionalAfterRounding,
@@ -1302,6 +1436,61 @@ export default function TradeBotsModule() {
     marketTicker?.price,
     quoteAssetBalance?.free,
     activeRules
+  ]);
+  const targetSpendSuggestedBaseQuote = useMemo(() => {
+    if (!activeRules || !rulesPreview) return null;
+    return deriveCompoundingBaseQuoteForTargetSpend({
+      baseQuoteSpend: rulesPreview.quoteSpendBeforeCompounding,
+      freeQuote: rulesPreview.freeQuote,
+      compoundingEnabled: true,
+      compoundingMode: activeRules.compoundingMode,
+      compoundingPct: activeRules.compoundingPct,
+      targetSpendPct: activeRules.targetSpendPct
+    });
+  }, [
+    activeRules?.compoundingMode,
+    activeRules?.compoundingPct,
+    activeRules?.targetSpendPct,
+    rulesPreview?.freeQuote,
+    rulesPreview?.quoteSpendBeforeCompounding
+  ]);
+  const algoCompoundingRows = useMemo(() => {
+    if (!activeRules || !rulesPreview) return [];
+    const startRaw = Math.floor(Number(algoBaseStart));
+    const endRaw = Math.floor(Number(algoBaseEnd));
+    const startSafe = Number.isFinite(startRaw) ? startRaw : 10;
+    const endSafe = Number.isFinite(endRaw) ? endRaw : 50;
+    const start = Math.max(1, Math.min(startSafe, endSafe));
+    const end = Math.max(start, Math.max(startSafe, endSafe));
+    const cappedEnd = Math.min(1000, end);
+
+    const rows: Array<{ compoundingBaseQuote: number; compoundingFactor: number; quoteSpendRaw: number }> = [];
+    for (let baseQuote = start; baseQuote <= cappedEnd; baseQuote += 1) {
+      const math = applyCompoundingToQuoteSpendMath({
+        baseQuoteSpend: rulesPreview.quoteSpendBeforeCompounding,
+        freeQuote: rulesPreview.freeQuote,
+        compoundingEnabled: activeRules.compoundingEnabled,
+        compoundingMode: activeRules.compoundingMode,
+        compoundingBaseQuote: baseQuote,
+        compoundingPct: activeRules.compoundingPct,
+        targetSpendPct: null
+      });
+      rows.push({
+        compoundingBaseQuote: baseQuote,
+        compoundingFactor: math.compoundingFactor,
+        quoteSpendRaw: math.quoteSpend
+      });
+      if (rows.length >= 300) break;
+    }
+    return rows;
+  }, [
+    activeRules?.compoundingEnabled,
+    activeRules?.compoundingMode,
+    activeRules?.compoundingPct,
+    algoBaseStart,
+    algoBaseEnd,
+    rulesPreview?.freeQuote,
+    rulesPreview?.quoteSpendBeforeCompounding
   ]);
   const runtimeConfigPreview = useMemo(() => {
     const rules = activeRules;
@@ -1333,7 +1522,8 @@ export default function TradeBotsModule() {
           enabled: rules.compoundingEnabled,
           mode: rules.compoundingMode,
           pct: rules.compoundingPct,
-          baseQuote: rules.compoundingBaseQuote
+          baseQuote: rules.compoundingBaseQuote,
+          targetSpendPct: rules.targetSpendPct
         },
         minQuoteSpend: rules.minQuoteSpend,
         maxQuoteSpend: rules.maxQuoteSpend,
@@ -2459,6 +2649,7 @@ export default function TradeBotsModule() {
                 {[
                   { key: 'integrations', label: 'Integrations' },
                   { key: 'parameters', label: 'Parameters' },
+                  { key: 'algo', label: 'Algo' },
                   { key: 'exchange', label: 'Exchange' },
                   { key: 'trade-history', label: 'Trade History' }
                 ].map((section) => {
@@ -3501,6 +3692,258 @@ export default function TradeBotsModule() {
                     </pre>
                   </div>
                 )}
+                </section>
+              )}
+
+              {activePopupSection === 'algo' && (
+                <section className="space-y-3 rounded-2xl border border-white/15 bg-black/45 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Algo compounding math</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Calculate compounding base quote from a target spend %, inspect factor math, and apply values for this bot runtime.
+                      </p>
+                      <p className="mt-1 text-[11px] text-amber-100">Use this for the MEXC MACD bot runtime profile.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
+                        Save Rules
+                      </button>
+                    </div>
+                  </div>
+
+                  {rulesPreview && (
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+                      <InfoTile label="Free Quote" value={formatDecimal(rulesPreview.freeQuote)} />
+                      <InfoTile label="Allocation %" value={formatDecimal(activeRules.allocationValue, 4)} />
+                      <InfoTile label="Reinvestment %" value={formatDecimal(activeRules.reinvestmentPct, 4)} />
+                      <InfoTile label="Base Spend" value={formatDecimal(rulesPreview.quoteSpendBeforeCompounding)} />
+                      <InfoTile label="Compounding Factor" value={formatDecimal(rulesPreview.compoundingFactor, 8)} />
+                      <InfoTile label="Quote Spend Raw" value={formatDecimal(rulesPreview.quoteSpendRaw)} />
+                      <InfoTile label="Quote Spend Final" value={formatDecimal(rulesPreview.quoteSpend)} />
+                      <InfoTile label="Target Spend %" value={formatDecimal(rulesPreview.targetSpendPct, 4)} />
+                      <InfoTile label="Target Applied" value={rulesPreview.targetSpendApplied ? 'YES' : 'NO'} />
+                      <InfoTile label="Base Quote (Manual)" value={formatDecimal(rulesPreview.compoundingBaseQuoteConfigured)} />
+                      <InfoTile label="Base Quote (Auto)" value={formatDecimal(rulesPreview.compoundingBaseQuoteAuto)} />
+                      <InfoTile label="Base Quote (Used)" value={formatDecimal(rulesPreview.compoundingBaseQuoteUsed)} />
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-sky-300/25 bg-sky-500/8 px-3 py-2 text-[11px] text-sky-50">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-sky-100">Math</p>
+                    <p className="mt-1 font-mono">baseSpend = freeQuote * (allocationValue/100) * (reinvestmentPct/100)</p>
+                    <p className="mt-1 font-mono">factor(full_balance) = 1 + (freeQuote/baseQuote - 1) * (compoundingPct/100)</p>
+                    <p className="mt-1 font-mono">quoteSpendRaw = baseSpend * factor</p>
+                    <p className="mt-1 font-mono">
+                      autoBaseQuote = (strength * freeQuote) / ((targetSpend/baseSpend) - 1 + strength), targetSpend = freeQuote * (targetSpendPct/100)
+                    </p>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Enable Compounding
+                      <div className="mt-1 flex h-8 items-center rounded-lg border border-white/15 bg-black/35 px-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeRules.compoundingEnabled)}
+                          onChange={(event) => updateBotRulesDraft({ compoundingEnabled: event.target.checked })}
+                          className="h-4 w-4 rounded border-white/40 bg-black/40 text-sky-400 focus:ring-0"
+                        />
+                        <span className="ml-2 text-[11px] normal-case text-gray-300">Use compounding factor</span>
+                      </div>
+                    </label>
+
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Compounding Mode
+                      <select
+                        value={activeRules.compoundingMode}
+                        onChange={(event) => updateBotRulesDraft({ compoundingMode: event.target.value as CompoundingMode })}
+                        className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                      >
+                        <option value="full_balance">Full balance</option>
+                        <option value="profit_only">Profit only</option>
+                      </select>
+                    </label>
+
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Compounding Strength %
+                      <input
+                        type="number"
+                        min={0}
+                        max={300}
+                        step="0.0001"
+                        value={activeRules.compoundingPct}
+                        onChange={(event) => updateBotRulesDraft({ compoundingPct: Number(event.target.value) })}
+                        className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                      />
+                    </label>
+
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Target Spend %
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.0001"
+                        value={activeRules.targetSpendPct ?? ''}
+                        placeholder="e.g. 93.05"
+                        onChange={(event) =>
+                          updateBotRulesDraft({
+                            targetSpendPct: event.target.value ? Number(event.target.value) : null
+                          })}
+                        className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                      />
+                    </label>
+
+                    <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                      Compounding Base Quote
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.0001"
+                        value={activeRules.compoundingBaseQuote ?? ''}
+                        placeholder="optional/manual"
+                        onChange={(event) =>
+                          updateBotRulesDraft({
+                            compoundingBaseQuote: event.target.value ? Number(event.target.value) : null
+                          })}
+                        className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                      />
+                    </label>
+
+                    <div className="rounded-lg border border-white/15 bg-black/35 px-2 py-1">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">Auto base quote</p>
+                      <p className="mt-1 text-xs text-gray-100">{formatDecimal(targetSpendSuggestedBaseQuote)}</p>
+                      <button
+                        type="button"
+                        className="mt-2 rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={targetSpendSuggestedBaseQuote === null}
+                        onClick={() => {
+                          if (targetSpendSuggestedBaseQuote === null) return;
+                          updateBotRulesDraft({
+                            compoundingEnabled: true,
+                            compoundingMode: 'full_balance',
+                            compoundingBaseQuote: Number(targetSpendSuggestedBaseQuote.toFixed(8))
+                          });
+                        }}
+                      >
+                        Apply Auto Base Quote
+                      </button>
+                    </div>
+
+                    <div className="rounded-lg border border-white/15 bg-black/35 px-2 py-1">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">Quick target</p>
+                      <button
+                        type="button"
+                        className="mt-2 w-full rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                        onClick={() => updateBotRulesDraft({ targetSpendPct: 93.05 })}
+                      >
+                        Set 93.05%
+                      </button>
+                    </div>
+                  </div>
+
+                  {activeRules.targetSpendPct && activeRules.compoundingMode !== 'full_balance' && (
+                    <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                      Target spend auto-base works with full-balance compounding mode only.
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-white/15 bg-black/35 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Compounding base quote table</p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Columns: compoundingBaseQuote, compoundingFactor, quoteSpendRaw. Uses current allocation/reinvestment + compounding settings.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          onClick={() => {
+                            setAlgoBaseStart(10);
+                            setAlgoBaseEnd(50);
+                          }}
+                        >
+                          10-50
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          onClick={() => {
+                            setAlgoBaseStart(51);
+                            setAlgoBaseEnd(100);
+                          }}
+                        >
+                          51-100
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          onClick={() => {
+                            setAlgoBaseStart(101);
+                            setAlgoBaseEnd(150);
+                          }}
+                        >
+                          101-150
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Base Quote Start
+                        <input
+                          type="number"
+                          step="1"
+                          min={1}
+                          value={algoBaseStart}
+                          onChange={(event) => setAlgoBaseStart(Number(event.target.value))}
+                          className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                        />
+                      </label>
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Base Quote End
+                        <input
+                          type="number"
+                          step="1"
+                          min={1}
+                          value={algoBaseEnd}
+                          onChange={(event) => setAlgoBaseEnd(Number(event.target.value))}
+                          className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-2 max-h-80 overflow-auto rounded-md border border-white/10">
+                      <table className="w-full text-left text-xs text-gray-200">
+                        <thead className="sticky top-0 bg-black/75 text-[10px] uppercase tracking-[0.14em] text-gray-400">
+                          <tr>
+                            <th className="px-2 py-2">Compounding Base Quote</th>
+                            <th className="px-2 py-2">Compounding Factor</th>
+                            <th className="px-2 py-2">Quote Spend Raw</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {algoCompoundingRows.map((row) => (
+                            <tr key={`algo:${row.compoundingBaseQuote}`} className="border-t border-white/10">
+                              <td className="px-2 py-1.5 font-mono text-[11px] text-gray-100">{formatDecimal(row.compoundingBaseQuote, 8)}</td>
+                              <td className="px-2 py-1.5 font-mono text-[11px] text-gray-100">{formatDecimal(row.compoundingFactor, 8)}</td>
+                              <td className="px-2 py-1.5 font-mono text-[11px] text-gray-100">{formatDecimal(row.quoteSpendRaw, 8)}</td>
+                            </tr>
+                          ))}
+                          {algoCompoundingRows.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-2 py-2 text-[11px] text-gray-400">
+                                No rows to show.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </section>
               )}
 
