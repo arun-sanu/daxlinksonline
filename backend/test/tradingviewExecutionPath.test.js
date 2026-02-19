@@ -6,6 +6,7 @@ import { buildExecutionDedupeKey } from '../src/services/executionAuditService.j
 import {
   adjustQuantityUpToMinNotional,
   applyCompoundingToQuoteSpend,
+  applySellLadderToSellQuantity,
   classifyMinNotionalShortfall,
   deriveCompoundingBaseQuoteForTargetSpend,
   SizingConfigError,
@@ -174,6 +175,66 @@ test('applyCompoundingToQuoteSpend auto-targets spend ratio when targetSpendRati
   assert.equal(out.targetSpendApplied, true);
   assert.ok(Math.abs(out.quoteSpend - 291.5538582 * 0.9305) < 1e-6);
   assert.ok(Math.abs(out.compoundingBaseQuote - 141) < 0.01);
+});
+
+test('applyCompoundingToQuoteSpend supports SELL-style profit target spend math', () => {
+  const out = applyCompoundingToQuoteSpend({
+    baseQuoteSpend: 131.19923619,
+    freeQuote: 291.5538582,
+    compoundingEnabled: true,
+    compoundingMode: 'full_balance',
+    compoundingPct: 100,
+    targetSpendRatio: 0.9105
+  });
+  assert.equal(out.targetSpendApplied, true);
+  assert.ok(Math.abs(out.quoteSpend - 291.5538582 * 0.9105) < 1e-6);
+});
+
+test('applySellLadderToSellQuantity scales up SELL size on profit', () => {
+  const out = applySellLadderToSellQuantity({
+    qtyRaw: 0.5,
+    freeBase: 1,
+    marketSellPrice: 110,
+    referenceBuyPrice: 100,
+    sellLadderEnabled: true,
+    sellLadderStrengthPct: 100,
+    sellLadderMinFactor: 0.1,
+    sellLadderMaxFactor: 2
+  });
+  assert.equal(out.applied, true);
+  assert.ok(Math.abs(out.factor - 1.1) < 1e-12);
+  assert.ok(Math.abs(out.qtyRaw - 0.55) < 1e-12);
+});
+
+test('applySellLadderToSellQuantity scales down SELL size more aggressively on loss', () => {
+  const out = applySellLadderToSellQuantity({
+    qtyRaw: 0.5,
+    freeBase: 1,
+    marketSellPrice: 95,
+    referenceBuyPrice: 100,
+    sellLadderEnabled: true,
+    sellLadderStrengthPct: 100,
+    sellLadderMinFactor: 0.1,
+    sellLadderMaxFactor: 2
+  });
+  assert.equal(out.applied, true);
+  assert.ok(Math.abs(out.factor - 0.7) < 1e-12);
+  assert.ok(Math.abs(out.qtyRaw - 0.35) < 1e-12);
+});
+
+test('applySellLadderToSellQuantity caps scaled qty at free base', () => {
+  const out = applySellLadderToSellQuantity({
+    qtyRaw: 0.9,
+    freeBase: 1,
+    marketSellPrice: 120,
+    referenceBuyPrice: 100,
+    sellLadderEnabled: true,
+    sellLadderStrengthPct: 200,
+    sellLadderMinFactor: 0.1,
+    sellLadderMaxFactor: 3
+  });
+  assert.equal(out.applied, true);
+  assert.equal(out.qtyRaw, 1);
 });
 
 test('classifyMinNotionalShortfall maps BUY shortfall to quote insufficiency', () => {

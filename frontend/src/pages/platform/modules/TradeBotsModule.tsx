@@ -106,6 +106,15 @@ type BotTradingRules = {
   compoundingPct: number;
   compoundingBaseQuote: number | null;
   targetSpendPct: number | null;
+  sellCompoundingEnabled: boolean;
+  sellCompoundingMode: CompoundingMode;
+  sellCompoundingPct: number;
+  sellCompoundingBaseQuote: number | null;
+  sellTargetSpendPct: number | null;
+  sellLadderEnabled: boolean;
+  sellLadderStrengthPct: number;
+  sellLadderMinFactor: number;
+  sellLadderMaxFactor: number;
   minQuoteSpend: number;
   maxQuoteSpend: number;
   referencePriceSource: ReferencePriceSource;
@@ -149,6 +158,15 @@ const DEFAULT_TRADING_RULES: BotTradingRules = {
   compoundingPct: 100,
   compoundingBaseQuote: null,
   targetSpendPct: null,
+  sellCompoundingEnabled: false,
+  sellCompoundingMode: 'full_balance',
+  sellCompoundingPct: 100,
+  sellCompoundingBaseQuote: null,
+  sellTargetSpendPct: 91.05,
+  sellLadderEnabled: false,
+  sellLadderStrengthPct: 100,
+  sellLadderMinFactor: 0.1,
+  sellLadderMaxFactor: 2,
   minQuoteSpend: 1.05,
   maxQuoteSpend: 50,
   referencePriceSource: 'last',
@@ -485,6 +503,56 @@ function applyCompoundingToQuoteSpendMath({
   };
 }
 
+function applySellLadderToSellQuantityMath({
+  qtyRaw,
+  freeBase,
+  marketSellPrice,
+  referenceBuyPrice,
+  sellLadderEnabled = false,
+  sellLadderStrengthPct = 100,
+  sellLadderMinFactor = 0.1,
+  sellLadderMaxFactor = 2
+}: {
+  qtyRaw: number;
+  freeBase: number;
+  marketSellPrice: number;
+  referenceBuyPrice: number | null;
+  sellLadderEnabled?: boolean;
+  sellLadderStrengthPct?: number;
+  sellLadderMinFactor?: number;
+  sellLadderMaxFactor?: number;
+}) {
+  const baseQty = Number(qtyRaw);
+  const freeBaseNum = Number(freeBase) || 0;
+  const marketPrice = Number(marketSellPrice);
+  const referenceBuy = Number(referenceBuyPrice);
+  const strength = Math.max(0, Math.min(5, Number(sellLadderStrengthPct || 0) / 100));
+  const minFactor = Math.max(0.01, Math.min(1, Number(sellLadderMinFactor || 0.1)));
+  const maxFactor = Math.max(minFactor, Math.max(1, Math.min(10, Number(sellLadderMaxFactor || 2))));
+
+  if (!Number.isFinite(baseQty) || baseQty <= 0) {
+    return { qtyRaw: 0, factor: 1, edgeRatio: null as number | null, applied: false };
+  }
+  if (
+    !sellLadderEnabled ||
+    !Number.isFinite(marketPrice) ||
+    marketPrice <= 0 ||
+    !Number.isFinite(referenceBuy) ||
+    referenceBuy <= 0 ||
+    strength <= 0
+  ) {
+    return { qtyRaw: baseQty, factor: 1, edgeRatio: null as number | null, applied: false };
+  }
+
+  const edgeRatio = (marketPrice - referenceBuy) / referenceBuy;
+  const lossSlopeMultiplier = 6;
+  const slope = edgeRatio >= 0 ? strength : strength * lossSlopeMultiplier;
+  const rawFactor = 1 + edgeRatio * slope;
+  const factor = Math.max(minFactor, Math.min(maxFactor, rawFactor));
+  const scaledQty = Math.max(0, Math.min(freeBaseNum, baseQty * factor));
+  return { qtyRaw: scaledQty, factor, edgeRatio, applied: true };
+}
+
 function sanitizePineInputSettings(value: unknown): PineInputSetting[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -698,6 +766,21 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
   const compoundingBaseQuoteRaw = normalizeNumber(merged.compoundingBaseQuote, 0);
   const compoundingBaseQuote = compoundingBaseQuoteRaw > 0 ? compoundingBaseQuoteRaw : null;
   const targetSpendPct = normalizeTargetSpendPct((merged as any).targetSpendPct);
+  const sellCompoundingModes: CompoundingMode[] = ['full_balance', 'profit_only'];
+  const sellCompoundingMode: CompoundingMode = sellCompoundingModes.includes((merged as any).sellCompoundingMode as CompoundingMode)
+    ? ((merged as any).sellCompoundingMode as CompoundingMode)
+    : DEFAULT_TRADING_RULES.sellCompoundingMode;
+  const sellCompoundingBaseQuoteRaw = normalizeNumber((merged as any).sellCompoundingBaseQuote, 0);
+  const sellCompoundingBaseQuote = sellCompoundingBaseQuoteRaw > 0 ? sellCompoundingBaseQuoteRaw : null;
+  const sellTargetSpendPct = normalizeTargetSpendPct((merged as any).sellTargetSpendPct);
+  const sellLadderMinFactor = Math.max(
+    0.01,
+    Math.min(1, normalizeNumber((merged as any).sellLadderMinFactor, DEFAULT_TRADING_RULES.sellLadderMinFactor))
+  );
+  const sellLadderMaxFactor = Math.max(
+    Math.max(1, sellLadderMinFactor),
+    Math.min(10, normalizeNumber((merged as any).sellLadderMaxFactor, DEFAULT_TRADING_RULES.sellLadderMaxFactor))
+  );
   const referencePriceSource: ReferencePriceSource = ['last', 'mark', 'mid'].includes(String(merged.referencePriceSource))
     ? (merged.referencePriceSource as ReferencePriceSource)
     : 'last';
@@ -736,6 +819,21 @@ function sanitizeTradingRules(rules: Partial<BotTradingRules> | null | undefined
     compoundingPct: Math.max(0, Math.min(300, normalizeNumber(merged.compoundingPct, DEFAULT_TRADING_RULES.compoundingPct))),
     compoundingBaseQuote,
     targetSpendPct,
+    sellCompoundingEnabled: Boolean((merged as any).sellCompoundingEnabled),
+    sellCompoundingMode,
+    sellCompoundingPct: Math.max(
+      0,
+      Math.min(300, normalizeNumber((merged as any).sellCompoundingPct, DEFAULT_TRADING_RULES.sellCompoundingPct))
+    ),
+    sellCompoundingBaseQuote,
+    sellTargetSpendPct,
+    sellLadderEnabled: Boolean((merged as any).sellLadderEnabled),
+    sellLadderStrengthPct: Math.max(
+      0,
+      Math.min(500, normalizeNumber((merged as any).sellLadderStrengthPct, DEFAULT_TRADING_RULES.sellLadderStrengthPct))
+    ),
+    sellLadderMinFactor,
+    sellLadderMaxFactor,
     minQuoteSpend,
     maxQuoteSpend,
     referencePriceSource,
@@ -1158,6 +1256,7 @@ export default function TradeBotsModule() {
   const [pineScriptFileName, setPineScriptFileName] = useState('');
   const [algoBaseStart, setAlgoBaseStart] = useState(10);
   const [algoBaseEnd, setAlgoBaseEnd] = useState(50);
+  const [algoMathSide, setAlgoMathSide] = useState<PreviewSide>('buy');
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -1247,6 +1346,7 @@ export default function TradeBotsModule() {
   const integrationCredentials = integrationDetail?.credentials || [];
   const integrationLogs = integrationDetail?.logs || [];
   const activeRules = botRulesDraft || selectedBotRules;
+  const algoIsSell = algoMathSide === 'sell';
   const activePineAnalysis = activeRules?.pineAnalysis || null;
   const activeCodeParameterSchema = activeRules?.codeParameterSchema || [];
   const activeCodeParameterValues = activeRules?.codeParameters || {};
@@ -1437,25 +1537,173 @@ export default function TradeBotsModule() {
     quoteAssetBalance?.free,
     activeRules
   ]);
-  const targetSpendSuggestedBaseQuote = useMemo(() => {
+  const algoLatestBuyPrice = useMemo(() => {
+    for (const row of tradeHistoryRows) {
+      if (String(row?.side || '').toUpperCase() !== 'BUY') continue;
+      const price = Number(row?.price);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+    return null;
+  }, [tradeHistoryRows]);
+  const algoMathPreview = useMemo(() => {
     if (!activeRules || !rulesPreview) return null;
+    const refPrice = Number(rulesPreview.refPrice || 0);
+    const allocationValue = Math.max(0, Number(activeRules.allocationValue || 0));
+    const maxQuoteSpend = Math.max(
+      Math.max(0, Number(activeRules.minQuoteSpend || 0)),
+      Math.max(0, Number(activeRules.maxQuoteSpend || 0))
+    );
+    const isSell = algoMathSide === 'sell';
+
+    if (!isSell) {
+      const compoundingMath = applyCompoundingToQuoteSpendMath({
+        baseQuoteSpend: rulesPreview.quoteSpendBeforeCompounding,
+        freeQuote: rulesPreview.freeQuote,
+        compoundingEnabled: activeRules.compoundingEnabled,
+        compoundingMode: activeRules.compoundingMode,
+        compoundingBaseQuote: activeRules.compoundingBaseQuote,
+        compoundingPct: activeRules.compoundingPct,
+        targetSpendPct: activeRules.targetSpendPct
+      });
+      const quoteSpendRaw = compoundingMath.quoteSpend;
+      const quoteSpend = Math.max(
+        resolvePreviewMinQuoteSpendFloor('buy', Number(activeRules.minQuoteSpend || 0)),
+        Math.min(maxQuoteSpend, quoteSpendRaw)
+      );
+      const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
+      return {
+        side: 'buy' as const,
+        refPrice,
+        freeQuote: Number(rulesPreview.freeQuote || 0),
+        freeBase: Number(rulesPreview.freeBase || 0),
+        capacityQuote: Number(rulesPreview.freeQuote || 0),
+        baseSpend: Number(rulesPreview.quoteSpendBeforeCompounding || 0),
+        quoteSpendRaw,
+        quoteSpend,
+        qtyRaw,
+        compoundingEnabled: activeRules.compoundingEnabled,
+        compoundingMode: activeRules.compoundingMode,
+        compoundingPct: activeRules.compoundingPct,
+        compoundingBaseQuoteConfigured: compoundingMath.compoundingBaseQuoteConfigured,
+        compoundingBaseQuoteAuto: compoundingMath.compoundingBaseQuoteAuto,
+        compoundingBaseQuoteUsed: compoundingMath.compoundingBaseQuoteUsed,
+        compoundingProfitQuote: compoundingMath.compoundingProfitQuote,
+        compoundingFactor: compoundingMath.compoundingFactor,
+        targetSpendPct: compoundingMath.targetSpendPct,
+        targetSpendRatio: compoundingMath.targetSpendRatio,
+        targetSpendApplied: compoundingMath.targetSpendApplied,
+        profitSide: true,
+        referenceBuyPrice: null as number | null,
+        ladderApplied: false,
+        ladderFactor: null as number | null,
+        ladderEdgeRatio: null as number | null
+      };
+    }
+
+    const freeBase = Number(rulesPreview.freeBase || 0);
+    const sellCapacityQuote = Math.max(0, freeBase * Math.max(0, refPrice));
+    const baseSellQuoteSpend =
+      activeRules.sizingMode === 'fixed_quote'
+        ? allocationValue
+        : sellCapacityQuote * (allocationValue / 100);
+    const referenceBuyPrice = Number(algoLatestBuyPrice || 0) > 0 ? Number(algoLatestBuyPrice) : null;
+    const profitSide =
+      referenceBuyPrice !== null && refPrice > 0
+        ? refPrice > referenceBuyPrice
+        : false;
+    const compoundingMath = applyCompoundingToQuoteSpendMath({
+      baseQuoteSpend: baseSellQuoteSpend,
+      freeQuote: sellCapacityQuote,
+      compoundingEnabled: activeRules.sellCompoundingEnabled,
+      compoundingMode: activeRules.sellCompoundingMode,
+      compoundingBaseQuote: activeRules.sellCompoundingBaseQuote,
+      compoundingPct: activeRules.sellCompoundingPct,
+      targetSpendPct: activeRules.sellTargetSpendPct
+    });
+    let quoteSpendRaw = profitSide ? compoundingMath.quoteSpend : baseSellQuoteSpend;
+    let ladderApplied = false;
+    let ladderFactor: number | null = null;
+    let ladderEdgeRatio: number | null = null;
+
+    if (!profitSide && activeRules.sellLadderEnabled) {
+      const baseQty = refPrice > 0 ? baseSellQuoteSpend / refPrice : 0;
+      const ladderMath = applySellLadderToSellQuantityMath({
+        qtyRaw: baseQty,
+        freeBase,
+        marketSellPrice: refPrice,
+        referenceBuyPrice,
+        sellLadderEnabled: activeRules.sellLadderEnabled,
+        sellLadderStrengthPct: activeRules.sellLadderStrengthPct,
+        sellLadderMinFactor: activeRules.sellLadderMinFactor,
+        sellLadderMaxFactor: activeRules.sellLadderMaxFactor
+      });
+      quoteSpendRaw = ladderMath.qtyRaw * Math.max(0, refPrice);
+      ladderApplied = ladderMath.applied;
+      ladderFactor = ladderMath.applied ? ladderMath.factor : null;
+      ladderEdgeRatio = ladderMath.applied ? ladderMath.edgeRatio : null;
+    }
+
+    const quoteSpend = Math.max(0, Math.min(maxQuoteSpend, quoteSpendRaw));
+    const qtyRaw = refPrice > 0 ? quoteSpend / refPrice : 0;
+    return {
+      side: 'sell' as const,
+      refPrice,
+      freeQuote: Number(rulesPreview.freeQuote || 0),
+      freeBase,
+      capacityQuote: sellCapacityQuote,
+      baseSpend: baseSellQuoteSpend,
+      quoteSpendRaw,
+      quoteSpend,
+      qtyRaw,
+      compoundingEnabled: activeRules.sellCompoundingEnabled,
+      compoundingMode: activeRules.sellCompoundingMode,
+      compoundingPct: activeRules.sellCompoundingPct,
+      compoundingBaseQuoteConfigured: compoundingMath.compoundingBaseQuoteConfigured,
+      compoundingBaseQuoteAuto: compoundingMath.compoundingBaseQuoteAuto,
+      compoundingBaseQuoteUsed: compoundingMath.compoundingBaseQuoteUsed,
+      compoundingProfitQuote: profitSide ? compoundingMath.compoundingProfitQuote : 0,
+      compoundingFactor: profitSide ? compoundingMath.compoundingFactor : 1,
+      targetSpendPct: compoundingMath.targetSpendPct,
+      targetSpendRatio: compoundingMath.targetSpendRatio,
+      targetSpendApplied: profitSide ? compoundingMath.targetSpendApplied : false,
+      profitSide,
+      referenceBuyPrice,
+      ladderApplied,
+      ladderFactor,
+      ladderEdgeRatio
+    };
+  }, [
+    activeRules,
+    algoLatestBuyPrice,
+    algoMathSide,
+    rulesPreview
+  ]);
+  const targetSpendSuggestedBaseQuote = useMemo(() => {
+    if (!algoMathPreview || !activeRules) return null;
+    if (algoMathPreview.side === 'sell') {
+      return deriveCompoundingBaseQuoteForTargetSpend({
+        baseQuoteSpend: algoMathPreview.baseSpend,
+        freeQuote: algoMathPreview.capacityQuote,
+        compoundingEnabled: true,
+        compoundingMode: activeRules.sellCompoundingMode,
+        compoundingPct: activeRules.sellCompoundingPct,
+        targetSpendPct: activeRules.sellTargetSpendPct
+      });
+    }
     return deriveCompoundingBaseQuoteForTargetSpend({
-      baseQuoteSpend: rulesPreview.quoteSpendBeforeCompounding,
-      freeQuote: rulesPreview.freeQuote,
+      baseQuoteSpend: algoMathPreview.baseSpend,
+      freeQuote: algoMathPreview.capacityQuote,
       compoundingEnabled: true,
       compoundingMode: activeRules.compoundingMode,
       compoundingPct: activeRules.compoundingPct,
       targetSpendPct: activeRules.targetSpendPct
     });
   }, [
-    activeRules?.compoundingMode,
-    activeRules?.compoundingPct,
-    activeRules?.targetSpendPct,
-    rulesPreview?.freeQuote,
-    rulesPreview?.quoteSpendBeforeCompounding
+    activeRules,
+    algoMathPreview
   ]);
   const algoCompoundingRows = useMemo(() => {
-    if (!activeRules || !rulesPreview) return [];
+    if (!activeRules || !algoMathPreview) return [];
     const startRaw = Math.floor(Number(algoBaseStart));
     const endRaw = Math.floor(Number(algoBaseEnd));
     const startSafe = Number.isFinite(startRaw) ? startRaw : 10;
@@ -1466,13 +1714,14 @@ export default function TradeBotsModule() {
 
     const rows: Array<{ compoundingBaseQuote: number; compoundingFactor: number; quoteSpendRaw: number }> = [];
     for (let baseQuote = start; baseQuote <= cappedEnd; baseQuote += 1) {
+      const sideIsSell = algoMathPreview.side === 'sell';
       const math = applyCompoundingToQuoteSpendMath({
-        baseQuoteSpend: rulesPreview.quoteSpendBeforeCompounding,
-        freeQuote: rulesPreview.freeQuote,
-        compoundingEnabled: activeRules.compoundingEnabled,
-        compoundingMode: activeRules.compoundingMode,
+        baseQuoteSpend: algoMathPreview.baseSpend,
+        freeQuote: algoMathPreview.capacityQuote,
+        compoundingEnabled: sideIsSell ? activeRules.sellCompoundingEnabled : activeRules.compoundingEnabled,
+        compoundingMode: sideIsSell ? activeRules.sellCompoundingMode : activeRules.compoundingMode,
         compoundingBaseQuote: baseQuote,
-        compoundingPct: activeRules.compoundingPct,
+        compoundingPct: sideIsSell ? activeRules.sellCompoundingPct : activeRules.compoundingPct,
         targetSpendPct: null
       });
       rows.push({
@@ -1487,10 +1736,14 @@ export default function TradeBotsModule() {
     activeRules?.compoundingEnabled,
     activeRules?.compoundingMode,
     activeRules?.compoundingPct,
+    activeRules?.sellCompoundingEnabled,
+    activeRules?.sellCompoundingMode,
+    activeRules?.sellCompoundingPct,
+    algoMathPreview?.baseSpend,
+    algoMathPreview?.capacityQuote,
+    algoMathPreview?.side,
     algoBaseStart,
-    algoBaseEnd,
-    rulesPreview?.freeQuote,
-    rulesPreview?.quoteSpendBeforeCompounding
+    algoBaseEnd
   ]);
   const runtimeConfigPreview = useMemo(() => {
     const rules = activeRules;
@@ -1524,6 +1777,19 @@ export default function TradeBotsModule() {
           pct: rules.compoundingPct,
           baseQuote: rules.compoundingBaseQuote,
           targetSpendPct: rules.targetSpendPct
+        },
+        sellCompounding: {
+          enabled: rules.sellCompoundingEnabled,
+          mode: rules.sellCompoundingMode,
+          pct: rules.sellCompoundingPct,
+          baseQuote: rules.sellCompoundingBaseQuote,
+          targetSpendPct: rules.sellTargetSpendPct,
+          ladder: {
+            enabled: rules.sellLadderEnabled,
+            strengthPct: rules.sellLadderStrengthPct,
+            minFactor: rules.sellLadderMinFactor,
+            maxFactor: rules.sellLadderMaxFactor
+          }
         },
         minQuoteSpend: rules.minQuoteSpend,
         maxQuoteSpend: rules.maxQuoteSpend,
@@ -1948,6 +2214,7 @@ export default function TradeBotsModule() {
   const openBotPopup = (bot: TradeBotRow) => {
     setSelectedBot(bot);
     setActivePopupSection('integrations');
+    setAlgoMathSide('buy');
     setModalError('');
     setModalMessage('');
     const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRules());
@@ -1971,6 +2238,7 @@ export default function TradeBotsModule() {
     setBotRulesDraft(null);
     setPineScriptSource('');
     setPineScriptFileName('');
+    setAlgoMathSide('buy');
     setBotInstances([]);
     setInstancesLoading(false);
     setInstanceActionTargetId(null);
@@ -3712,31 +3980,95 @@ export default function TradeBotsModule() {
                     </div>
                   </div>
 
-                  {rulesPreview && (
+                  <div className="inline-flex items-center rounded-full border border-white/20 bg-black/40 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setAlgoMathSide('buy')}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition ${
+                        !algoIsSell
+                          ? 'border border-emerald-300/50 bg-emerald-500/25 text-emerald-50'
+                          : 'text-emerald-200/75 hover:bg-emerald-500/10'
+                      }`}
+                    >
+                      Buy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAlgoMathSide('sell')}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition ${
+                        algoIsSell
+                          ? 'border border-rose-300/50 bg-rose-500/25 text-rose-50'
+                          : 'text-rose-200/75 hover:bg-rose-500/10'
+                      }`}
+                    >
+                      Sell
+                    </button>
+                  </div>
+
+                  {algoMathPreview && (
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
-                      <InfoTile label="Free Quote" value={formatDecimal(rulesPreview.freeQuote)} />
+                      <InfoTile label="Side" value={String(algoMathPreview.side || '').toUpperCase()} />
+                      <InfoTile label="Ref Price" value={formatDecimal(algoMathPreview.refPrice)} />
+                      <InfoTile label="Capacity Quote" value={formatDecimal(algoMathPreview.capacityQuote)} />
                       <InfoTile label="Allocation %" value={formatDecimal(activeRules.allocationValue, 4)} />
-                      <InfoTile label="Reinvestment %" value={formatDecimal(activeRules.reinvestmentPct, 4)} />
-                      <InfoTile label="Base Spend" value={formatDecimal(rulesPreview.quoteSpendBeforeCompounding)} />
-                      <InfoTile label="Compounding Factor" value={formatDecimal(rulesPreview.compoundingFactor, 8)} />
-                      <InfoTile label="Quote Spend Raw" value={formatDecimal(rulesPreview.quoteSpendRaw)} />
-                      <InfoTile label="Quote Spend Final" value={formatDecimal(rulesPreview.quoteSpend)} />
-                      <InfoTile label="Target Spend %" value={formatDecimal(rulesPreview.targetSpendPct, 4)} />
-                      <InfoTile label="Target Applied" value={rulesPreview.targetSpendApplied ? 'YES' : 'NO'} />
-                      <InfoTile label="Base Quote (Manual)" value={formatDecimal(rulesPreview.compoundingBaseQuoteConfigured)} />
-                      <InfoTile label="Base Quote (Auto)" value={formatDecimal(rulesPreview.compoundingBaseQuoteAuto)} />
-                      <InfoTile label="Base Quote (Used)" value={formatDecimal(rulesPreview.compoundingBaseQuoteUsed)} />
+                      {!algoIsSell && <InfoTile label="Reinvestment %" value={formatDecimal(activeRules.reinvestmentPct, 4)} />}
+                      <InfoTile label="Base Spend" value={formatDecimal(algoMathPreview.baseSpend)} />
+                      <InfoTile label="Compounding Factor" value={formatDecimal(algoMathPreview.compoundingFactor, 8)} />
+                      <InfoTile label="Quote Spend Raw" value={formatDecimal(algoMathPreview.quoteSpendRaw)} />
+                      <InfoTile label="Quote Spend Final" value={formatDecimal(algoMathPreview.quoteSpend)} />
+                      <InfoTile label="Qty Raw" value={formatDecimal(algoMathPreview.qtyRaw, 10)} />
+                      <InfoTile label="Target Spend %" value={formatDecimal(algoMathPreview.targetSpendPct, 4)} />
+                      <InfoTile label="Target Applied" value={algoMathPreview.targetSpendApplied ? 'YES' : 'NO'} />
+                      <InfoTile label="Base Quote (Manual)" value={formatDecimal(algoMathPreview.compoundingBaseQuoteConfigured)} />
+                      <InfoTile label="Base Quote (Auto)" value={formatDecimal(algoMathPreview.compoundingBaseQuoteAuto)} />
+                      <InfoTile label="Base Quote (Used)" value={formatDecimal(algoMathPreview.compoundingBaseQuoteUsed)} />
+                      {algoIsSell && (
+                        <InfoTile label="Profit Side" value={algoMathPreview.profitSide ? 'YES' : 'NO'} />
+                      )}
+                      {algoIsSell && (
+                        <InfoTile label="Ref BUY Price" value={formatDecimal(algoMathPreview.referenceBuyPrice)} />
+                      )}
+                      {algoIsSell && (
+                        <InfoTile label="Ladder Applied" value={algoMathPreview.ladderApplied ? 'YES' : 'NO'} />
+                      )}
+                      {algoIsSell && (
+                        <InfoTile label="Ladder Factor" value={formatDecimal(algoMathPreview.ladderFactor, 8)} />
+                      )}
                     </div>
                   )}
 
-                  <div className="rounded-lg border border-sky-300/25 bg-sky-500/8 px-3 py-2 text-[11px] text-sky-50">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-sky-100">Math</p>
-                    <p className="mt-1 font-mono">baseSpend = freeQuote * (allocationValue/100) * (reinvestmentPct/100)</p>
-                    <p className="mt-1 font-mono">factor(full_balance) = 1 + (freeQuote/baseQuote - 1) * (compoundingPct/100)</p>
-                    <p className="mt-1 font-mono">quoteSpendRaw = baseSpend * factor</p>
-                    <p className="mt-1 font-mono">
-                      autoBaseQuote = (strength * freeQuote) / ((targetSpend/baseSpend) - 1 + strength), targetSpend = freeQuote * (targetSpendPct/100)
-                    </p>
+                  <div
+                    className={`rounded-lg border px-3 py-2 text-[11px] ${
+                      algoIsSell
+                        ? 'border-rose-300/30 bg-rose-500/10 text-rose-50'
+                        : 'border-emerald-300/30 bg-emerald-500/10 text-emerald-50'
+                    }`}
+                  >
+                    <p className={`text-[10px] uppercase tracking-[0.16em] ${algoIsSell ? 'text-rose-100' : 'text-emerald-100'}`}>Math</p>
+                    {!algoIsSell && (
+                      <>
+                        <p className="mt-1 font-mono">baseSpend = freeQuote * (allocationValue/100) * (reinvestmentPct/100)</p>
+                        <p className="mt-1 font-mono">factor(full_balance) = 1 + (freeQuote/baseQuote - 1) * (compoundingPct/100)</p>
+                        <p className="mt-1 font-mono">quoteSpendRaw = baseSpend * factor</p>
+                        <p className="mt-1 font-mono">
+                          autoBaseQuote = (strength * freeQuote) / ((targetSpend/baseSpend) - 1 + strength), targetSpend = freeQuote * (targetSpendPct/100)
+                        </p>
+                      </>
+                    )}
+                    {algoIsSell && (
+                      <>
+                        <p className="mt-1 font-mono">sellCapacityQuote = freeBase * marketSellPrice</p>
+                        <p className="mt-1 font-mono">
+                          baseSellQuote = sizingMode==fixed_quote ? allocationValue : sellCapacityQuote * (allocationValue/100)
+                        </p>
+                        <p className="mt-1 font-mono">profit side: factor = 1 + (sellCapacityQuote/baseQuote - 1) * (sellCompoundingPct/100)</p>
+                        <p className="mt-1 font-mono">profit side: quoteSpendRaw = baseSellQuote * factor</p>
+                        <p className="mt-1 font-mono">targetSellQuote = sellCapacityQuote * (sellTargetSpendPct/100)</p>
+                        <p className="mt-1 font-mono">
+                          loss side: edgeRatio = (marketSellPrice - refBuyPrice) / refBuyPrice, qtyRaw = baseQty * clamp(1 + edgeRatio * slope, minFactor, maxFactor)
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
@@ -3745,9 +4077,14 @@ export default function TradeBotsModule() {
                       <div className="mt-1 flex h-8 items-center rounded-lg border border-white/15 bg-black/35 px-2">
                         <input
                           type="checkbox"
-                          checked={Boolean(activeRules.compoundingEnabled)}
-                          onChange={(event) => updateBotRulesDraft({ compoundingEnabled: event.target.checked })}
-                          className="h-4 w-4 rounded border-white/40 bg-black/40 text-sky-400 focus:ring-0"
+                          checked={Boolean(algoIsSell ? activeRules.sellCompoundingEnabled : activeRules.compoundingEnabled)}
+                          onChange={(event) =>
+                            updateBotRulesDraft(
+                              algoIsSell
+                                ? { sellCompoundingEnabled: event.target.checked }
+                                : { compoundingEnabled: event.target.checked }
+                            )}
+                          className={`h-4 w-4 rounded border-white/40 bg-black/40 ${algoIsSell ? 'text-rose-400' : 'text-emerald-400'} focus:ring-0`}
                         />
                         <span className="ml-2 text-[11px] normal-case text-gray-300">Use compounding factor</span>
                       </div>
@@ -3756,8 +4093,13 @@ export default function TradeBotsModule() {
                     <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
                       Compounding Mode
                       <select
-                        value={activeRules.compoundingMode}
-                        onChange={(event) => updateBotRulesDraft({ compoundingMode: event.target.value as CompoundingMode })}
+                        value={algoIsSell ? activeRules.sellCompoundingMode : activeRules.compoundingMode}
+                        onChange={(event) =>
+                          updateBotRulesDraft(
+                            algoIsSell
+                              ? { sellCompoundingMode: event.target.value as CompoundingMode }
+                              : { compoundingMode: event.target.value as CompoundingMode }
+                          )}
                         className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                       >
                         <option value="full_balance">Full balance</option>
@@ -3772,8 +4114,13 @@ export default function TradeBotsModule() {
                         min={0}
                         max={300}
                         step="0.0001"
-                        value={activeRules.compoundingPct}
-                        onChange={(event) => updateBotRulesDraft({ compoundingPct: Number(event.target.value) })}
+                        value={algoIsSell ? activeRules.sellCompoundingPct : activeRules.compoundingPct}
+                        onChange={(event) =>
+                          updateBotRulesDraft(
+                            algoIsSell
+                              ? { sellCompoundingPct: Number(event.target.value) }
+                              : { compoundingPct: Number(event.target.value) }
+                          )}
                         className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                       />
                     </label>
@@ -3785,12 +4132,14 @@ export default function TradeBotsModule() {
                         min={0}
                         max={100}
                         step="0.0001"
-                        value={activeRules.targetSpendPct ?? ''}
-                        placeholder="e.g. 93.05"
+                        value={algoIsSell ? activeRules.sellTargetSpendPct ?? '' : activeRules.targetSpendPct ?? ''}
+                        placeholder={algoIsSell ? 'e.g. 91.05' : 'e.g. 93.05'}
                         onChange={(event) =>
-                          updateBotRulesDraft({
-                            targetSpendPct: event.target.value ? Number(event.target.value) : null
-                          })}
+                          updateBotRulesDraft(
+                            algoIsSell
+                              ? { sellTargetSpendPct: event.target.value ? Number(event.target.value) : null }
+                              : { targetSpendPct: event.target.value ? Number(event.target.value) : null }
+                          )}
                         className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                       />
                     </label>
@@ -3801,15 +4150,77 @@ export default function TradeBotsModule() {
                         type="number"
                         min={0}
                         step="0.0001"
-                        value={activeRules.compoundingBaseQuote ?? ''}
+                        value={algoIsSell ? activeRules.sellCompoundingBaseQuote ?? '' : activeRules.compoundingBaseQuote ?? ''}
                         placeholder="optional/manual"
                         onChange={(event) =>
-                          updateBotRulesDraft({
-                            compoundingBaseQuote: event.target.value ? Number(event.target.value) : null
-                          })}
+                          updateBotRulesDraft(
+                            algoIsSell
+                              ? { sellCompoundingBaseQuote: event.target.value ? Number(event.target.value) : null }
+                              : { compoundingBaseQuote: event.target.value ? Number(event.target.value) : null }
+                          )}
                         className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
                       />
                     </label>
+
+                    {algoIsSell && (
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Enable Loss Ladder
+                        <div className="mt-1 flex h-8 items-center rounded-lg border border-white/15 bg-black/35 px-2">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(activeRules.sellLadderEnabled)}
+                            onChange={(event) => updateBotRulesDraft({ sellLadderEnabled: event.target.checked })}
+                            className="h-4 w-4 rounded border-white/40 bg-black/40 text-rose-400 focus:ring-0"
+                          />
+                          <span className="ml-2 text-[11px] normal-case text-gray-300">Reduce qty faster on loss</span>
+                        </div>
+                      </label>
+                    )}
+
+                    {algoIsSell && (
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Ladder Strength %
+                        <input
+                          type="number"
+                          min={0}
+                          max={500}
+                          step="0.0001"
+                          value={activeRules.sellLadderStrengthPct}
+                          onChange={(event) => updateBotRulesDraft({ sellLadderStrengthPct: Number(event.target.value) })}
+                          className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                        />
+                      </label>
+                    )}
+
+                    {algoIsSell && (
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Ladder Min Factor
+                        <input
+                          type="number"
+                          min={0.01}
+                          max={1}
+                          step="0.0001"
+                          value={activeRules.sellLadderMinFactor}
+                          onChange={(event) => updateBotRulesDraft({ sellLadderMinFactor: Number(event.target.value) })}
+                          className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                        />
+                      </label>
+                    )}
+
+                    {algoIsSell && (
+                      <label className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        Ladder Max Factor
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          step="0.0001"
+                          value={activeRules.sellLadderMaxFactor}
+                          onChange={(event) => updateBotRulesDraft({ sellLadderMaxFactor: Number(event.target.value) })}
+                          className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                        />
+                      </label>
+                    )}
 
                     <div className="rounded-lg border border-white/15 bg-black/35 px-2 py-1">
                       <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">Auto base quote</p>
@@ -3820,11 +4231,19 @@ export default function TradeBotsModule() {
                         disabled={targetSpendSuggestedBaseQuote === null}
                         onClick={() => {
                           if (targetSpendSuggestedBaseQuote === null) return;
-                          updateBotRulesDraft({
-                            compoundingEnabled: true,
-                            compoundingMode: 'full_balance',
-                            compoundingBaseQuote: Number(targetSpendSuggestedBaseQuote.toFixed(8))
-                          });
+                          updateBotRulesDraft(
+                            algoIsSell
+                              ? {
+                                  sellCompoundingEnabled: true,
+                                  sellCompoundingMode: 'full_balance',
+                                  sellCompoundingBaseQuote: Number(targetSpendSuggestedBaseQuote.toFixed(8))
+                                }
+                              : {
+                                  compoundingEnabled: true,
+                                  compoundingMode: 'full_balance',
+                                  compoundingBaseQuote: Number(targetSpendSuggestedBaseQuote.toFixed(8))
+                                }
+                          );
                         }}
                       >
                         Apply Auto Base Quote
@@ -3836,16 +4255,23 @@ export default function TradeBotsModule() {
                       <button
                         type="button"
                         className="mt-2 w-full rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
-                        onClick={() => updateBotRulesDraft({ targetSpendPct: 93.05 })}
+                        onClick={() => updateBotRulesDraft(algoIsSell ? { sellTargetSpendPct: 91.05 } : { targetSpendPct: 93.05 })}
                       >
-                        Set 93.05%
+                        {algoIsSell ? 'Set 91.05%' : 'Set 93.05%'}
                       </button>
                     </div>
                   </div>
 
-                  {activeRules.targetSpendPct && activeRules.compoundingMode !== 'full_balance' && (
+                  {((algoIsSell ? activeRules.sellTargetSpendPct : activeRules.targetSpendPct) &&
+                    (algoIsSell ? activeRules.sellCompoundingMode : activeRules.compoundingMode) !== 'full_balance') && (
                     <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
                       Target spend auto-base works with full-balance compounding mode only.
+                    </div>
+                  )}
+
+                  {algoIsSell && algoMathPreview && !algoMathPreview.profitSide && (
+                    <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                      Current sell is not on profit side vs last BUY reference. SELL compounding math above is planning math; runtime uses ladder/baseline on loss side.
                     </div>
                   )}
 
@@ -3854,7 +4280,7 @@ export default function TradeBotsModule() {
                       <div>
                         <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500">Compounding base quote table</p>
                         <p className="mt-1 text-xs text-gray-400">
-                          Columns: compoundingBaseQuote, compoundingFactor, quoteSpendRaw. Uses current allocation/reinvestment + compounding settings.
+                          Columns: compoundingBaseQuote, compoundingFactor, quoteSpendRaw. Uses current side math and compounding settings.
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">

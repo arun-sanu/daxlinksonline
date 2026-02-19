@@ -67,6 +67,11 @@ function toFiniteOrZero(value) {
   return n && n > 0 ? n : 0;
 }
 
+// SELL ladder is intentionally asymmetric:
+// when price is below reference BUY, reduce size faster (loss slope multiplier).
+const SELL_LADDER_LOSS_SLOPE_MULTIPLIER = 6;
+const DEFAULT_MEXC_SELL_PROFIT_TARGET_SPEND_PCT = 91.05;
+
 export function resolveEffectiveMinNotional({
   normalizedSide = null,
   exchangeMinNotional = 0,
@@ -425,6 +430,24 @@ function normalizeRuntimeSizingMode(value) {
   return 'balance_pct';
 }
 
+function normalizeTargetSpendPct(value, label = 'targetSpendPct') {
+  const targetSpendPctRaw = asNumber(value);
+  if (targetSpendPctRaw === null) return null;
+  const normalizedTarget = targetSpendPctRaw <= 1 ? targetSpendPctRaw * 100 : targetSpendPctRaw;
+  if (normalizedTarget <= 0 || normalizedTarget > 100) {
+    throw new SizingConfigError(`Trade Bot ${label} must be greater than 0 and at most 100.`);
+  }
+  return normalizedTarget;
+}
+
+function isMexcMacdBollingerRuntimeRules(rawRules = {}) {
+  if (!rawRules || typeof rawRules !== 'object') return false;
+  const exchange = String(rawRules?.exchange || '').trim().toUpperCase();
+  if (exchange !== 'MEXC') return false;
+  const strategy = String(rawRules?.strategy || '').trim().toLowerCase();
+  return strategy.includes('macd') && strategy.includes('bollinger');
+}
+
 export function applyCompoundingToQuoteSpend({
   baseQuoteSpend,
   freeQuote,
@@ -526,6 +549,115 @@ export function deriveCompoundingBaseQuoteForTargetSpend({
   return baseQuote > 0 ? baseQuote : null;
 }
 
+function resolveTradeExecutionPrice(row = null) {
+  if (!row || typeof row !== 'object') return null;
+  const explicit = asNumber(row.executionPrice);
+  if (explicit && explicit > 0) return explicit;
+  const market = asNumber(row.marketPrice);
+  if (market && market > 0) return market;
+  const quoteValue = asNumber(row.value);
+  const qty = asNumber(row.quantity);
+  if (quoteValue && quoteValue > 0 && qty && qty > 0) return quoteValue / qty;
+  return null;
+}
+
+async function resolveSellLadderReferenceBuyPrice({
+  workspaceId,
+  integrationId,
+  symbol
+}) {
+  const normalizedWorkspaceId = String(workspaceId || '').trim();
+  const normalizedIntegrationId = String(integrationId || '').trim();
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  if (!normalizedWorkspaceId || !normalizedIntegrationId || !normalizedSymbol) return null;
+
+  const latestBuy = await prisma.tradeTransaction.findFirst({
+    where: {
+      workspaceId: normalizedWorkspaceId,
+      integrationId: normalizedIntegrationId,
+      symbol: normalizedSymbol,
+      side: { in: ['BUY', 'LONG'] },
+      status: { in: ['filled', 'executed', 'executed_success', 'success', 'closed'] }
+    },
+    orderBy: [{ executedAt: 'desc' }, { createdAt: 'desc' }],
+    select: {
+      executionPrice: true,
+      marketPrice: true,
+      value: true,
+      quantity: true
+    }
+  });
+
+  const referencePrice = resolveTradeExecutionPrice(latestBuy);
+  return referencePrice && referencePrice > 0 ? referencePrice : null;
+}
+
+export function applySellLadderToSellQuantity({
+  qtyRaw,
+  freeBase,
+  marketSellPrice,
+  referenceBuyPrice,
+  sellLadderEnabled = false,
+  sellLadderStrengthPct = 100,
+  sellLadderMinFactor = 0.1,
+  sellLadderMaxFactor = 2
+}) {
+  const baseQty = asNumber(qtyRaw);
+  const freeBaseNum = asNumber(freeBase) || 0;
+  const marketPriceNum = asNumber(marketSellPrice);
+  const referenceBuyNum = asNumber(referenceBuyPrice);
+  const strengthPct = clamp(sellLadderStrengthPct, 0, 500);
+  const strength = strengthPct === null ? 1 : strengthPct / 100;
+  const minFactorRaw = clamp(sellLadderMinFactor, 0.01, 1);
+  const minFactor = minFactorRaw === null ? 0.1 : minFactorRaw;
+  const maxFactorRaw = clamp(sellLadderMaxFactor, 1, 10);
+  const maxFactor = Math.max(minFactor, maxFactorRaw === null ? 2 : maxFactorRaw);
+
+  if (!baseQty || baseQty <= 0) {
+    return {
+      qtyRaw: 0,
+      factor: 1,
+      edgeRatio: null,
+      referenceBuyPrice: referenceBuyNum,
+      marketSellPrice: marketPriceNum,
+      applied: false
+    };
+  }
+
+  if (
+    !sellLadderEnabled ||
+    !marketPriceNum ||
+    marketPriceNum <= 0 ||
+    !referenceBuyNum ||
+    referenceBuyNum <= 0 ||
+    strength <= 0
+  ) {
+    return {
+      qtyRaw: baseQty,
+      factor: 1,
+      edgeRatio: null,
+      referenceBuyPrice: referenceBuyNum,
+      marketSellPrice: marketPriceNum,
+      applied: false
+    };
+  }
+
+  const edgeRatio = (marketPriceNum - referenceBuyNum) / referenceBuyNum;
+  const slope = edgeRatio >= 0 ? strength : strength * SELL_LADDER_LOSS_SLOPE_MULTIPLIER;
+  const rawFactor = 1 + edgeRatio * slope;
+  const factor = Math.max(minFactor, Math.min(maxFactor, rawFactor));
+  const scaledQty = Math.max(0, Math.min(freeBaseNum, baseQty * factor));
+
+  return {
+    qtyRaw: scaledQty,
+    factor,
+    edgeRatio,
+    referenceBuyPrice: referenceBuyNum,
+    marketSellPrice: marketPriceNum,
+    applied: true
+  };
+}
+
 export function classifyMinNotionalShortfall({
   normalizedSide = null,
   effectiveMinNotional = 0,
@@ -595,6 +727,7 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
   if (!rawRules || typeof rawRules !== 'object') {
     throw new SizingConfigError('Missing Trade Bot runtime rules for sizing.');
   }
+  const mexcMacdBollingerRules = isMexcMacdBollingerRuntimeRules(rawRules);
   const sizingMode = normalizeRuntimeSizingMode(rawRules?.sizingMode);
   const allocationValue = asNumber(rawRules?.allocationValue);
   if (allocationValue === null || allocationValue < 0) {
@@ -636,20 +769,83 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     rawRules?.reinvestProfitsPct
   );
   const compoundingPct = compoundingPctRaw === null ? 100 : clamp(compoundingPctRaw, 0, 300);
-  const targetSpendPctRaw = asNumber(
+  const targetSpendPctRaw =
     rawRules?.targetSpendPct ??
     rawRules?.targetSpendPercent ??
     rawRules?.targetQuoteSpendPct ??
-    rawRules?.targetQuoteSpendPercent
+    rawRules?.targetQuoteSpendPercent;
+  const targetSpendPct = normalizeTargetSpendPct(targetSpendPctRaw, 'targetSpendPct');
+
+  const sellCompoundingConfig =
+    rawRules?.sellCompounding && typeof rawRules.sellCompounding === 'object' ? rawRules.sellCompounding : {};
+  const sellCompoundingEnabledRaw =
+    rawRules?.sellCompoundingEnabled ??
+    (typeof sellCompoundingConfig?.enabled === 'boolean' ? sellCompoundingConfig.enabled : undefined) ??
+    (rawRules?.sellCompounding === true ? true : rawRules?.sellCompounding === false ? false : undefined);
+  const sellCompoundingEnabled = sellCompoundingEnabledRaw === null || sellCompoundingEnabledRaw === undefined
+    ? mexcMacdBollingerRules
+    : sellCompoundingEnabledRaw === true;
+  let sellCompoundingMode = normalizeCompoundingMode(
+    rawRules?.sellCompoundingMode ??
+    rawRules?.sellCompoundMode ??
+    sellCompoundingConfig?.mode,
+    sizingMode
   );
-  let targetSpendPct = null;
-  if (targetSpendPctRaw !== null) {
-    const normalizedTarget = targetSpendPctRaw <= 1 ? targetSpendPctRaw * 100 : targetSpendPctRaw;
-    if (normalizedTarget <= 0 || normalizedTarget > 100) {
-      throw new SizingConfigError('Trade Bot targetSpendPct must be greater than 0 and at most 100.');
-    }
-    targetSpendPct = normalizedTarget;
+  const sellCompoundingBaseQuoteRaw = asNumber(
+    rawRules?.sellCompoundingBaseQuote ??
+    rawRules?.sellCompoundBaseQuote ??
+    sellCompoundingConfig?.baseQuote ??
+    rawRules?.compoundingBaseQuote
+  );
+  const sellCompoundingBaseQuote =
+    sellCompoundingBaseQuoteRaw !== null && sellCompoundingBaseQuoteRaw > 0
+      ? sellCompoundingBaseQuoteRaw
+      : null;
+  const sellCompoundingPctRaw = asNumber(
+    rawRules?.sellCompoundingPct ??
+    rawRules?.sellCompoundPct ??
+    sellCompoundingConfig?.pct ??
+    compoundingPct
+  );
+  const sellCompoundingPct = sellCompoundingPctRaw === null ? 100 : clamp(sellCompoundingPctRaw, 0, 300);
+  const sellTargetSpendPctRaw =
+    rawRules?.sellTargetSpendPct ??
+    rawRules?.sellTargetSpendPercent ??
+    sellCompoundingConfig?.targetSpendPct ??
+    sellCompoundingConfig?.targetSpendPercent ??
+    (mexcMacdBollingerRules ? DEFAULT_MEXC_SELL_PROFIT_TARGET_SPEND_PCT : null);
+  const sellTargetSpendPct = normalizeTargetSpendPct(sellTargetSpendPctRaw, 'sellTargetSpendPct');
+  if (sellTargetSpendPct !== null && sellCompoundingMode !== 'full_balance') {
+    sellCompoundingMode = 'full_balance';
   }
+
+  const sellLadderConfig =
+    rawRules?.sellLadder && typeof rawRules.sellLadder === 'object' ? rawRules.sellLadder : {};
+  const sellLadderEnabled =
+    rawRules?.sellLadderEnabled === true ||
+    rawRules?.sellLadder === true ||
+    sellLadderConfig?.enabled === true;
+  const sellLadderStrengthPctRaw = asNumber(
+    rawRules?.sellLadderStrengthPct ??
+    rawRules?.sellLadderStrength ??
+    sellLadderConfig?.strengthPct ??
+    sellLadderConfig?.strength
+  );
+  const sellLadderStrengthPct = sellLadderStrengthPctRaw === null ? 100 : clamp(sellLadderStrengthPctRaw, 0, 500);
+  const sellLadderMinFactorRaw = asNumber(
+    rawRules?.sellLadderMinFactor ??
+    sellLadderConfig?.minFactor
+  );
+  const sellLadderMinFactor = sellLadderMinFactorRaw === null ? 0.1 : clamp(sellLadderMinFactorRaw, 0.01, 1);
+  const sellLadderMaxFactorRaw = asNumber(
+    rawRules?.sellLadderMaxFactor ??
+    sellLadderConfig?.maxFactor
+  );
+  const sellLadderMaxFactorFloor = Math.max(1, sellLadderMinFactor || 0.1);
+  const sellLadderMaxFactor = Math.max(
+    sellLadderMaxFactorFloor,
+    sellLadderMaxFactorRaw === null ? 2 : clamp(sellLadderMaxFactorRaw, 1, 10)
+  );
 
   return {
     sizingMode,
@@ -663,6 +859,15 @@ function normalizeTradeBotRuntimeSizingConfig(rawRules = {}) {
     compoundingBaseQuote,
     compoundingPct,
     targetSpendPct,
+    sellCompoundingEnabled,
+    sellCompoundingMode,
+    sellCompoundingBaseQuote,
+    sellCompoundingPct,
+    sellTargetSpendPct,
+    sellLadderEnabled,
+    sellLadderStrengthPct,
+    sellLadderMinFactor,
+    sellLadderMaxFactor,
     referencePriceSource: normalizeReferencePriceSource(rawRules?.referencePriceSource)
   };
 }
@@ -800,6 +1005,26 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
     targetSpendPct: sizing.targetSpendPct,
     compoundingFactor: 1,
     compoundingProfitQuote: 0,
+    sellCompoundingEnabled: sizing.sellCompoundingEnabled,
+    sellCompoundingMode: sizing.sellCompoundingMode,
+    sellCompoundingPct: sizing.sellCompoundingPct,
+    sellCompoundingBaseQuote: sizing.sellCompoundingBaseQuote,
+    sellTargetSpendPct: sizing.sellTargetSpendPct,
+    sellCompoundingFactor: 1,
+    sellCompoundingProfitQuote: 0,
+    sellTargetSpendRatio: null,
+    sellTargetSpendApplied: false,
+    sellCompoundingApplied: false,
+    sellLadderEnabled: sizing.sellLadderEnabled,
+    sellLadderStrengthPct: sizing.sellLadderStrengthPct,
+    sellLadderMinFactor: sizing.sellLadderMinFactor,
+    sellLadderMaxFactor: sizing.sellLadderMaxFactor,
+    sellLadderFactor: 1,
+    sellLadderApplied: false,
+    sellReferenceBuyPrice: null,
+    sellMarketPrice: null,
+    sellEdgeRatio: null,
+    sellProfitSide: null,
     baseQuoteSpend: null,
     referencePriceSource: sizing.referencePriceSource,
     minQuoteSpend: sizing.minQuoteSpend,
@@ -900,7 +1125,66 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
       qtyRaw = freeBase * (pctOfBase / 100);
       quoteSpendComputed = qtyRaw * computedPrice;
     }
-    sizingDebug.baseQuoteSpend = asNullableNumber(quoteSpendComputed);
+    const baseSellQuoteSpend = quoteSpendComputed;
+    sizingDebug.baseQuoteSpend = asNullableNumber(baseSellQuoteSpend);
+
+    const referenceBuyPrice = await resolveSellLadderReferenceBuyPrice({
+      workspaceId,
+      integrationId,
+      symbol: normalizedSymbol
+    });
+    const sellEdgeRatio =
+      referenceBuyPrice && referenceBuyPrice > 0
+        ? (computedPrice - referenceBuyPrice) / referenceBuyPrice
+        : null;
+    const sellProfitSide = sellEdgeRatio !== null && sellEdgeRatio > 0;
+    sizingDebug.sellReferenceBuyPrice = asNullableNumber(referenceBuyPrice);
+    sizingDebug.sellMarketPrice = asNullableNumber(computedPrice);
+    sizingDebug.sellEdgeRatio = asNullableNumber(sellEdgeRatio);
+    sizingDebug.sellProfitSide = sellProfitSide;
+
+    if (sellProfitSide && sizing.sellCompoundingEnabled) {
+      const sellQuoteCapacity = Math.max(0, freeBase * computedPrice);
+      const compoundedSell = applyCompoundingToQuoteSpend({
+        baseQuoteSpend: quoteSpendComputed,
+        freeQuote: sellQuoteCapacity,
+        compoundingEnabled: true,
+        compoundingMode: sizing.sellCompoundingMode,
+        compoundingBaseQuote: sizing.sellCompoundingBaseQuote,
+        compoundingPct: sizing.sellCompoundingPct,
+        targetSpendRatio: sizing.sellTargetSpendPct ? sizing.sellTargetSpendPct / 100 : null
+      });
+      const minSellFloor = toFiniteOrZero(sizing.minSellNotional);
+      quoteSpendComputed = clamp(compoundedSell.quoteSpend, minSellFloor, sizing.maxQuoteSpend);
+      if (!quoteSpendComputed || quoteSpendComputed <= 0) {
+        throwSizingError('Trade Bot sell compounding resolves to zero.', sizingDebug, 'invalid_quote_spend');
+      }
+      qtyRaw = Math.min(freeBase, quoteSpendComputed / computedPrice);
+      sizingDebug.sellCompoundingApplied = true;
+      sizingDebug.sellCompoundingFactor = asNullableNumber(compoundedSell.compoundingFactor);
+      sizingDebug.sellCompoundingProfitQuote = asNullableNumber(compoundedSell.compoundingProfitQuote);
+      sizingDebug.sellCompoundingBaseQuote = asNullableNumber(compoundedSell.compoundingBaseQuote);
+      sizingDebug.sellTargetSpendRatio = asNullableNumber(compoundedSell.targetSpendRatio);
+      sizingDebug.sellTargetSpendApplied = compoundedSell.targetSpendApplied === true;
+    } else if (sizing.sellLadderEnabled) {
+      const sellLadder = applySellLadderToSellQuantity({
+        qtyRaw,
+        freeBase,
+        marketSellPrice: computedPrice,
+        referenceBuyPrice,
+        sellLadderEnabled: sizing.sellLadderEnabled,
+        sellLadderStrengthPct: sizing.sellLadderStrengthPct,
+        sellLadderMinFactor: sizing.sellLadderMinFactor,
+        sellLadderMaxFactor: sizing.sellLadderMaxFactor
+      });
+      qtyRaw = sellLadder.qtyRaw;
+      quoteSpendComputed = qtyRaw * computedPrice;
+      sizingDebug.sellLadderApplied = sellLadder.applied === true;
+      sizingDebug.sellLadderFactor = asNullableNumber(sellLadder.factor);
+      if (sellLadder.edgeRatio !== null && sellLadder.edgeRatio !== undefined) {
+        sizingDebug.sellEdgeRatio = asNullableNumber(sellLadder.edgeRatio);
+      }
+    }
   } else {
     let quoteSpendRaw;
     if (sizing.sizingMode === 'fixed_quote') {
