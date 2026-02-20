@@ -2660,7 +2660,7 @@ export default function TradeBotsModule() {
           </Link>
         </div>
       </header>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_10rem] lg:items-start">
         <div className="space-y-6">
           {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
           {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
@@ -2832,8 +2832,8 @@ export default function TradeBotsModule() {
           )}
         </div>
 
-        <aside className="lg:sticky lg:top-24">
-          <nav className="space-y-2 rounded-2xl border border-white/10 bg-black/25 p-2">
+        <aside className="lg:sticky lg:top-24 lg:justify-self-end">
+          <nav className="flex flex-col gap-2">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.key;
               const Icon = TRADE_BOT_TAB_ICONS[tab.key];
@@ -2842,17 +2842,17 @@ export default function TradeBotsModule() {
                   key={tab.key}
                   type="button"
                   onClick={() => setActiveTab(tab.key)}
-                  className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-xl border px-3 py-3 text-left text-sm font-semibold transition ${
+                  className={`group relative flex aspect-square w-40 flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition ${
                     isActive
                       ? 'border-primary-200/80 bg-primary-400/10 text-white'
                       : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
                   }`}
                 >
-                  <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/30 to-white/0 opacity-10 z-0"></span>
-                  <span className={`relative z-10 flex h-8 w-8 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-75'}`}>
-                    <Icon className="h-5 w-5 text-white/85" strokeWidth={1.7} aria-hidden="true" />
+                  <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
+                  <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+                    <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
                   </span>
-                  <span className={`relative z-10 leading-snug ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
+                  <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
                 </button>
               );
             })}
