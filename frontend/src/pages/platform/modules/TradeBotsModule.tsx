@@ -2831,6 +2831,7 @@ export default function TradeBotsModule() {
     <nav className="grid grid-cols-3 gap-2 sm:w-fit">
       {tabs.map((tab) => {
         const isActive = activeTab === tab.key;
+        const isMarketplaceTab = tab.key === 'marketplace';
         const Icon = TRADE_BOT_TAB_ICONS[tab.key];
         return (
           <button
@@ -2841,8 +2842,9 @@ export default function TradeBotsModule() {
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
                 : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
-            }`}
+            } ${isMarketplaceTab ? 'border-amber-300/70 shadow-[0_0_18px_rgba(251,191,36,0.22)]' : ''}`}
           >
+            {isMarketplaceTab && <span className="pointer-events-none absolute inset-0 rounded-xl border border-amber-300/75 animate-pulse z-10"></span>}
             <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
             <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
               <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
@@ -2871,7 +2873,7 @@ export default function TradeBotsModule() {
       </header>
       <div className="space-y-6">
         {activeTab === 'overview' ? (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:items-start">
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:gap-x-16 xl:items-start">
             <div>{tabRail}</div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
