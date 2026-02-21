@@ -1433,6 +1433,11 @@ export default function TradeBotsModule() {
     });
     return values;
   }, [activeCodeParameterValues, arnParameterSchema]);
+  const signalKeySeed = useMemo(() => {
+    if (!activeRules) return '';
+    return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
+  }, [activeRules, selectedBot?.id]);
+  const signalHashKey = useMemo(() => hashSignalKey(signalKeySeed), [signalKeySeed]);
   const arnSignalPreview = useMemo(() => {
     if (!isArnPineBot || arnParameterSchema.length === 0) return null;
     const readNumber = (key: string, fallback: number) => {
@@ -1484,11 +1489,6 @@ export default function TradeBotsModule() {
     signalHashKey,
     tradingSymbol
   ]);
-  const signalKeySeed = useMemo(() => {
-    if (!activeRules) return '';
-    return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
-  }, [activeRules, selectedBot?.id]);
-  const signalHashKey = useMemo(() => hashSignalKey(signalKeySeed), [signalKeySeed]);
   const allocationLabel = useMemo(() => {
     if (!activeRules) return 'Allocation Value';
     if (activeRules.sizingMode === 'fixed_quote') return 'Allocation (USDC)';
