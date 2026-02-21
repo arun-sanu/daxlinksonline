@@ -2801,6 +2801,7 @@ export default function TradeBotsModule() {
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'overview', label: 'Overview' },
+    { key: 'connectivity', label: 'Connectivity' },
     { key: 'bots', label: 'Bots' },
     { key: 'marketplace', label: 'Marketplace' },
     { key: 'rentals', label: 'Rentals' },
@@ -2822,93 +2823,126 @@ export default function TradeBotsModule() {
           </Link>
         </div>
       </header>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_10rem] lg:items-start">
-        <div className="space-y-6">
-          {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
-          {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
+      <div className="space-y-6">
+        <nav className="grid grid-cols-3 gap-2 sm:w-fit">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const Icon = TRADE_BOT_TAB_ICONS[tab.key];
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
+                  isActive
+                    ? 'border-primary-200/80 bg-primary-400/10 text-white'
+                    : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
+                }`}
+              >
+                <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
+                <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+                  <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
+                </span>
+                <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-          {activeTab === 'overview' && (
-            <section className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
-                <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
-                <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
-                <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
-              </div>
-              <ConnectivityMindmap bots={bots} botLinks={botLinks} />
-            </section>
-          )}
+        {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
+        {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
 
-          {activeTab === 'bots' && (
-            <section className="card-shell space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="section-label">Control Plane</p>
-                    <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
-                  </div>
-                  <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-                    Refresh
-                  </button>
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
-                  <StatCard label="Active rentals" value={String(activeRentals.length)} />
-                  <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
-                  <StatCard label="Automation" value={automationEnabled ? 'enabled' : 'disabled'} />
-                </div>
-              </div>
+        {activeTab === 'overview' && (
+          <section className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
+              <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
+              <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
+              <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
+            </div>
+          </section>
+        )}
 
+        {activeTab === 'connectivity' && (
+          <section className="space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="section-label">Connectivity</p>
+              <p className="text-sm text-gray-300">Review webhook and integration links across all bots in one map.</p>
+            </div>
+            <ConnectivityMindmap bots={bots} botLinks={botLinks} />
+          </section>
+        )}
+
+        {activeTab === 'bots' && (
+          <section className="card-shell space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="section-label">Bots</p>
-                  <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness. Click any bot to configure connectivity.</p>
+                  <p className="section-label">Control Plane</p>
+                  <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100"
-                    placeholder="Search bot name/status"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                  <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-                    Refresh
-                  </button>
-                </div>
+                <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                  Refresh
+                </button>
               </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <StatCard label="Active rentals" value={String(activeRentals.length)} />
+                <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
+                <StatCard label="Automation" value={automationEnabled ? 'enabled' : 'disabled'} />
+              </div>
+            </div>
 
-              {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
-              {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found.</p>}
-              {!loading && filteredBots.length > 0 && (
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {filteredBots.map((bot) => (
-                    <button
-                      key={bot.id}
-                      type="button"
-                      onClick={() => openBotPopup(bot)}
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/40 hover:bg-primary-500/10"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <h3 className="text-left text-lg font-semibold text-white">{bot.name}</h3>
-                          <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
-                        </div>
-                        <span className="rounded-lg border border-primary-300/35 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
-                          {bot.latestVersion?.status || 'unknown'}
-                        </span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Bots</p>
+                <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness. Click any bot to configure connectivity.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100"
+                  placeholder="Search bot name/status"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
+            {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found.</p>}
+            {!loading && filteredBots.length > 0 && (
+              <div className="grid gap-3 lg:grid-cols-2">
+                {filteredBots.map((bot) => (
+                  <button
+                    key={bot.id}
+                    type="button"
+                    onClick={() => openBotPopup(bot)}
+                    className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/40 hover:bg-primary-500/10"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <h3 className="text-left text-lg font-semibold text-white">{bot.name}</h3>
+                        <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
                       </div>
-                      <p className="mt-2 text-left text-sm text-gray-300">{bot.description || 'No description'}</p>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
-                        <InfoTile label="Version" value={versionText(bot)} mono />
-                        <InfoTile label="Updated" value={formatDate(bot.updatedAt)} />
-                        <InfoTile label="Instances" value={String(bot.counts?.instances || 0)} />
-                        <InfoTile label="Orders" value={String(bot.counts?.orders || 0)} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
+                      <span className="rounded-lg border border-primary-300/35 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
+                        {bot.latestVersion?.status || 'unknown'}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-left text-sm text-gray-300">{bot.description || 'No description'}</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
+                      <InfoTile label="Version" value={versionText(bot)} mono />
+                      <InfoTile label="Updated" value={formatDate(bot.updatedAt)} />
+                      <InfoTile label="Instances" value={String(bot.counts?.instances || 0)} />
+                      <InfoTile label="Orders" value={String(bot.counts?.orders || 0)} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
           {activeTab === 'marketplace' && (
             <section className="card-shell space-y-3">
@@ -2993,34 +3027,6 @@ export default function TradeBotsModule() {
             </section>
           )}
         </div>
-
-        <aside className="lg:sticky lg:top-24 lg:justify-self-end">
-          <nav className="flex flex-col gap-2">
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab.key;
-              const Icon = TRADE_BOT_TAB_ICONS[tab.key];
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`group relative flex aspect-square w-40 flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition ${
-                    isActive
-                      ? 'border-primary-200/80 bg-primary-400/10 text-white'
-                      : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
-                  }`}
-                >
-                  <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
-                  <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
-                    <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
-                  </span>
-                  <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-      </div>
 
       {selectedBot && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-6 backdrop-blur-md" role="dialog" aria-modal="true" onClick={closeBotPopup}>

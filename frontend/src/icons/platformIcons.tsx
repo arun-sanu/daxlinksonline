@@ -84,10 +84,11 @@ export const PLATFORM_MODULES: Array<PlatformModuleMeta & { id: PlatformModuleId
   { id: 'support', ...PLATFORM_MODULE_META.support }
 ];
 
-export type TradeBotsTabKey = 'overview' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
+export type TradeBotsTabKey = 'overview' | 'connectivity' | 'bots' | 'marketplace' | 'rentals' | 'logs-reports';
 
 export const TRADE_BOT_TAB_ICONS: Record<TradeBotsTabKey, LucideIcon> = {
   overview: CandlestickChart,
+  connectivity: Network,
   bots: Bot,
   marketplace: Store,
   rentals: Wallet,
