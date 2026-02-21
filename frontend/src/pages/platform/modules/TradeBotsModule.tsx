@@ -2849,10 +2849,9 @@ export default function TradeBotsModule() {
         const isMarketplaceTab = tab.key === 'marketplace';
         const Icon = TRADE_BOT_TAB_ICONS[tab.key];
         return (
-          <button
+          <Link
             key={tab.key}
-            type="button"
-            onClick={() => navigate(`/platform/trade-bots/${tab.key}`)}
+            to={`/platform/trade-bots/${tab.key}`}
             className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
@@ -2865,7 +2864,7 @@ export default function TradeBotsModule() {
               <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
             </span>
             <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
-          </button>
+          </Link>
         );
       })}
     </nav>
