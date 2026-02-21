@@ -1280,7 +1280,7 @@ function analyzePineScriptSource(source: string): PineScriptAnalysis {
 export default function TradeBotsModule() {
   const navigate = useNavigate();
   const { tabId } = useParams<{ tabId?: string }>();
-  const [activeTab, setActiveTab] = useState<TabKey>(() => (isTradeBotTabKey(tabId) ? tabId : 'overview'));
+  const activeTab: TabKey = isTradeBotTabKey(tabId) ? tabId : 'overview';
   const [bots, setBots] = useState<TradeBotRow[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1319,19 +1319,11 @@ export default function TradeBotsModule() {
   const [algoMathSide, setAlgoMathSide] = useState<PreviewSide>('buy');
 
   useEffect(() => {
-    if (!isTradeBotTabKey(tabId)) {
-      if (tabId !== 'overview') {
-        navigate('/platform/trade-bots/overview', { replace: true });
-      }
-      if (activeTab !== 'overview') {
-        setActiveTab('overview');
-      }
-      return;
+    if (isTradeBotTabKey(tabId)) return;
+    if (tabId !== 'overview') {
+      navigate('/platform/trade-bots/overview', { replace: true });
     }
-    if (activeTab !== tabId) {
-      setActiveTab(tabId);
-    }
-  }, [activeTab, navigate, tabId]);
+  }, [navigate, tabId]);
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -2860,12 +2852,7 @@ export default function TradeBotsModule() {
           <button
             key={tab.key}
             type="button"
-            onClick={() => {
-              if (activeTab !== tab.key) {
-                setActiveTab(tab.key);
-              }
-              navigate(`/platform/trade-bots/${tab.key}`);
-            }}
+            onClick={() => navigate(`/platform/trade-bots/${tab.key}`)}
             className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
