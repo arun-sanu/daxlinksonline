@@ -38,7 +38,7 @@ type TradeBotRow = Bot & {
 };
 
 type TabKey = TradeBotsTabKey;
-type BotPopupSection = 'integrations' | 'parameters' | 'algo' | 'exchange' | 'trade-history';
+type BotPopupSection = 'integrations' | 'parameters' | 'algo' | 'arn-pine' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
 type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
@@ -47,6 +47,25 @@ const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
 const BOT_RULES_STORAGE_KEY = 'dax_trade_bot_rules_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
+const ARN_PINE_BOT_SLUGS = new Set([
+  'arn-s-shcs-orginal',
+  'arn-s-shcs-original',
+  'arn-pine-faithful',
+  'arn-bot-service-pine-faithful'
+]);
+const ARN_PINE_PARAMETER_KEYS = [
+  'symbol',
+  'leverage',
+  'tp_percent',
+  'sl_atr_multiplier',
+  'investment_percentage',
+  'daily_loss_limit',
+  'cooldown_candles',
+  'action',
+  'direction',
+  'volatility_spike',
+  'timezone'
+] as const;
 
 type ExecutionFunction = 'live_trading' | 'paper_trading' | 'signal_only';
 type SizingMode = 'balance_pct' | 'fixed_quote' | 'risk_per_trade_pct' | 'volatility_adjusted';
@@ -903,6 +922,32 @@ function normalizeBotName(name: string) {
   return name;
 }
 
+function normalizeTextSlug(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isArnPineFaithfulBot(
+  bot: TradeBotRow | null,
+  rules: BotTradingRules | null,
+  codeParameterSchema: BotCodeParameter[] = []
+) {
+  const slug = normalizeTextSlug(bot?.name || '');
+  if (ARN_PINE_BOT_SLUGS.has(slug)) return true;
+  const strategy = String((rules as any)?.strategy || '').trim().toUpperCase();
+  if (strategy === 'ARN_PINE_FAITHFUL') return true;
+  const keys = new Set(codeParameterSchema.map((item) => String(item.key || '').trim().toLowerCase()));
+  return (
+    keys.has('daily_loss_limit') &&
+    keys.has('cooldown_candles') &&
+    keys.has('sl_atr_multiplier') &&
+    keys.has('volatility_spike')
+  );
+}
+
 function collectWebhookUrls(profile: MyWebhookResponse | null): string[] {
   if (!profile) return [];
   const values = new Set<string>();
@@ -1350,6 +1395,95 @@ export default function TradeBotsModule() {
   const activePineAnalysis = activeRules?.pineAnalysis || null;
   const activeCodeParameterSchema = activeRules?.codeParameterSchema || [];
   const activeCodeParameterValues = activeRules?.codeParameters || {};
+  const codeParameterByKey = useMemo(() => {
+    const map = new Map<string, BotCodeParameter>();
+    activeCodeParameterSchema.forEach((item) => map.set(String(item.key || '').trim(), item));
+    return map;
+  }, [activeCodeParameterSchema]);
+  const isArnPineBot = useMemo(
+    () => isArnPineFaithfulBot(selectedBot, activeRules, activeCodeParameterSchema),
+    [activeCodeParameterSchema, activeRules, selectedBot]
+  );
+  const arnParameterSchema = useMemo(
+    () =>
+      ARN_PINE_PARAMETER_KEYS.map((key) => codeParameterByKey.get(key))
+        .filter(Boolean)
+        .map((item) => item as BotCodeParameter),
+    [codeParameterByKey]
+  );
+  const popupSections = useMemo<Array<{ key: BotPopupSection; label: string }>>(() => {
+    const base: Array<{ key: BotPopupSection; label: string }> = [
+      { key: 'integrations', label: 'Integrations' },
+      { key: 'parameters', label: 'Parameters' },
+      { key: 'algo', label: 'Algo' },
+      { key: 'exchange', label: 'Exchange' },
+      { key: 'trade-history', label: 'Trade History' }
+    ];
+    if (isArnPineBot) {
+      base.splice(3, 0, { key: 'arn-pine', label: 'ARN Pine' });
+    }
+    return base;
+  }, [isArnPineBot]);
+  const arnParameterValueByKey = useMemo<Record<string, BotCodeParameterValue>>(() => {
+    const values: Record<string, BotCodeParameterValue> = {};
+    arnParameterSchema.forEach((param) => {
+      values[param.key] = Object.prototype.hasOwnProperty.call(activeCodeParameterValues, param.key)
+        ? activeCodeParameterValues[param.key]
+        : param.defaultValue;
+    });
+    return values;
+  }, [activeCodeParameterValues, arnParameterSchema]);
+  const arnSignalPreview = useMemo(() => {
+    if (!isArnPineBot || arnParameterSchema.length === 0) return null;
+    const readNumber = (key: string, fallback: number) => {
+      const n = Number(arnParameterValueByKey[key]);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const readBoolean = (key: string, fallback: boolean) => {
+      const value = arnParameterValueByKey[key];
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0;
+      const text = String(value ?? '')
+        .trim()
+        .toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(text)) return true;
+      if (['false', '0', 'no', 'off'].includes(text)) return false;
+      return fallback;
+    };
+    const readText = (key: string, fallback = '') => {
+      const value = arnParameterValueByKey[key];
+      if (value === null || value === undefined || value === '') return fallback;
+      return String(value);
+    };
+
+    return {
+      signal_id: signalHashKey,
+      symbol: readText('symbol', tradingSymbol || activeRules.symbol || 'BTCUSDT'),
+      action: readText('action', 'ENTRY').toUpperCase(),
+      direction: readText('direction', 'LONG').toUpperCase(),
+      price: Number(marketPrices?.last || marketTicker?.price || 0) || 0,
+      bar_index: 0,
+      atr: Number(marketAtr?.value || 0) || null,
+      volatility_spike: readBoolean('volatility_spike', false),
+      leverage: readNumber('leverage', 1),
+      tp_percent: readNumber('tp_percent', 1),
+      sl_atr_multiplier: readNumber('sl_atr_multiplier', 1.5),
+      investment_percentage: readNumber('investment_percentage', 90),
+      daily_loss_limit: readNumber('daily_loss_limit', 5),
+      cooldown_candles: Math.floor(readNumber('cooldown_candles', 2)),
+      timestamp_ms: Date.now()
+    };
+  }, [
+    activeRules.symbol,
+    arnParameterSchema.length,
+    arnParameterValueByKey,
+    isArnPineBot,
+    marketAtr?.value,
+    marketPrices?.last,
+    marketTicker?.price,
+    signalHashKey,
+    tradingSymbol
+  ]);
   const signalKeySeed = useMemo(() => {
     if (!activeRules) return '';
     return `${selectedBot?.id || 'bot'}:${activeRules.symbol}:${activeRules.signalTimeframe}:${activeRules.signalSource}`;
@@ -2211,13 +2345,25 @@ export default function TradeBotsModule() {
     });
   };
 
+  const handleResetArnParameterDefaults = () => {
+    if (!activeRules || arnParameterSchema.length === 0) return;
+    const nextCodeParameters = { ...(activeRules.codeParameters || {}) };
+    arnParameterSchema.forEach((param) => {
+      nextCodeParameters[param.key] = param.defaultValue as BotCodeParameterValue;
+    });
+    updateBotRulesDraft({ codeParameters: nextCodeParameters });
+    setModalError('');
+    setModalMessage('ARN Pine parameters reset to template defaults. Click "Save Rules" to persist.');
+  };
+
   const openBotPopup = (bot: TradeBotRow) => {
     setSelectedBot(bot);
-    setActivePopupSection('integrations');
     setAlgoMathSide('buy');
     setModalError('');
     setModalMessage('');
     const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRules());
+    const openOnArnPage = isArnPineFaithfulBot(bot, initialRules, initialRules.codeParameterSchema || []);
+    setActivePopupSection(openOnArnPage ? 'arn-pine' : 'integrations');
     setBotRulesDraft(initialRules);
     setTradingSymbol(initialRules.symbol);
   };
@@ -2444,6 +2590,14 @@ export default function TradeBotsModule() {
       setIntegrationActionInFlight(null);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!selectedBot) return;
+    const allowedSections = new Set(popupSections.map((section) => section.key));
+    if (!allowedSections.has(activePopupSection)) {
+      setActivePopupSection('integrations');
+    }
+  }, [activePopupSection, popupSections, selectedBot]);
 
   const handleRefreshConnectivity = async () => {
     if (!selectedBot) return;
@@ -2925,19 +3079,13 @@ export default function TradeBotsModule() {
               {modalMessage && <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{modalMessage}</div>}
 
               <nav className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/15 bg-black/45 p-2 text-xs uppercase tracking-[0.2em]">
-                {[
-                  { key: 'integrations', label: 'Integrations' },
-                  { key: 'parameters', label: 'Parameters' },
-                  { key: 'algo', label: 'Algo' },
-                  { key: 'exchange', label: 'Exchange' },
-                  { key: 'trade-history', label: 'Trade History' }
-                ].map((section) => {
+                {popupSections.map((section) => {
                   const isActive = activePopupSection === section.key;
                   return (
                     <button
                       key={section.key}
                       type="button"
-                      onClick={() => setActivePopupSection(section.key as BotPopupSection)}
+                      onClick={() => setActivePopupSection(section.key)}
                       className={`rounded-xl px-3 py-2 transition ${
                         isActive ? 'bg-primary-500/20 text-primary-100' : 'text-gray-300 hover:bg-white/10'
                       }`}
@@ -3971,6 +4119,99 @@ export default function TradeBotsModule() {
                     </pre>
                   </div>
                 )}
+                </section>
+              )}
+
+              {activePopupSection === 'arn-pine' && (
+                <section className="space-y-3 rounded-2xl border border-white/15 bg-black/45 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">ARN Pine faithful settings</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Dedicated popup page for ARN bot runtime parameters, modeled after the MEXC popup flow.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" className="btn btn-secondary btn-small" onClick={handleResetArnParameterDefaults}>
+                        Reset ARN Defaults
+                      </button>
+                      <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
+                        Save Rules
+                      </button>
+                    </div>
+                  </div>
+
+                  {!isArnPineBot && (
+                    <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                      Active bot does not match ARN Pine profile.
+                    </div>
+                  )}
+
+                  {isArnPineBot && arnParameterSchema.length === 0 && (
+                    <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                      ARN parameter schema not available yet. Open <span className="text-amber-50">Parameters</span> and click
+                      <span className="text-amber-50"> Save Rules</span> to hydrate code-driven parameters from backend runtime config.
+                    </div>
+                  )}
+
+                  {isArnPineBot && arnParameterSchema.length > 0 && (
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {arnParameterSchema.map((param) => {
+                        const currentValue = Object.prototype.hasOwnProperty.call(arnParameterValueByKey, param.key)
+                          ? arnParameterValueByKey[param.key]
+                          : param.defaultValue;
+                        return (
+                          <label key={`arn:${param.key}`} className="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                            {param.label}
+                            <p className="mt-1 text-[10px] normal-case tracking-normal text-gray-400">
+                              {param.key}
+                              {param.source ? ` · ${param.source}` : ''}
+                            </p>
+                            {param.description && (
+                              <p className="mt-1 text-[10px] normal-case tracking-normal text-gray-400">{param.description}</p>
+                            )}
+                            {param.type === 'boolean' ? (
+                              <select
+                                value={Boolean(currentValue) ? 'true' : 'false'}
+                                onChange={(event) => updateCodeParameterDraftValue(param.key, param.type, event.target.value === 'true')}
+                                className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                              >
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                              </select>
+                            ) : (
+                              <input
+                                type={param.type === 'number' ? 'number' : 'text'}
+                                step={param.type === 'number' ? 'any' : undefined}
+                                value={currentValue === null || currentValue === undefined ? '' : String(currentValue)}
+                                onChange={(event) => updateCodeParameterDraftValue(param.key, param.type, event.target.value)}
+                                className="mt-1 w-full rounded-lg border border-white/15 bg-black/35 px-2 py-1 text-xs text-gray-100 outline-none"
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    <InfoTile label="Runtime Path" value="/api/v1/internal/bot/runtime-config" mono />
+                    <InfoTile label="Signal Path" value="/signal" mono />
+                    <InfoTile label="Schema Params" value={String(arnParameterSchema.length)} />
+                    <InfoTile
+                      label="Param Source"
+                      value={activeRules.codeSource ? 'code-derived' : activeCodeParameterSchema.length > 0 ? 'stored schema' : 'none'}
+                    />
+                  </div>
+
+                  {arnSignalPreview && (
+                    <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">ARN Signal Payload Preview</p>
+                      <pre className="mt-2 max-h-56 overflow-auto rounded border border-white/10 bg-black/40 p-2 text-[11px] text-gray-200">
+                        {JSON.stringify(arnSignalPreview, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </section>
               )}
 

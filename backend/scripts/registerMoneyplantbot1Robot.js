@@ -1,8 +1,9 @@
 import { prisma } from '../src/utils/prisma.js';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
-const BOT_NAME = 'trade-exec-bot';
-const LEGACY_BOT_NAMES = [];
+const BOT_NAME = 'ARN -S&SHCS [Orginal]';
+const LEGACY_BOT_NAMES = ['moneyplantbot1-robot'];
+const PLAN_NAME = 'ARN S&SHCS Original Starter';
 
 function parseArg(key, fallback = '') {
   const match = process.argv.find((entry) => entry.startsWith(`--${key}=`));
@@ -10,7 +11,7 @@ function parseArg(key, fallback = '') {
   return match.slice(key.length + 3);
 }
 
-async function ensureTradeExecBot(workspaceId) {
+async function ensureArnSshcsOriginalBot(workspaceId) {
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: { id: true, name: true }
@@ -38,7 +39,7 @@ async function ensureTradeExecBot(workspaceId) {
         name: BOT_NAME,
         kind: 'code',
         description:
-          'Python execution microservice for normalized TradingView signals with sizing telemetry, SL/TP, and risk checks.'
+          'Pine-faithful ARN FastAPI bot with cooldown, EOD close, loss guardrail, and TP/SL execution controls.'
       }
     });
   }
@@ -49,13 +50,13 @@ async function ensureTradeExecBot(workspaceId) {
       data: {
         botId: bot.id,
         status: 'published',
-        sdkVersion: 'python-fastapi-ccxt',
+        sdkVersion: 'python-fastapi',
         notes: JSON.stringify({
           language: 'python',
-          entrypoint: 'app.main:app',
-          originalFilename: BOT_NAME,
+          entrypoint: 'python-bot/arn_bot_service_pine_faithful.py',
+          originalFilename: 'arn_bot_service_pine_faithful.py',
           uploadedAt: new Date().toISOString(),
-          userNotes: 'Managed marketplace listing'
+          userNotes: 'Managed marketplace listing for ARN Pine-faithful strategy bot'
         })
       }
     });
@@ -69,17 +70,17 @@ async function ensureTradeExecBot(workspaceId) {
   let plan = await prisma.plan.findFirst({
     where: {
       workspaceId,
-      name: 'Trade Exec Starter'
+      name: PLAN_NAME
     }
   });
   if (!plan) {
     plan = await prisma.plan.create({
       data: {
         workspaceId,
-        name: 'Trade Exec Starter',
-        cpuMilli: 250,
-        memMiB: 512,
-        priceMonthly: 49,
+        name: PLAN_NAME,
+        cpuMilli: 300,
+        memMiB: 768,
+        priceMonthly: 59,
         active: true
       }
     });
@@ -101,7 +102,7 @@ async function ensureTradeExecBot(workspaceId) {
 
 async function main() {
   const workspaceId = parseArg('workspaceId', DEFAULT_WORKSPACE_ID);
-  const result = await ensureTradeExecBot(workspaceId);
+  const result = await ensureArnSshcsOriginalBot(workspaceId);
   console.log(
     JSON.stringify(
       {

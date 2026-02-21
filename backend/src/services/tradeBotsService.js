@@ -175,6 +175,13 @@ const MEXC_MACD_BOLLINGER_BOT_SLUGS = new Set([
   'arn-hvms',
   'hvms-mexc'
 ]);
+const ARN_PINE_FAITHFUL_BOT_SLUGS = new Set([
+  'arn-s-shcs-orginal',
+  'arn-s-shcs-original',
+  'arn-bot-service-pine-faithful',
+  'arn-pine-faithful',
+  'moneyplantbot1-robot'
+]);
 
 function normalizeTextSlug(value = '') {
   return String(value || '')
@@ -196,6 +203,12 @@ function isMexcMacdBollingerBot(bot = null) {
   const slug = normalizeTextSlug(bot?.name || '');
   if (MEXC_MACD_BOLLINGER_BOT_SLUGS.has(slug)) return true;
   return slug.includes('mexc') && (slug.includes('bollinger') || slug.includes('hvms'));
+}
+
+function isArnPineFaithfulBot(bot = null) {
+  const slug = normalizeTextSlug(bot?.name || '');
+  if (ARN_PINE_FAITHFUL_BOT_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs');
 }
 
 function buildMexcMacdBollingerDefaultRules({ symbol = 'BTCUSDC' } = {}) {
@@ -344,8 +357,150 @@ function buildMexcMacdBollingerDefaultRules({ symbol = 'BTCUSDC' } = {}) {
   };
 }
 
+function buildArnPineFaithfulDefaultRules({ symbol = 'BTCUSDT' } = {}) {
+  const normalizedSymbol = normalizeTradingSymbol(symbol, 'BTCUSDT');
+  const parameterSchema = [
+    {
+      key: 'symbol',
+      label: 'Symbol',
+      type: 'string',
+      defaultValue: normalizedSymbol,
+      source: 'template:arn-pine-faithful',
+      description: 'Trading symbol used by the ARN Pine-faithful service.',
+      line: null
+    },
+    {
+      key: 'leverage',
+      label: 'Leverage',
+      type: 'number',
+      defaultValue: 1.0,
+      source: 'template:arn-pine-faithful',
+      description: 'Leverage multiplier applied to computed order size.',
+      line: null
+    },
+    {
+      key: 'tp_percent',
+      label: 'TP Percent',
+      type: 'number',
+      defaultValue: 1.0,
+      source: 'template:arn-pine-faithful',
+      description: 'Take-profit percent from entry price.',
+      line: null
+    },
+    {
+      key: 'sl_atr_multiplier',
+      label: 'SL ATR Multiplier',
+      type: 'number',
+      defaultValue: 1.5,
+      source: 'template:arn-pine-faithful',
+      description: 'ATR multiplier used for stop-loss calculation.',
+      line: null
+    },
+    {
+      key: 'investment_percentage',
+      label: 'Investment %',
+      type: 'number',
+      defaultValue: 90.0,
+      source: 'template:arn-pine-faithful',
+      description: 'Portfolio allocation percentage used per entry signal.',
+      line: null
+    },
+    {
+      key: 'daily_loss_limit',
+      label: 'Daily Loss Limit %',
+      type: 'number',
+      defaultValue: 5.0,
+      source: 'template:arn-pine-faithful',
+      description: 'Loss threshold that triggers close-all protection.',
+      line: null
+    },
+    {
+      key: 'cooldown_candles',
+      label: 'Cooldown Candles',
+      type: 'number',
+      defaultValue: 2,
+      source: 'template:arn-pine-faithful',
+      description: 'Number of candles to wait before accepting new entries.',
+      line: null
+    },
+    {
+      key: 'action',
+      label: 'Action',
+      type: 'string',
+      defaultValue: 'ENTRY',
+      source: 'template:arn-pine-faithful',
+      description: 'Default signal action when composing test payloads.',
+      line: null
+    },
+    {
+      key: 'direction',
+      label: 'Direction',
+      type: 'string',
+      defaultValue: 'LONG',
+      source: 'template:arn-pine-faithful',
+      description: 'Default signal direction when composing test payloads.',
+      line: null
+    },
+    {
+      key: 'volatility_spike',
+      label: 'Volatility Spike',
+      type: 'boolean',
+      defaultValue: false,
+      source: 'template:arn-pine-faithful',
+      description: 'When true, stop-loss placement is skipped to mirror Pine logic.',
+      line: null
+    },
+    {
+      key: 'timezone',
+      label: 'Timezone',
+      type: 'string',
+      defaultValue: 'Asia/Kolkata',
+      source: 'template:arn-pine-faithful',
+      description: 'Timezone used for end-of-day close behavior.',
+      line: null
+    }
+  ];
+
+  return {
+    strategy: 'ARN_PINE_FAITHFUL',
+    source: 'python_bot',
+    exchange: 'MEXC',
+    symbol: normalizedSymbol,
+    leverage: 1.0,
+    tpPercent: 1.0,
+    slAtrMultiplier: 1.5,
+    investmentPercentage: 90.0,
+    dailyLossLimit: 5.0,
+    cooldownCandles: 2,
+    action: 'ENTRY',
+    direction: 'LONG',
+    volatilitySpike: false,
+    timezone: 'Asia/Kolkata',
+    resolveExchangeFromBackend: true,
+    runtimeConfigPath: '/api/v1/internal/bot/runtime-config',
+    signalPath: '/signal',
+    codeParameterSchema: parameterSchema,
+    codeParameters: {
+      symbol: normalizedSymbol,
+      leverage: 1.0,
+      tp_percent: 1.0,
+      sl_atr_multiplier: 1.5,
+      investment_percentage: 90.0,
+      daily_loss_limit: 5.0,
+      cooldown_candles: 2,
+      action: 'ENTRY',
+      direction: 'LONG',
+      volatility_spike: false,
+      timezone: 'Asia/Kolkata'
+    }
+  };
+}
+
 function getDefaultRuntimeRulesForBot(bot = null, { symbol = null } = {}) {
   if (!bot) return null;
+  if (isArnPineFaithfulBot(bot)) {
+    return buildArnPineFaithfulDefaultRules({ symbol: symbol || bot?.symbol || 'BTCUSDT' });
+  }
   if (isMexcMacdBollingerBot(bot)) {
     return buildMexcMacdBollingerDefaultRules({ symbol: symbol || bot?.symbol || 'BTCUSDC' });
   }

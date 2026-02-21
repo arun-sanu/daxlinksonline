@@ -55,6 +55,17 @@ npm run bot:register:mexc-macd-bollinger -- --workspaceId=<provider-workspace-uu
 
 Then users can rent it from `/api/v1/trade-bots/:workspaceId/market` and it will appear in their Trade Bots list.
 
+Register the ARN Pine-faithful template:
+
+```bash
+cd /opt/daxlinks/backend/backend
+npm run bot:register:arn-s-shcs-original -- --workspaceId=<provider-workspace-uuid>
+```
+
+ARN service file:
+
+- `python-bot/arn_bot_service_pine_faithful.py` (FastAPI endpoint: `POST /signal`)
+
 ## Notes
 
 - The backend currently validates internal token (`Authorization: Bearer ...` or `X-Internal-Token`).
