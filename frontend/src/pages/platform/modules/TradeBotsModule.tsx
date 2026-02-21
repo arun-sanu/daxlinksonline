@@ -2025,6 +2025,26 @@ export default function TradeBotsModule() {
       }),
     [rentals]
   );
+  const overviewIntegrationLinkedCount = useMemo(
+    () => bots.filter((bot) => Boolean(botLinks[bot.id]?.integrationId)).length,
+    [botLinks, bots]
+  );
+  const overviewWebhookLinkedCount = useMemo(
+    () => bots.filter((bot) => Boolean(botLinks[bot.id]?.webhookUrl)).length,
+    [botLinks, bots]
+  );
+  const overviewFullyLinkedCount = useMemo(
+    () => bots.filter((bot) => Boolean(botLinks[bot.id]?.integrationId && botLinks[bot.id]?.webhookUrl)).length,
+    [botLinks, bots]
+  );
+  const overviewNeedsAttentionCount = useMemo(
+    () => bots.filter((bot) => botConnectivityStatus(bot, botLinks[bot.id]) === 'issue').length,
+    [botLinks, bots]
+  );
+  const overviewCoveragePct = useMemo(() => {
+    if (!bots.length) return 0;
+    return Math.round((overviewFullyLinkedCount / bots.length) * 100);
+  }, [bots.length, overviewFullyLinkedCount]);
   const runningInstanceCount = useMemo(
     () => botInstances.filter((instance) => normalizeInstanceState(instance.status) === 'running').length,
     [botInstances]
@@ -2807,6 +2827,32 @@ export default function TradeBotsModule() {
     { key: 'rentals', label: 'Rentals' },
     { key: 'logs-reports', label: 'Logs + Reports' }
   ];
+  const tabRail = (
+    <nav className="grid grid-cols-3 gap-2 sm:w-fit">
+      {tabs.map((tab) => {
+        const isActive = activeTab === tab.key;
+        const Icon = TRADE_BOT_TAB_ICONS[tab.key];
+        return (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
+              isActive
+                ? 'border-primary-200/80 bg-primary-400/10 text-white'
+                : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
+            }`}
+          >
+            <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
+            <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+              <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
+            </span>
+            <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
 
   return (
     <div className="trade-bots-page space-y-6">
@@ -2824,42 +2870,34 @@ export default function TradeBotsModule() {
         </div>
       </header>
       <div className="space-y-6">
-        <nav className="grid grid-cols-3 gap-2 sm:w-fit">
-          {tabs.map((tab) => {
-            const isActive = activeTab === tab.key;
-            const Icon = TRADE_BOT_TAB_ICONS[tab.key];
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setActiveTab(tab.key)}
-                className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
-                  isActive
-                    ? 'border-primary-200/80 bg-primary-400/10 text-white'
-                    : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
-                }`}
-              >
-                <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10 z-0"></span>
-                <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
-                  <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
-                </span>
-                <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        {activeTab === 'overview' ? (
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:items-start">
+            <div>{tabRail}</div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
+              <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
+              <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
+              <MetricCard label="Active Rentals" value={String(activeRentals.length)} helper="Running + active status" />
+              <MetricCard label="Linked Integrations" value={String(overviewIntegrationLinkedCount)} helper="Bots mapped to exchange" />
+              <MetricCard label="Linked Webhooks" value={String(overviewWebhookLinkedCount)} helper="Bots mapped to TradingView URL" />
+              <MetricCard label="Coverage" value={`${overviewCoveragePct}%`} helper="Webhook + integration on same bot" />
+              <MetricCard label="Needs Attention" value={String(overviewNeedsAttentionCount)} helper="Bots in issue state" />
+              <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
+            </div>
+          </section>
+        ) : (
+          tabRail
+        )}
 
         {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
         {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
 
         {activeTab === 'overview' && (
-          <section className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
-              <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
-              <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
-              <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
-            </div>
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="section-label">Overview</p>
+            <p className="text-sm text-gray-300">
+              Use this panel for quick health checks, then switch to Connectivity or Bots for detailed actions.
+            </p>
           </section>
         )}
 
