@@ -518,6 +518,11 @@ function mergeRuntimeRulesWithDefaults(defaultRules = null, currentRules = null)
     ...current
   };
 
+  const defaultSchema = Array.isArray(defaults.codeParameterSchema)
+    ? sanitizeCodeParameterSchema(defaults.codeParameterSchema)
+    : [];
+  const defaultParamKeys = new Set(defaultSchema.map((item) => item.key));
+
   const defaultParams =
     defaults.codeParameters && typeof defaults.codeParameters === 'object' && !Array.isArray(defaults.codeParameters)
       ? defaults.codeParameters
@@ -527,12 +532,21 @@ function mergeRuntimeRulesWithDefaults(defaultRules = null, currentRules = null)
       ? current.codeParameters
       : {};
 
+  const filteredCurrentParams = defaultParamKeys.size
+    ? Object.fromEntries(Object.entries(currentParams).filter(([key]) => defaultParamKeys.has(String(key))))
+    : currentParams;
+
   merged.codeParameters = {
     ...defaultParams,
-    ...currentParams
+    ...filteredCurrentParams
   };
 
-  if (!Array.isArray(current.codeParameterSchema) && Array.isArray(defaults.codeParameterSchema)) {
+  if (defaultSchema.length) {
+    merged.codeParameterSchema = defaultSchema;
+    if (!defaults.codeSource) {
+      merged.codeSource = null;
+    }
+  } else if (!Array.isArray(current.codeParameterSchema) && Array.isArray(defaults.codeParameterSchema)) {
     merged.codeParameterSchema = defaults.codeParameterSchema;
   }
 

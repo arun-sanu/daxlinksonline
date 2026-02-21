@@ -376,6 +376,13 @@ function createDefaultTradingRules(symbol = 'BTCUSDC'): BotTradingRules {
   };
 }
 
+function createDefaultTradingRulesForBot(bot: TradeBotRow | null | undefined): BotTradingRules {
+  if (isArnPineFaithfulBot(bot || null, null, [])) {
+    return createDefaultTradingRules('BTCUSDT');
+  }
+  return createDefaultTradingRules(DEFAULT_TRADING_RULES.symbol);
+}
+
 function normalizeNumber(value: unknown, fallback: number) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -1309,9 +1316,9 @@ export default function TradeBotsModule() {
   }, [botLinks, selectedBot]);
 
   const selectedBotRules = useMemo(() => {
-    if (!selectedBot) return createDefaultTradingRules(tradingSymbol);
-    return botRulesMap[selectedBot.id] || createDefaultTradingRules(tradingSymbol);
-  }, [botRulesMap, selectedBot, tradingSymbol]);
+    if (!selectedBot) return createDefaultTradingRules(DEFAULT_TRADING_RULES.symbol);
+    return botRulesMap[selectedBot.id] || createDefaultTradingRulesForBot(selectedBot);
+  }, [botRulesMap, selectedBot]);
 
   const webhookUrls = useMemo(() => collectWebhookUrls(webhookProfile), [webhookProfile]);
 
@@ -2260,13 +2267,14 @@ export default function TradeBotsModule() {
       rules?: BotTradingRules | null;
     }
   ) => {
+    const targetBot = selectedBot?.id === botId ? selectedBot : bots.find((item) => item.id === botId) || null;
     const nextLinks = overrides && Object.prototype.hasOwnProperty.call(overrides, 'links')
       ? overrides.links || {}
       : botLinks[botId] || {};
     const nextRules = overrides && Object.prototype.hasOwnProperty.call(overrides, 'rules')
       ? overrides.rules
-      : botRulesMap[botId] || createDefaultTradingRules(tradingSymbol);
-    const sanitizedRules = sanitizeTradingRules(nextRules || createDefaultTradingRules(tradingSymbol));
+      : botRulesMap[botId] || createDefaultTradingRulesForBot(targetBot);
+    const sanitizedRules = sanitizeTradingRules(nextRules || createDefaultTradingRulesForBot(targetBot));
 
     const saved = await saveTradeBotRuntimeConfig(botId, {
       links: nextLinks,
@@ -2361,7 +2369,7 @@ export default function TradeBotsModule() {
     setAlgoMathSide('buy');
     setModalError('');
     setModalMessage('');
-    const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRules());
+    const initialRules = sanitizeTradingRules(botRulesMap[bot.id] || createDefaultTradingRulesForBot(bot));
     const openOnArnPage = isArnPineFaithfulBot(bot, initialRules, initialRules.codeParameterSchema || []);
     setActivePopupSection(openOnArnPage ? 'arn-pine' : 'integrations');
     setBotRulesDraft(initialRules);
@@ -2534,7 +2542,7 @@ export default function TradeBotsModule() {
 
   const handleRulesReset = () => {
     if (!selectedBot) return;
-    const fallback = createDefaultTradingRules(tradingSymbol || DEFAULT_TRADING_RULES.symbol);
+    const fallback = createDefaultTradingRulesForBot(selectedBot);
     setBotRulesDraft(fallback);
     setTradingSymbol(fallback.symbol);
     setModalError('');
@@ -2551,10 +2559,10 @@ export default function TradeBotsModule() {
   useEffect(() => {
     if (!selectedBot) return;
     if (botRulesDraft) return;
-    const initialRules = sanitizeTradingRules(botRulesMap[selectedBot.id] || createDefaultTradingRules(tradingSymbol));
+    const initialRules = sanitizeTradingRules(botRulesMap[selectedBot.id] || createDefaultTradingRulesForBot(selectedBot));
     setBotRulesDraft(initialRules);
     setTradingSymbol(initialRules.symbol);
-  }, [botRulesDraft, botRulesMap, selectedBot, tradingSymbol]);
+  }, [botRulesDraft, botRulesMap, selectedBot]);
 
   useEffect(() => {
     if (!selectedBot) return;

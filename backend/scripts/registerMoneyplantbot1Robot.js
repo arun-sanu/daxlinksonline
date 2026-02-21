@@ -2,7 +2,6 @@ import { prisma } from '../src/utils/prisma.js';
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_NAME = 'ARN -S&SHCS [Orginal]';
-const LEGACY_BOT_NAMES = ['moneyplantbot1-robot'];
 const PLAN_NAME = 'ARN S&SHCS Original Starter';
 
 function parseArg(key, fallback = '') {
@@ -23,15 +22,9 @@ async function ensureArnSshcsOriginalBot(workspaceId) {
   let bot = await prisma.bot.findFirst({
     where: {
       workspaceId,
-      name: { in: [BOT_NAME, ...LEGACY_BOT_NAMES] }
+      name: BOT_NAME
     }
   });
-  if (bot && bot.name !== BOT_NAME) {
-    bot = await prisma.bot.update({
-      where: { id: bot.id },
-      data: { name: BOT_NAME }
-    });
-  }
   if (!bot) {
     bot = await prisma.bot.create({
       data: {
