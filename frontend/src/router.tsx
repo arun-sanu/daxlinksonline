@@ -60,6 +60,8 @@ export function AppRouter() {
         { path: 'platform/integrations/:exchangeId/connectivity', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/data', element: <ExchangeIntegrationPage /> },
         { path: 'platform/integrations/:exchangeId/settings', element: <ExchangeIntegrationPage /> },
+        { path: 'platform/trade-bots', element: <Navigate to="/platform/trade-bots/overview" replace /> },
+        { path: 'platform/:moduleId/:tabId', element: <PlatformModulePage /> },
         { path: 'platform/:moduleId', element: <PlatformModulePage /> },
         { path: '*', element: <Navigate to="/dashboard" replace /> }
       ]

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   deleteBot,
   getTradeBotRuntimeConfig,
@@ -42,6 +42,12 @@ type BotPopupSection = 'integrations' | 'parameters' | 'algo' | 'arn-pine' | 'ex
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
 type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
 type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
+const TRADE_BOT_TAB_ROUTE_KEYS: TabKey[] = ['overview', 'connectivity', 'bots', 'marketplace', 'rentals', 'logs-reports'];
+
+function isTradeBotTabKey(value: string | null | undefined): value is TabKey {
+  if (!value) return false;
+  return TRADE_BOT_TAB_ROUTE_KEYS.includes(value as TabKey);
+}
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
@@ -1272,7 +1278,9 @@ function analyzePineScriptSource(source: string): PineScriptAnalysis {
 }
 
 export default function TradeBotsModule() {
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const navigate = useNavigate();
+  const { tabId } = useParams<{ tabId?: string }>();
+  const [activeTab, setActiveTab] = useState<TabKey>(() => (isTradeBotTabKey(tabId) ? tabId : 'overview'));
   const [bots, setBots] = useState<TradeBotRow[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1309,6 +1317,21 @@ export default function TradeBotsModule() {
   const [algoBaseStart, setAlgoBaseStart] = useState(10);
   const [algoBaseEnd, setAlgoBaseEnd] = useState(50);
   const [algoMathSide, setAlgoMathSide] = useState<PreviewSide>('buy');
+
+  useEffect(() => {
+    if (!isTradeBotTabKey(tabId)) {
+      if (tabId !== 'overview') {
+        navigate('/platform/trade-bots/overview', { replace: true });
+      }
+      if (activeTab !== 'overview') {
+        setActiveTab('overview');
+      }
+      return;
+    }
+    if (activeTab !== tabId) {
+      setActiveTab(tabId);
+    }
+  }, [activeTab, navigate, tabId]);
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -2837,7 +2860,12 @@ export default function TradeBotsModule() {
           <button
             key={tab.key}
             type="button"
-            onClick={() => setActiveTab(tab.key)}
+            onClick={() => {
+              if (activeTab !== tab.key) {
+                setActiveTab(tab.key);
+              }
+              navigate(`/platform/trade-bots/${tab.key}`);
+            }}
             className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
@@ -2873,7 +2901,7 @@ export default function TradeBotsModule() {
       </header>
       <div className="space-y-6">
         {activeTab === 'overview' ? (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:gap-x-16 xl:items-start">
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:gap-x-24 xl:items-start">
             <div>{tabRail}</div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
