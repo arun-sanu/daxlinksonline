@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   deleteBot,
@@ -1338,6 +1338,11 @@ export default function TradeBotsModule() {
   const [algoBaseStart, setAlgoBaseStart] = useState(10);
   const [algoBaseEnd, setAlgoBaseEnd] = useState(50);
   const [algoMathSide, setAlgoMathSide] = useState<PreviewSide>('buy');
+  const selectedBotIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedBotIdRef.current = selectedBot?.id || null;
+  }, [selectedBot?.id]);
 
   useEffect(() => {
     if (forceBotsTabFromQuery) return;
@@ -2125,9 +2130,10 @@ export default function TradeBotsModule() {
     if (!silent) setInstancesLoading(true);
     try {
       const result = await listInstances(botId);
+      if (selectedBotIdRef.current !== botId) return;
       setBotInstances((result.items || []) as BotInstance[]);
     } finally {
-      if (!silent) setInstancesLoading(false);
+      if (!silent && selectedBotIdRef.current === botId) setInstancesLoading(false);
     }
   };
 
@@ -2300,7 +2306,7 @@ export default function TradeBotsModule() {
         writeBotTradingRulesMap(next);
         return next;
       });
-      if (selectedBot?.id === botId) {
+      if (selectedBotIdRef.current === botId) {
         setBotRulesDraft(sanitizedRules);
         setTradingSymbol(sanitizedRules.symbol);
       }
