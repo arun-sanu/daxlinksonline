@@ -2886,201 +2886,199 @@ export default function TradeBotsModule() {
         </div>
       </header>
       <div className="space-y-6">
-        {activeTab === 'overview' ? (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] xl:gap-x-24 xl:items-start">
-            <div>{tabRail}</div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
-              <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
-              <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
-              <MetricCard label="Active Rentals" value={String(activeRentals.length)} helper="Running + active status" />
-              <MetricCard label="Linked Integrations" value={String(overviewIntegrationLinkedCount)} helper="Bots mapped to exchange" />
-              <MetricCard label="Linked Webhooks" value={String(overviewWebhookLinkedCount)} helper="Bots mapped to TradingView URL" />
-              <MetricCard label="Coverage" value={`${overviewCoveragePct}%`} helper="Webhook + integration on same bot" />
-              <MetricCard label="Needs Attention" value={String(overviewNeedsAttentionCount)} helper="Bots in issue state" />
-              <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
-            </div>
-          </section>
-        ) : (
-          tabRail
-        )}
-
         {botsError && <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{botsError}</div>}
         {rentalsError && <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-200">{rentalsError}</div>}
-
-        {activeTab === 'overview' && (
-          <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <p className="section-label">Overview</p>
-            <p className="text-sm text-gray-300">
-              Use this panel for quick health checks, then switch to Connectivity or Bots for detailed actions.
-            </p>
-          </section>
-        )}
-
-        {activeTab === 'connectivity' && (
-          <section className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="section-label">Connectivity</p>
-              <p className="text-sm text-gray-300">Review webhook and integration links across all bots in one map.</p>
-            </div>
-            <ConnectivityMindmap bots={bots} botLinks={botLinks} />
-          </section>
-        )}
-
-        {activeTab === 'bots' && (
-          <section className="card-shell space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="section-label">Control Plane</p>
-                  <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
-                </div>
-                <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-                  Refresh
-                </button>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <StatCard label="Active rentals" value={String(activeRentals.length)} />
-                <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
-                <StatCard label="Automation" value={automationEnabled ? 'enabled' : 'disabled'} />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="section-label">Bots</p>
-                <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness. Click any bot to configure connectivity.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100"
-                  placeholder="Search bot name/status"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-                  Refresh
-                </button>
-              </div>
-            </div>
-
-            {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
-            {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found.</p>}
-            {!loading && filteredBots.length > 0 && (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {filteredBots.map((bot) => (
-                  <button
-                    key={bot.id}
-                    type="button"
-                    onClick={() => openBotPopup(bot)}
-                    className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/40 hover:bg-primary-500/10"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <h3 className="text-left text-lg font-semibold text-white">{bot.name}</h3>
-                        <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
-                      </div>
-                      <span className="rounded-lg border border-primary-300/35 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
-                        {bot.latestVersion?.status || 'unknown'}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-left text-sm text-gray-300">{bot.description || 'No description'}</p>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
-                      <InfoTile label="Version" value={versionText(bot)} mono />
-                      <InfoTile label="Updated" value={formatDate(bot.updatedAt)} />
-                      <InfoTile label="Instances" value={String(bot.counts?.instances || 0)} />
-                      <InfoTile label="Orders" value={String(bot.counts?.orders || 0)} />
-                    </div>
-                  </button>
-                ))}
-              </div>
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start">
+          <div>{tabRail}</div>
+          <div className="space-y-6">
+            {activeTab === 'overview' && (
+              <>
+                <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricCard label="Bots" value={String(bots.length)} helper="Loaded bots" />
+                  <MetricCard label="Instances" value={String(totalInstances)} helper="Across versions" />
+                  <MetricCard label="Rentals" value={String(rentals.length)} helper="Active + historical" />
+                  <MetricCard label="Active Rentals" value={String(activeRentals.length)} helper="Running + active status" />
+                  <MetricCard label="Linked Integrations" value={String(overviewIntegrationLinkedCount)} helper="Bots mapped to exchange" />
+                  <MetricCard label="Linked Webhooks" value={String(overviewWebhookLinkedCount)} helper="Bots mapped to TradingView URL" />
+                  <MetricCard label="Coverage" value={`${overviewCoveragePct}%`} helper="Webhook + integration on same bot" />
+                  <MetricCard label="Needs Attention" value={String(overviewNeedsAttentionCount)} helper="Bots in issue state" />
+                  <StatusToggleCard label="Automation Status" enabled={automationEnabled} onToggle={() => setAutomationEnabled((v) => !v)} />
+                </section>
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="section-label">Overview</p>
+                  <p className="text-sm text-gray-300">
+                    Use this panel for quick health checks, then switch to Connectivity or Bots for detailed actions.
+                  </p>
+                </section>
+              </>
             )}
-          </section>
-        )}
 
-          {activeTab === 'marketplace' && (
-            <section className="card-shell space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="section-label">Marketplace</p>
-                  <p className="text-sm text-gray-300">Marketplace is managed on its dedicated page.</p>
+            {activeTab === 'connectivity' && (
+              <section className="space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="section-label">Connectivity</p>
+                  <p className="text-sm text-gray-300">Review webhook and integration links across all bots in one map.</p>
                 </div>
-                <Link to="/market" className="btn btn-white-animated btn-small">
-                  Open Marketplace
-                </Link>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-300">
-                Open <span className="text-primary-200">Market</span> to browse and rent published bots.
-              </div>
-            </section>
-          )}
+                <ConnectivityMindmap bots={bots} botLinks={botLinks} />
+              </section>
+            )}
 
-          {activeTab === 'rentals' && (
-            <section className="card-shell space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="section-label">Rental Status</p>
-                  <p className="text-sm text-gray-300">Active and historical workspace rentals.</p>
-                </div>
-                <Link to="/market/rentals" className="btn btn-white-animated btn-small">
-                  Open Rentals
-                </Link>
-              </div>
-              {loading && <p className="text-sm text-gray-400">Loading rentals...</p>}
-              {!loading && rentals.length === 0 && <p className="text-sm text-gray-400">No rentals found.</p>}
-              {!loading && rentals.length > 0 && (
-                <div className="space-y-2">
-                  {rentals.slice(0, 10).map((rental) => (
-                    <div key={rental.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-white">{normalizeBotName(rental.bot?.name || rental.botId)}</p>
-                        <span className="text-xs uppercase tracking-[0.14em] text-gray-300">{rental.status}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-gray-400">
-                        Plan {rental.plan?.name || rental.planId} • Expires {formatDate(rental.expiresAt)}
-                      </p>
-                      <p className="mt-1 text-xs text-gray-400">Instance {rental.botInstanceId || 'provisioning'}</p>
+            {activeTab === 'bots' && (
+              <section className="card-shell space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="section-label">Control Plane</p>
+                      <h3 className="text-xl font-semibold text-main">Trade bot operations summary</h3>
                     </div>
-                  ))}
+                    <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <StatCard label="Active rentals" value={String(activeRentals.length)} />
+                    <StatCard label="Last loaded" value={formatDate(lastLoadedAt)} />
+                    <StatCard label="Automation" value={automationEnabled ? 'enabled' : 'disabled'} />
+                  </div>
                 </div>
-              )}
-            </section>
-          )}
 
-          {activeTab === 'logs-reports' && (
-            <section className="card-shell space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="section-label">Logs And Reports</p>
-                  <p className="text-sm text-gray-300">Open execution telemetry and sizing reports for diagnostics.</p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="section-label">Bots</p>
+                    <p className="text-sm text-gray-300">Monitor versions, instances, and execution readiness. Click any bot to configure connectivity.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100"
+                      placeholder="Search bot name/status"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                    <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                      Refresh
+                    </button>
+                  </div>
                 </div>
-                <button type="button" className="btn btn-secondary btn-small" onClick={load}>
-                  Refresh
-                </button>
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <Link to="/platform/orders/reports" className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40">
-                  Signal/Exchange Reports
-                </Link>
-                <Link
-                  to="/platform/orders/sizing/details"
-                  className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40"
-                >
-                  Sizing Details
-                </Link>
-                <Link
-                  to="/platform/orders/sizing/reports"
-                  className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40"
-                >
-                  Sizing Reports
-                </Link>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
-                Last sync: {formatDate(lastLoadedAt)} {botsError || rentalsError ? '• check alert banners for fetch errors.' : '• no load errors detected.'}
-              </div>
-            </section>
-          )}
-        </div>
+
+                {loading && <p className="text-sm text-gray-400">Loading trade bot data...</p>}
+                {!loading && filteredBots.length === 0 && !botsError && <p className="text-sm text-gray-400">No bots found.</p>}
+                {!loading && filteredBots.length > 0 && (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {filteredBots.map((bot) => (
+                      <button
+                        key={bot.id}
+                        type="button"
+                        onClick={() => openBotPopup(bot)}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-primary-300/40 hover:bg-primary-500/10"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <h3 className="text-left text-lg font-semibold text-white">{bot.name}</h3>
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-400">{bot.kind}</p>
+                          </div>
+                          <span className="rounded-lg border border-primary-300/35 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
+                            {bot.latestVersion?.status || 'unknown'}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-left text-sm text-gray-300">{bot.description || 'No description'}</p>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-300">
+                          <InfoTile label="Version" value={versionText(bot)} mono />
+                          <InfoTile label="Updated" value={formatDate(bot.updatedAt)} />
+                          <InfoTile label="Instances" value={String(bot.counts?.instances || 0)} />
+                          <InfoTile label="Orders" value={String(bot.counts?.orders || 0)} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeTab === 'marketplace' && (
+              <section className="card-shell space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="section-label">Marketplace</p>
+                    <p className="text-sm text-gray-300">Marketplace is managed on its dedicated page.</p>
+                  </div>
+                  <Link to="/market" className="btn btn-white-animated btn-small">
+                    Open Marketplace
+                  </Link>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-300">
+                  Open <span className="text-primary-200">Market</span> to browse and rent published bots.
+                </div>
+              </section>
+            )}
+
+            {activeTab === 'rentals' && (
+              <section className="card-shell space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="section-label">Rental Status</p>
+                    <p className="text-sm text-gray-300">Active and historical workspace rentals.</p>
+                  </div>
+                  <Link to="/market/rentals" className="btn btn-white-animated btn-small">
+                    Open Rentals
+                  </Link>
+                </div>
+                {loading && <p className="text-sm text-gray-400">Loading rentals...</p>}
+                {!loading && rentals.length === 0 && <p className="text-sm text-gray-400">No rentals found.</p>}
+                {!loading && rentals.length > 0 && (
+                  <div className="space-y-2">
+                    {rentals.slice(0, 10).map((rental) => (
+                      <div key={rental.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-white">{normalizeBotName(rental.bot?.name || rental.botId)}</p>
+                          <span className="text-xs uppercase tracking-[0.14em] text-gray-300">{rental.status}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Plan {rental.plan?.name || rental.planId} • Expires {formatDate(rental.expiresAt)}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">Instance {rental.botInstanceId || 'provisioning'}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeTab === 'logs-reports' && (
+              <section className="card-shell space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="section-label">Logs And Reports</p>
+                    <p className="text-sm text-gray-300">Open execution telemetry and sizing reports for diagnostics.</p>
+                  </div>
+                  <button type="button" className="btn btn-secondary btn-small" onClick={load}>
+                    Refresh
+                  </button>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Link to="/platform/orders/reports" className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40">
+                    Signal/Exchange Reports
+                  </Link>
+                  <Link
+                    to="/platform/orders/sizing/details"
+                    className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40"
+                  >
+                    Sizing Details
+                  </Link>
+                  <Link
+                    to="/platform/orders/sizing/reports"
+                    className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200 hover:border-primary-300/40"
+                  >
+                    Sizing Reports
+                  </Link>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-gray-300">
+                  Last sync: {formatDate(lastLoadedAt)} {botsError || rentalsError ? '• check alert banners for fetch errors.' : '• no load errors detected.'}
+                </div>
+              </section>
+            )}
+          </div>
+        </section>
+      </div>
 
       {selectedBot && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-6 backdrop-blur-md" role="dialog" aria-modal="true" onClick={closeBotPopup}>
