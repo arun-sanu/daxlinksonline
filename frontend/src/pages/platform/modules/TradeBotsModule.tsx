@@ -2847,7 +2847,7 @@ export default function TradeBotsModule() {
       {tabs.map((tab) => {
         const isActive = activeTab === tab.key;
         const isMarketplaceTab = tab.key === 'marketplace';
-        const targetPath = tab.key === 'bots' ? '/trade-bots' : `/platform/trade-bots/${tab.key}`;
+        const targetPath = tab.key === 'bots' ? '/platform/trade-bots/bots' : `/platform/trade-bots/${tab.key}`;
         const Icon = TRADE_BOT_TAB_ICONS[tab.key];
         return (
           <Link

@@ -18,6 +18,7 @@ const breadcrumbLabelMap: Record<string, string> = {
   banking: 'Banking',
   wallet: 'Wallet',
   integrations: 'Integrations',
+  mexc: 'MEXC',
   webhooks: 'Webhooks',
   workflow: 'Workflow',
   monitoring: 'Monitoring',
@@ -61,15 +62,34 @@ export default function AppLayout() {
     for (let i = 0; i < segments.length; i += 1) {
       const segment = segments[i];
       pathAccumulator += `/${segment}`;
-      const isLast = i === segments.length - 1;
       crumbs.push({
-        label: formatSegment(segment),
-        path: isLast ? undefined : pathAccumulator
+        label: formatSegment(decodeURIComponent(segment)),
+        path: pathAccumulator
       });
     }
 
     return crumbs;
   }, [location.pathname]);
+
+  const renderComposedLabel = (item: { to: string; label: string }, extraCrumbs: Array<{ label: string; path?: string }>) => (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <Link to={item.to} className="text-current transition hover:text-primary-200" onClick={closeMobile}>
+        {item.label}
+      </Link>
+      {extraCrumbs.map((crumb) => (
+        <span key={`${crumb.path}:${crumb.label}`} className="inline-flex items-center gap-1">
+          <span className="text-gray-500">&gt;</span>
+          {crumb.path ? (
+            <Link to={crumb.path} className="text-current transition hover:text-primary-200" onClick={closeMobile}>
+              {crumb.label}
+            </Link>
+          ) : (
+            <span>{crumb.label}</span>
+          )}
+        </span>
+      ))}
+    </span>
+  );
 
   return (
     <div className="app-shell relative text-main">
@@ -86,10 +106,15 @@ export default function AppLayout() {
             </div>
             <nav className="hidden flex-1 flex-wrap items-center justify-center gap-2 overflow-x-auto text-[11px] font-semibold uppercase tracking-[0.22em] md:flex md:gap-3">
               {visibleNavItems.map((item) => {
-                const matchesRoot = breadcrumbs[0]?.label === item.label;
+                const matchesRoot = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
                 const extraCrumbs = matchesRoot ? breadcrumbs.slice(1) : [];
-                const composedLabel =
-                  extraCrumbs.length > 0 ? `${item.label} > ${extraCrumbs.map((c) => c.label).join(' > ')}` : item.label;
+                if (extraCrumbs.length > 0) {
+                  return (
+                    <div key={item.to} className="desktop-nav-pill desktop-nav-pill--active">
+                      {renderComposedLabel(item, extraCrumbs)}
+                    </div>
+                  );
+                }
                 return (
                   <NavLink
                     key={item.to}
@@ -98,7 +123,7 @@ export default function AppLayout() {
                     end={item.exact}
                     onClick={closeMobile}
                   >
-                    {composedLabel}
+                    {item.label}
                   </NavLink>
                 );
               })}
@@ -135,10 +160,15 @@ export default function AppLayout() {
             <div className="layout-container py-4">
               <nav className="flex flex-col gap-3 text-sm font-semibold text-gray-300">
                 {visibleNavItems.map((item) => {
-                  const matchesRoot = breadcrumbs[0]?.label === item.label;
+                  const matchesRoot = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
                   const extraCrumbs = matchesRoot ? breadcrumbs.slice(1) : [];
-                  const composedLabel =
-                    extraCrumbs.length > 0 ? `${item.label} > ${extraCrumbs.map((c) => c.label).join(' > ')}` : item.label;
+                  if (extraCrumbs.length > 0) {
+                    return (
+                      <div key={item.to} className="mobile-nav-link mobile-nav-link--active bg-gradient-to-r from-gray-900 via-gray-950 to-black/80">
+                        {renderComposedLabel(item, extraCrumbs)}
+                      </div>
+                    );
+                  }
                   return (
                     <NavLink
                       key={item.to}
@@ -149,7 +179,7 @@ export default function AppLayout() {
                       end={item.exact}
                       onClick={closeMobile}
                     >
-                      {composedLabel}
+                      {item.label}
                     </NavLink>
                   );
                 })}
