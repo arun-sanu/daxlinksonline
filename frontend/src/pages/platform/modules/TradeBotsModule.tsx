@@ -2847,11 +2847,12 @@ export default function TradeBotsModule() {
       {tabs.map((tab) => {
         const isActive = activeTab === tab.key;
         const isMarketplaceTab = tab.key === 'marketplace';
+        const targetPath = tab.key === 'bots' ? '/trade-bots' : `/platform/trade-bots/${tab.key}`;
         const Icon = TRADE_BOT_TAB_ICONS[tab.key];
         return (
           <Link
             key={tab.key}
-            to={`/platform/trade-bots/${tab.key}`}
+            to={targetPath}
             className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
