@@ -441,16 +441,12 @@ export default function TradeBotsPage() {
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
+                <Link
+                  to={`/platform/trade-bots/overview?legacyPopupBotId=${encodeURIComponent(bot.id)}&legacyPopupSection=integrations`}
                   className="rounded-lg border border-primary-300/45 bg-primary-500/15 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-primary-100"
-                  onClick={() => {
-                    setSelectedBot(bot);
-                    setActivePopupTab('connectivity');
-                  }}
                 >
                   Open Bot Popup
-                </button>
+                </Link>
                 <Link to={`/trade-bots/${bot.id}`} className="rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-gray-100">
                   Detail
                 </Link>

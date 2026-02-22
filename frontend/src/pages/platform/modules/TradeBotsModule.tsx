@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   deleteBot,
   getTradeBotRuntimeConfig,
@@ -47,6 +47,20 @@ const TRADE_BOT_TAB_ROUTE_KEYS: TabKey[] = ['overview', 'connectivity', 'bots', 
 function isTradeBotTabKey(value: string | null | undefined): value is TabKey {
   if (!value) return false;
   return TRADE_BOT_TAB_ROUTE_KEYS.includes(value as TabKey);
+}
+
+function normalizePopupSectionFromQuery(value: string | null): BotPopupSection | null {
+  if (!value) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'integrations') return 'integrations';
+  if (normalized === 'parameters') return 'parameters';
+  if (normalized === 'algo') return 'algo';
+  if (normalized === 'arn-pine') return 'arn-pine';
+  if (normalized === 'exchange') return 'exchange';
+  if (normalized === 'trade-history') return 'trade-history';
+  if (normalized === 'connectivity') return 'integrations';
+  if (normalized === 'pine-script') return 'parameters';
+  return null;
 }
 
 const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
@@ -1279,8 +1293,15 @@ function analyzePineScriptSource(source: string): PineScriptAnalysis {
 
 export default function TradeBotsModule() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { tabId } = useParams<{ tabId?: string }>();
-  const activeTab: TabKey = isTradeBotTabKey(tabId) ? tabId : 'overview';
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const legacyPopupBotId = queryParams.get('legacyPopupBotId') || queryParams.get('popupBotId') || '';
+  const legacyPopupSection = normalizePopupSectionFromQuery(
+    queryParams.get('legacyPopupSection') || queryParams.get('popupSection')
+  );
+  const forceBotsTabFromQuery = Boolean(legacyPopupBotId);
+  const activeTab: TabKey = forceBotsTabFromQuery ? 'bots' : isTradeBotTabKey(tabId) ? tabId : 'overview';
   const [bots, setBots] = useState<TradeBotRow[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1319,11 +1340,12 @@ export default function TradeBotsModule() {
   const [algoMathSide, setAlgoMathSide] = useState<PreviewSide>('buy');
 
   useEffect(() => {
+    if (forceBotsTabFromQuery) return;
     if (isTradeBotTabKey(tabId)) return;
     if (tabId !== 'overview') {
       navigate('/platform/trade-bots/overview', { replace: true });
     }
-  }, [navigate, tabId]);
+  }, [forceBotsTabFromQuery, navigate, tabId]);
 
   const selectedBotLink = useMemo<BotConnectivityLink>(() => {
     if (!selectedBot) return {};
@@ -2412,6 +2434,9 @@ export default function TradeBotsModule() {
   };
 
   const closeBotPopup = () => {
+    if (forceBotsTabFromQuery) {
+      navigate('/platform/trade-bots/overview', { replace: true });
+    }
     setSelectedBot(null);
     setActivePopupSection('integrations');
     setModalError('');
@@ -2609,6 +2634,19 @@ export default function TradeBotsModule() {
     }
     loadTradingDetails(selectedBotLink.integrationId);
   }, [selectedBot?.id, selectedBotLink.integrationId]);
+
+  useEffect(() => {
+    if (!forceBotsTabFromQuery || activeTab !== 'bots' || !legacyPopupBotId) return;
+    const targetBot = bots.find((bot) => bot.id === legacyPopupBotId);
+    if (!targetBot) return;
+    if (!selectedBot || selectedBot.id !== targetBot.id) {
+      openBotPopup(targetBot);
+      return;
+    }
+    if (legacyPopupSection) {
+      setActivePopupSection(legacyPopupSection);
+    }
+  }, [activeTab, bots, forceBotsTabFromQuery, legacyPopupBotId, legacyPopupSection, selectedBot?.id]);
 
   useEffect(() => {
     if (activeTab !== 'bots') {
