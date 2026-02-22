@@ -424,6 +424,42 @@ function buildArnPineFaithfulDefaultRules({ symbol = 'BTCUSDT' } = {}) {
       line: null
     },
     {
+      key: 'rsi_length',
+      label: 'RSI Length',
+      type: 'number',
+      defaultValue: 14,
+      source: 'template:arn-pine-faithful',
+      description: 'RSI period used in entry crossover logic.',
+      line: null
+    },
+    {
+      key: 'bb_length',
+      label: 'Bollinger Length',
+      type: 'number',
+      defaultValue: 20,
+      source: 'template:arn-pine-faithful',
+      description: 'Bollinger Bands basis length.',
+      line: null
+    },
+    {
+      key: 'bb_mult',
+      label: 'Bollinger Multiplier',
+      type: 'number',
+      defaultValue: 2.0,
+      source: 'template:arn-pine-faithful',
+      description: 'Bollinger Bands deviation multiplier.',
+      line: null
+    },
+    {
+      key: 'volatility_threshold',
+      label: 'Volatility Threshold %',
+      type: 'number',
+      defaultValue: 0.05,
+      source: 'template:arn-pine-faithful',
+      description: 'Percent threshold used to detect volatility spikes.',
+      line: null
+    },
+    {
       key: 'action',
       label: 'Action',
       type: 'string',
@@ -472,6 +508,10 @@ function buildArnPineFaithfulDefaultRules({ symbol = 'BTCUSDT' } = {}) {
     investmentPercentage: 90.0,
     dailyLossLimit: 5.0,
     cooldownCandles: 2,
+    rsiLength: 14,
+    bbLength: 20,
+    bbMult: 2.0,
+    volatilityThreshold: 0.05,
     action: 'ENTRY',
     direction: 'LONG',
     volatilitySpike: false,
@@ -488,6 +528,10 @@ function buildArnPineFaithfulDefaultRules({ symbol = 'BTCUSDT' } = {}) {
       investment_percentage: 90.0,
       daily_loss_limit: 5.0,
       cooldown_candles: 2,
+      rsi_length: 14,
+      bb_length: 20,
+      bb_mult: 2.0,
+      volatility_threshold: 0.05,
       action: 'ENTRY',
       direction: 'LONG',
       volatility_spike: false,
