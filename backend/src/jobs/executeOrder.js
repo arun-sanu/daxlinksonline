@@ -5,13 +5,18 @@ import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsServi
 import { createMexcSpotClient } from '../services/mexcSpotClient.js';
 import {
   SizingConfigError,
-  computeMexcBaseQuantityForSignal
+  computeMexcBaseQuantityForSignal,
+  computeMexcBaseQuantityFromSignalPayload
 } from '../services/orderSizingService.js';
 import { EXECUTION_AUDIT_STATUS, updateExecutionAudit } from '../services/executionAuditService.js';
 import { recordTradeTransaction } from '../services/tradeTransactionsService.js';
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
+const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
+  'arn-s-shcs-orginal',
+  'arn-s-shcs-original'
+]);
 
 function debugExecution(stage, data = {}) {
   if (!DEBUG_TV_WEBHOOK) return;
@@ -87,6 +92,114 @@ function normalizeOrderType(value) {
 function parseNumeric(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeTextSlug(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isArnOriginalBotName(value = '') {
+  const slug = normalizeTextSlug(value);
+  if (!slug) return false;
+  if (ARN_ORIGINAL_BOT_NAME_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs') && (slug.includes('orginal') || slug.includes('original'));
+}
+
+function isArnPineStrategy(value = '') {
+  return String(value || '').trim().toUpperCase() === 'ARN_PINE_FAITHFUL';
+}
+
+function extractSignalPayloadSizingRequest(signal) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const sources = [rawPayload, payload];
+
+  const pickFirstNumeric = (keys = []) => {
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') continue;
+      for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+        const value = parseNumeric(source[key]);
+        if (value !== null && value > 0) return value;
+      }
+    }
+    return null;
+  };
+
+  const requestedQty = pickFirstNumeric(['qty', 'quantity', 'baseQty', 'baseQuantity', 'size']);
+  const requestedAmount =
+    pickFirstNumeric(['amount', 'quoteAmount', 'quoteQty', 'notional']) ||
+    (() => {
+      const amount = parseNumeric(signal?.amount);
+      return amount !== null && amount > 0 ? amount : null;
+    })();
+
+  return { requestedQty, requestedAmount };
+}
+
+async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) {
+  const normalizedWorkspaceId = String(workspaceId || '').trim();
+  const normalizedIntegrationId = String(integrationId || '').trim();
+  if (!normalizedWorkspaceId || !normalizedIntegrationId) {
+    return {
+      botId: null,
+      botName: null,
+      strategy: null,
+      arnOriginal: false
+    };
+  }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: normalizedWorkspaceId },
+    select: { workflowConfig: true }
+  });
+  const runtimeConfigs = workspace?.workflowConfig?.tradeBots?.runtimeConfigs;
+  if (!runtimeConfigs || typeof runtimeConfigs !== 'object' || Array.isArray(runtimeConfigs)) {
+    return {
+      botId: null,
+      botName: null,
+      strategy: null,
+      arnOriginal: false
+    };
+  }
+
+  let matchedBotId = null;
+  let matchedStrategy = null;
+  for (const [botId, entry] of Object.entries(runtimeConfigs)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const linkedIntegrationId = String(entry?.links?.integrationId || '').trim();
+    if (!linkedIntegrationId || linkedIntegrationId !== normalizedIntegrationId) continue;
+    matchedBotId = botId;
+    matchedStrategy = entry?.rules?.strategy || null;
+    break;
+  }
+
+  if (!matchedBotId) {
+    return {
+      botId: null,
+      botName: null,
+      strategy: null,
+      arnOriginal: false
+    };
+  }
+
+  const bot = await prisma.bot.findUnique({
+    where: { id: matchedBotId },
+    select: { id: true, name: true }
+  });
+  const botName = bot?.name || null;
+  const arnOriginal = isArnPineStrategy(matchedStrategy) || isArnOriginalBotName(botName);
+
+  return {
+    botId: matchedBotId,
+    botName,
+    strategy: matchedStrategy,
+    arnOriginal
+  };
 }
 
 function hasSignalPayloadSizingHint(signal) {
@@ -320,28 +433,54 @@ export async function executePreparedSignal(signalId) {
         });
       }
 
-      // Temporary policy: disable legacy payload-based sizing and force runtime Trade Bot sizing.
-      const ignoredPayloadSizing = hasSignalPayloadSizingHint(signal);
-      const sizing = await computeMexcBaseQuantityForSignal({
-        workspaceId: integration.workspaceId,
-        integrationId: integration.id,
-        symbol,
-        side,
-        client: mexcClient
-      });
+      const payloadSizingRequested = hasSignalPayloadSizingHint(signal);
+      const payloadSizingRequest = extractSignalPayloadSizingRequest(signal);
+      const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
+      const payloadSizingApplied =
+        runtimeBot.arnOriginal &&
+        payloadSizingRequested &&
+        ((payloadSizingRequest.requestedQty && payloadSizingRequest.requestedQty > 0) ||
+          (payloadSizingRequest.requestedAmount && payloadSizingRequest.requestedAmount > 0));
+      const ignoredPayloadSizing = payloadSizingRequested && !payloadSizingApplied;
+
+      const sizing = payloadSizingApplied
+        ? await computeMexcBaseQuantityFromSignalPayload({
+            symbol,
+            side,
+            client: mexcClient,
+            requestedQty: payloadSizingRequest.requestedQty,
+            requestedAmount: payloadSizingRequest.requestedAmount
+          })
+        : await computeMexcBaseQuantityForSignal({
+            workspaceId: integration.workspaceId,
+            integrationId: integration.id,
+            symbol,
+            side,
+            client: mexcClient
+          });
+      const effectiveSizingSource = payloadSizingApplied
+        ? 'pine_payload_arn_original'
+        : sizing.sizingSource || 'trade_bot_runtime';
+      const resolvedAuditBotId = runtimeBot.botId || integration.id;
 
       await markExecutionAudit(executionAuditId, {
         workspaceId: integration.workspaceId,
         integrationId: integration.id,
-        botId: integration.id,
+        botId: resolvedAuditBotId,
         computedPrice: sizing.computedPrice,
         freeQuote: sizing.freeQuote,
         qtyRaw: sizing.qtyRaw,
         qtyRounded: sizing.qtyRounded,
         sizingDebug: {
           ...(sizing.sizingDebug || {}),
-          sizingSource: sizing.sizingSource || 'trade_bot_runtime',
-          ignoredPayloadSizing
+          sizingSource: effectiveSizingSource,
+          payloadSizingRequested,
+          payloadSizingApplied,
+          ignoredPayloadSizing,
+          runtimeBotId: runtimeBot.botId || null,
+          runtimeBotName: runtimeBot.botName || null,
+          runtimeBotStrategy: runtimeBot.strategy || null,
+          runtimeBotArnOriginal: runtimeBot.arnOriginal === true
         }
       });
 
@@ -386,13 +525,17 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
-        sizingSource: sizing.sizingSource || 'trade_bot_runtime',
+        sizingSource: effectiveSizingSource,
+        payloadSizingRequested,
+        payloadSizingApplied,
         ignoredPayloadSizing,
         quantity: sizing.qtyRounded,
         qtyRaw: sizing.qtyRaw,
         computedPrice: sizing.computedPrice,
         freeQuote: sizing.freeQuote,
-        quoteAsset: sizing.quoteAsset
+        quoteAsset: sizing.quoteAsset,
+        runtimeBotId: runtimeBot.botId || null,
+        runtimeBotName: runtimeBot.botName || null
       };
 
       await markAlertStatus(alertId, 'executed', null);
@@ -451,6 +594,8 @@ export async function executePreparedSignal(signalId) {
           decisionContext: toJsonSafe({
             source: 'tradingview_forwarder',
             signalType: signal.type || null,
+            payloadSizingRequested,
+            payloadSizingApplied,
             ignoredPayloadSizing,
             idempotencyKey: signal.idempotencyKey || null
           }),
@@ -459,7 +604,7 @@ export async function executePreparedSignal(signalId) {
             qtyRounded: sizing.qtyRounded,
             computedPrice: sizing.computedPrice,
             freeQuote: sizing.freeQuote,
-            sizingSource: sizing.sizingSource || 'trade_bot_runtime',
+            sizingSource: effectiveSizingSource,
             sizingDebug: sizing.sizingDebug || {}
           }),
           exchangePayload: toJsonSafe({

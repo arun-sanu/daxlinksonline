@@ -8,6 +8,7 @@ import {
   applyCompoundingToQuoteSpend,
   applySellLadderToSellQuantity,
   classifyMinNotionalShortfall,
+  computeMexcBaseQuantityFromSignalPayload,
   deriveCompoundingBaseQuoteForTargetSpend,
   SizingConfigError,
   computeBaseQuantityFromInputs,
@@ -290,4 +291,163 @@ test('resolveEffectiveMinNotional applies minQuoteSpend floor only to BUY', () =
 
   assert.equal(buyFloor, 1.2);
   assert.equal(sellFloor, 0);
+});
+
+test('computeMexcBaseQuantityFromSignalPayload clamps BUY quantity to free quote balance', async () => {
+  const client = {
+    getAccount: async () => ({
+      balances: [
+        { asset: 'USDE', free: '10', locked: '0' },
+        { asset: 'ETH', free: '0', locked: '0' }
+      ]
+    }),
+    getTickerPrice: async () => ({ symbol: 'ETHUSDE', price: '2000' }),
+    getSymbolFilters: async () => ({
+      symbol: 'ETHUSDE',
+      quoteAsset: 'USDE',
+      baseAsset: 'ETH',
+      stepSize: '0.001',
+      minQty: '0.001',
+      minNotional: '5'
+    })
+  };
+
+  const out = await computeMexcBaseQuantityFromSignalPayload({
+    symbol: 'ETHUSDE',
+    side: 'BUY',
+    client,
+    requestedQty: 0.01
+  });
+
+  assert.equal(out.qtyRounded, 0.005);
+  assert.equal(out.notional, 10);
+  assert.equal(out.sizingDebug.balanceClampApplied, true);
+});
+
+test('computeMexcBaseQuantityFromSignalPayload rounds misaligned qty down to step', async () => {
+  const client = {
+    getAccount: async () => ({
+      balances: [
+        { asset: 'USDE', free: '1000', locked: '0' },
+        { asset: 'ETH', free: '1', locked: '0' }
+      ]
+    }),
+    getTickerPrice: async () => ({ symbol: 'ETHUSDE', price: '2000' }),
+    getSymbolFilters: async () => ({
+      symbol: 'ETHUSDE',
+      quoteAsset: 'USDE',
+      baseAsset: 'ETH',
+      stepSize: '0.001',
+      minQty: '0.001',
+      minNotional: '5'
+    })
+  };
+
+  const out = await computeMexcBaseQuantityFromSignalPayload({
+    symbol: 'ETHUSDE',
+    side: 'BUY',
+    client,
+    requestedQty: 0.0109
+  });
+
+  assert.equal(out.qtyRounded, 0.01);
+  assert.equal(out.notional, 20);
+  assert.match(String(out.sizingDebug.roundingApplied || ''), /DOWN_TO_STEP/);
+});
+
+test('computeMexcBaseQuantityFromSignalPayload upsizes qty to satisfy minNotional when balance allows', async () => {
+  const client = {
+    getAccount: async () => ({
+      balances: [
+        { asset: 'USDE', free: '1000', locked: '0' },
+        { asset: 'ETH', free: '1', locked: '0' }
+      ]
+    }),
+    getTickerPrice: async () => ({ symbol: 'ETHUSDE', price: '2000' }),
+    getSymbolFilters: async () => ({
+      symbol: 'ETHUSDE',
+      quoteAsset: 'USDE',
+      baseAsset: 'ETH',
+      stepSize: '0.001',
+      minQty: '0.001',
+      minNotional: '50'
+    })
+  };
+
+  const out = await computeMexcBaseQuantityFromSignalPayload({
+    symbol: 'ETHUSDE',
+    side: 'BUY',
+    client,
+    requestedQty: 0.01
+  });
+
+  assert.equal(out.qtyRounded, 0.025);
+  assert.equal(out.notional, 50);
+  assert.match(String(out.sizingDebug.roundingApplied || ''), /UP_TO_MIN_NOTIONAL/);
+});
+
+test('computeMexcBaseQuantityFromSignalPayload rejects when min-notional upsize exceeds free quote', async () => {
+  const client = {
+    getAccount: async () => ({
+      balances: [
+        { asset: 'USDE', free: '30', locked: '0' },
+        { asset: 'ETH', free: '1', locked: '0' }
+      ]
+    }),
+    getTickerPrice: async () => ({ symbol: 'ETHUSDE', price: '2000' }),
+    getSymbolFilters: async () => ({
+      symbol: 'ETHUSDE',
+      quoteAsset: 'USDE',
+      baseAsset: 'ETH',
+      stepSize: '0.001',
+      minQty: '0.001',
+      minNotional: '50'
+    })
+  };
+
+  await assert.rejects(
+    () =>
+      computeMexcBaseQuantityFromSignalPayload({
+        symbol: 'ETHUSDE',
+        side: 'BUY',
+        client,
+        requestedQty: 0.01
+      }),
+    (error) => {
+      assert.ok(error instanceof SizingConfigError);
+      assert.equal(error.sizingDebug?.rejectedReason, 'insufficient_quote_for_requested_qty');
+      assert.match(String(error.sizingDebug?.roundingApplied || ''), /UP_TO_MIN_NOTIONAL/);
+      return true;
+    }
+  );
+});
+
+test('computeMexcBaseQuantityFromSignalPayload clamps SELL quantity to free base balance', async () => {
+  const client = {
+    getAccount: async () => ({
+      balances: [
+        { asset: 'USDE', free: '1000', locked: '0' },
+        { asset: 'ETH', free: '0.1234', locked: '0' }
+      ]
+    }),
+    getTickerPrice: async () => ({ symbol: 'ETHUSDE', price: '2000' }),
+    getSymbolFilters: async () => ({
+      symbol: 'ETHUSDE',
+      quoteAsset: 'USDE',
+      baseAsset: 'ETH',
+      stepSize: '0.001',
+      minQty: '0.001',
+      minNotional: '5'
+    })
+  };
+
+  const out = await computeMexcBaseQuantityFromSignalPayload({
+    symbol: 'ETHUSDE',
+    side: 'SELL',
+    client,
+    requestedQty: 0.2
+  });
+
+  assert.equal(out.qtyRounded, 0.123);
+  assert.equal(out.sizingDebug.balanceClampApplied, true);
 });

@@ -109,9 +109,13 @@ export function roundDownToStep(value, stepSize) {
   const stepNum = asNumber(stepSize);
   if (!stepNum || stepNum <= 0) return valueNum;
   const decimals = stepDecimals(stepNum);
-  const scaledValue = valueNum / stepNum;
-  const floored = Math.floor(scaledValue + 1e-12) * stepNum;
-  return Number(floored.toFixed(Math.max(0, decimals)));
+  const safeDecimals = Math.max(0, Math.min(decimals, 12));
+  const scale = 10 ** safeDecimals;
+  const stepScaled = Math.round(stepNum * scale);
+  if (!stepScaled || stepScaled <= 0) return Number(valueNum.toFixed(safeDecimals));
+  const valueScaled = valueNum * scale;
+  const flooredScaled = Math.floor((valueScaled + 1e-6) / stepScaled) * stepScaled;
+  return Number((flooredScaled / scale).toFixed(safeDecimals));
 }
 
 export function roundUpToStep(value, stepSize) {
@@ -120,9 +124,13 @@ export function roundUpToStep(value, stepSize) {
   const stepNum = asNumber(stepSize);
   if (!stepNum || stepNum <= 0) return valueNum;
   const decimals = stepDecimals(stepNum);
-  const scaledValue = valueNum / stepNum;
-  const ceiled = Math.ceil(scaledValue - 1e-12) * stepNum;
-  return Number(ceiled.toFixed(Math.max(0, decimals)));
+  const safeDecimals = Math.max(0, Math.min(decimals, 12));
+  const scale = 10 ** safeDecimals;
+  const stepScaled = Math.round(stepNum * scale);
+  if (!stepScaled || stepScaled <= 0) return Number(valueNum.toFixed(safeDecimals));
+  const valueScaled = valueNum * scale;
+  const ceiledScaled = Math.ceil((valueScaled - 1e-6) / stepScaled) * stepScaled;
+  return Number((ceiledScaled / scale).toFixed(safeDecimals));
 }
 
 export function normalizeBaseSizingConfig(rawConfig = {}) {
@@ -1392,6 +1400,9 @@ export async function computeMexcBaseQuantityFromSignalPayload({
     quoteSpendComputed: null,
     notionalAfterRounding: null,
     roundingApplied: null,
+    balanceClampApplied: false,
+    qtyBeforeBalanceClamp: null,
+    quoteSpendBeforeBalanceClamp: null,
     rejectedReason: null
   };
 
@@ -1413,47 +1424,96 @@ export async function computeMexcBaseQuantityFromSignalPayload({
   sizingDebug.qtyRaw = asNumber(qtyRaw);
   sizingDebug.quoteSpendComputed = asNullableNumber(quoteSpendComputed);
 
-  let qtyRounded = qtyRaw;
-  const stepDown = roundDownToStep(qtyRaw, stepSizeNum);
-  const isStepAligned = !stepSizeNum || Math.abs(qtyRaw - stepDown) <= 1e-12;
-  if (!isStepAligned) {
-    qtyRounded = roundUpToStep(qtyRaw, stepSizeNum);
-    sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_STEP');
+  let qtyRounded = stepSizeNum > 0 ? roundDownToStep(qtyRaw, stepSizeNum) : qtyRaw;
+  if (stepSizeNum > 0 && Math.abs(qtyRaw - qtyRounded) > 1e-12) {
+    sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'DOWN_TO_STEP');
   }
 
   if (minQtyNum > 0 && qtyRounded < minQtyNum) {
-    qtyRounded = stepSizeNum ? roundUpToStep(minQtyNum, stepSizeNum) : minQtyNum;
-    sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_MIN_QTY');
+    const minQtyAdjusted = stepSizeNum > 0 ? roundUpToStep(minQtyNum, stepSizeNum) : minQtyNum;
+    if (minQtyAdjusted > qtyRounded + 1e-12) {
+      qtyRounded = minQtyAdjusted;
+      sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_MIN_QTY');
+    }
   }
 
   let notional = qtyRounded * computedPrice;
   if (minNotionalNum > 0 && notional < minNotionalNum) {
     const minQtyForNotional = minNotionalNum / computedPrice;
-    qtyRounded = stepSizeNum ? roundUpToStep(minQtyForNotional, stepSizeNum) : minQtyForNotional;
-    notional = qtyRounded * computedPrice;
-    sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_MIN_NOTIONAL');
+    const minNotionalAdjusted = stepSizeNum > 0 ? roundUpToStep(minQtyForNotional, stepSizeNum) : minQtyForNotional;
+    if (minNotionalAdjusted > qtyRounded + 1e-12) {
+      qtyRounded = minNotionalAdjusted;
+      notional = qtyRounded * computedPrice;
+      sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, 'UP_TO_MIN_NOTIONAL');
+    }
   }
 
+  const qtyBeforeBalanceClamp = qtyRounded;
+  const quoteSpendBeforeBalanceClamp = qtyRounded * computedPrice;
+  let balanceClampReason = null;
+  if (normalizedSide === 'BUY') {
+    const maxBuyQtyRaw = freeQuote > 0 ? freeQuote / computedPrice : 0;
+    const maxBuyQty = stepSizeNum > 0 ? roundDownToStep(maxBuyQtyRaw, stepSizeNum) : maxBuyQtyRaw;
+    if (qtyRounded > maxBuyQty + 1e-12) {
+      qtyRounded = maxBuyQty;
+      balanceClampReason = 'DOWN_TO_FREE_QUOTE';
+    }
+  } else if (normalizedSide === 'SELL') {
+    const maxSellQtyRaw = freeBase > 0 ? freeBase : 0;
+    const maxSellQty = stepSizeNum > 0 ? roundDownToStep(maxSellQtyRaw, stepSizeNum) : maxSellQtyRaw;
+    if (qtyRounded > maxSellQty + 1e-12) {
+      qtyRounded = maxSellQty;
+      balanceClampReason = 'DOWN_TO_FREE_BASE';
+    }
+  }
+
+  if (balanceClampReason) {
+    sizingDebug.balanceClampApplied = true;
+    sizingDebug.qtyBeforeBalanceClamp = asNullableNumber(qtyBeforeBalanceClamp);
+    sizingDebug.quoteSpendBeforeBalanceClamp = asNullableNumber(quoteSpendBeforeBalanceClamp);
+    sizingDebug.roundingApplied = joinRoundingReason(sizingDebug.roundingApplied, balanceClampReason);
+  }
+
+  notional = qtyRounded * computedPrice;
+  quoteSpendComputed = notional;
   sizingDebug.qtyAfterStepRounding = asNumber(qtyRounded) || 0;
   sizingDebug.notionalAfterRounding = asNumber(notional) || 0;
-  quoteSpendComputed = qtyRounded * computedPrice;
   sizingDebug.quoteSpendComputed = asNullableNumber(quoteSpendComputed);
 
   if (!qtyRounded || qtyRounded <= 0) {
-    throwSizingError('Computed quantity is zero after signal sizing normalization.', sizingDebug, 'below_step_size');
+    const zeroReason = normalizedSide === 'BUY'
+      ? (balanceClampReason === 'DOWN_TO_FREE_QUOTE' || freeQuote <= 0
+        ? 'insufficient_quote_for_requested_qty'
+        : 'below_step_size')
+      : normalizedSide === 'SELL'
+        ? (balanceClampReason === 'DOWN_TO_FREE_BASE' || freeBase <= 0
+          ? 'insufficient_base_for_requested_qty'
+          : 'below_step_size')
+        : 'below_step_size';
+    throwSizingError('Computed quantity is zero after signal sizing normalization.', sizingDebug, zeroReason);
   }
   if (minQtyNum > 0 && qtyRounded < minQtyNum) {
+    const minQtyReason = normalizedSide === 'BUY' && freeQuote + 1e-12 < (minQtyNum * computedPrice)
+      ? 'insufficient_quote_for_requested_qty'
+      : normalizedSide === 'SELL' && freeBase + 1e-12 < minQtyNum
+        ? 'insufficient_base_for_requested_qty'
+        : 'below_min_qty';
     throwSizingError(
       `Quantity ${qtyRounded} is below exchange minQty ${minQtyNum}.`,
       sizingDebug,
-      'below_min_qty'
+      minQtyReason
     );
   }
   if (minNotionalNum > 0 && notional < minNotionalNum) {
+    const minNotionalReason = normalizedSide === 'BUY' && freeQuote + 1e-12 < minNotionalNum
+      ? 'insufficient_quote_for_requested_qty'
+      : normalizedSide === 'SELL' && (freeBase * computedPrice) + 1e-12 < minNotionalNum
+        ? 'insufficient_base_for_requested_qty'
+        : 'below_min_notional';
     throwSizingError(
       `Order value ${notional} is below exchange minNotional ${minNotionalNum}.`,
       sizingDebug,
-      'below_min_notional'
+      minNotionalReason
     );
   }
 
