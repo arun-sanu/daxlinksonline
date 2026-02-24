@@ -16,7 +16,7 @@ import type {
 } from './types';
 
 type ListResponse<T> = { items: T[] };
-type BotControlAction = 'pause' | 'resume' | 'restart' | 'delete';
+type BotControlAction = 'pause' | 'resume' | 'stop' | 'restart' | 'delete';
 
 export type VersionScanResult = {
   status: string;
@@ -276,6 +276,10 @@ export async function resumeBot(botId: string): Promise<any | null> {
 
 export async function restartBot(botId: string): Promise<any | null> {
   return controlBotAction(botId, 'restart');
+}
+
+export async function stopBot(botId: string): Promise<any | null> {
+  return controlBotAction(botId, 'stop');
 }
 
 export async function deleteBot(botId: string): Promise<any | null> {

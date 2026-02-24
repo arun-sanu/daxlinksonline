@@ -39,6 +39,7 @@ test('normalizeInstanceControlAction rejects unsupported lifecycle actions', () 
 test('normalizeBotControlAction normalizes valid bot actions', () => {
   assert.equal(normalizeBotControlAction('pause'), 'pause');
   assert.equal(normalizeBotControlAction(' Resume '), 'resume');
+  assert.equal(normalizeBotControlAction('STOP'), 'stop');
   assert.equal(normalizeBotControlAction('RESTART'), 'restart');
   assert.equal(normalizeBotControlAction('delete'), 'delete');
 });

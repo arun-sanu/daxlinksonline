@@ -23,7 +23,7 @@ const LANGUAGE_ALIASES = Object.freeze({
 
 export const SUPPORTED_BOT_LANGUAGES = Object.freeze(['python', 'go', 'cpp', 'c', 'java']);
 export const SUPPORTED_INSTANCE_CONTROL_ACTIONS = Object.freeze(['start', 'resume', 'pause', 'stop', 'restart']);
-export const SUPPORTED_BOT_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'restart', 'delete']);
+export const SUPPORTED_BOT_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'stop', 'restart', 'delete']);
 
 function httpError(message, status = 500) {
   return Object.assign(new Error(message), { status });
@@ -2040,6 +2040,15 @@ export async function controlTradeBot(workspaceId, botId, action) {
       startedAt: now,
       stoppedAt: null,
       lastError: null
+    };
+  } else if (normalizedAction === 'stop') {
+    where = {
+      ...where,
+      status: { in: ['running', 'paused', 'error'] }
+    };
+    data = {
+      status: 'stopped',
+      stoppedAt: now
     };
   } else {
     data = {

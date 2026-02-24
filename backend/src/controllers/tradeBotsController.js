@@ -42,7 +42,7 @@ const botInstanceActionParamSchema = z.object({
 const botActionParamSchema = z.object({
   workspaceId: z.string().uuid(),
   botId: z.string().min(8),
-  action: z.enum(['pause', 'resume', 'restart', 'delete'])
+  action: z.enum(['pause', 'resume', 'stop', 'restart', 'delete'])
 });
 
 const createBotSchema = z.object({
@@ -151,6 +151,7 @@ function toInstanceAuditAction(action) {
 function toBotAuditAction(action) {
   if (action === 'pause') return 'TRADE_BOT_PAUSED';
   if (action === 'resume') return 'TRADE_BOT_RESUMED';
+  if (action === 'stop') return 'TRADE_BOT_STOPPED';
   if (action === 'restart') return 'TRADE_BOT_RESTARTED';
   return 'TRADE_BOT_DELETED';
 }

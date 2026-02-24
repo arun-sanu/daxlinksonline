@@ -13,19 +13,18 @@ import {
   restartInstance,
   resumeBot,
   saveTradeBotRuntimeConfig,
+  stopBot,
   startInstance,
   stopInstance
 } from '../../../api/tradeBots';
 import { assignWebhook, getMyWebhook, type MyWebhookResponse } from '../../../api/webhooks';
 import {
-  deleteIntegrationAction,
   fetchIntegrationDetail,
   listIntegrations,
   pauseIntegration,
   restartIntegration,
   resumeIntegration,
   testIntegration,
-  unlinkIntegration,
   type Integration
 } from '../../../api/integrations';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
@@ -40,7 +39,7 @@ type TradeBotRow = Bot & {
 type TabKey = TradeBotsTabKey;
 type BotPopupSection = 'integrations' | 'parameters' | 'algo' | 'arn-pine' | 'exchange' | 'trade-history';
 type BotInstanceLifecycleAction = 'start' | 'pause' | 'stop' | 'restart';
-type BotLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete';
+type BotLifecycleAction = 'pause' | 'resume' | 'stop' | 'restart' | 'delete';
 type IntegrationLifecycleAction = 'pause' | 'resume' | 'restart' | 'delete' | 'unlink';
 const TRADE_BOT_TAB_ROUTE_KEYS: TabKey[] = ['overview', 'connectivity', 'bots', 'marketplace', 'rentals', 'logs-reports'];
 
@@ -2187,6 +2186,8 @@ export default function TradeBotsModule() {
           ? pauseBot
           : action === 'resume'
             ? resumeBot
+            : action === 'stop'
+              ? stopBot
             : action === 'restart'
               ? restartBot
               : deleteBot;
@@ -2222,7 +2223,8 @@ export default function TradeBotsModule() {
         await loadBotInstances(selectedBot.id, { silent: true });
       }
       const updatedCount = Number((result as any)?.updated || 0);
-      const suffix = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'restarted';
+      const suffix =
+        action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'stop' ? 'stopped' : 'restarted';
       setModalMessage(`Bot ${suffix}. ${updatedCount} instance${updatedCount === 1 ? '' : 's'} updated.`);
       setBots((prev) =>
         prev.map((bot) => {
@@ -2741,29 +2743,122 @@ export default function TradeBotsModule() {
     }
   };
 
-  const handleLinkWebhook = (url: string) => {
+  const handleLinkWebhook = async (url: string) => {
     if (!selectedBot) return;
-    const links = upsertBotLink(selectedBot.id, { webhookUrl: url });
-    void persistRuntimeConfigForBot(selectedBot.id, { links });
+    if (!url || selectedBotLink.webhookUrl === url) return;
+    if (selectedBotLink.webhookUrl && selectedBotLink.webhookUrl !== url) {
+      setModalError('Unlink current TradingView ingress before linking another URL.');
+      setModalMessage('');
+      return;
+    }
+    setModalLoading(true);
     setModalError('');
-    setModalMessage('TradingView ingress linked.');
+    setModalMessage('');
+    try {
+      const links = upsertBotLink(selectedBot.id, { webhookUrl: url });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
+      setModalMessage('TradingView ingress linked.');
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to link TradingView ingress.');
+    } finally {
+      setModalLoading(false);
+    }
   };
 
-  const handleLinkIntegration = (integrationId: string) => {
-    if (!selectedBot) return;
-    const links = upsertBotLink(selectedBot.id, { integrationId });
-    void persistRuntimeConfigForBot(selectedBot.id, { links });
+  const handleUnlinkWebhook = async () => {
+    if (!selectedBot || !selectedBotLink.webhookUrl) return;
+    const confirmed = window.confirm('Unlink TradingView ingress from this bot?');
+    if (!confirmed) return;
+    setModalLoading(true);
     setModalError('');
-    setModalMessage('Exchange integration linked.');
-    loadTradingDetails(integrationId);
+    setModalMessage('');
+    try {
+      const links = upsertBotLink(selectedBot.id, { webhookUrl: null });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
+      setModalMessage('TradingView ingress unlinked from this bot.');
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to unlink TradingView ingress.');
+    } finally {
+      setModalLoading(false);
+    }
   };
 
-  const handleLinkExchangeAccount = (exchangeAccountId: string) => {
-    if (!selectedBot) return;
-    const links = upsertBotLink(selectedBot.id, { exchangeAccountId });
-    void persistRuntimeConfigForBot(selectedBot.id, { links });
+  const handleLinkIntegration = async (integrationId: string) => {
+    if (!selectedBot || !integrationId) return;
+    if (selectedBotLink.integrationId === integrationId) return;
+    if (selectedBotLink.integrationId && selectedBotLink.integrationId !== integrationId) {
+      setModalError('Unlink current exchange integration before linking another integration.');
+      setModalMessage('');
+      return;
+    }
+    setModalLoading(true);
     setModalError('');
-    setModalMessage('Exchange account linked.');
+    setModalMessage('');
+    try {
+      const links = upsertBotLink(selectedBot.id, { integrationId });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
+      setModalMessage('Exchange integration linked to this bot.');
+      await loadTradingDetails(integrationId);
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to link exchange integration.');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleUnlinkIntegrationLink = async (integrationId: string, fromDeleteOption = false) => {
+    if (!selectedBot) return;
+    if (selectedBotLink.integrationId !== integrationId) return;
+    const prompt = fromDeleteOption
+      ? 'Delete this integration link from this bot? The integration and credentials will stay connected.'
+      : 'Unlink this exchange integration from this bot?';
+    const confirmed = window.confirm(prompt);
+    if (!confirmed) return;
+
+    setIntegrationActionTargetId(integrationId);
+    setIntegrationActionInFlight('unlink');
+    setModalError('');
+    setModalMessage('');
+    try {
+      const links = upsertBotLink(selectedBot.id, { integrationId: null });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
+      setIntegrationDetail(null);
+      setExchangeSnapshot(null);
+      setTradingDetailsError('');
+      setModalMessage(fromDeleteOption ? 'Integration link deleted from this bot.' : 'Integration unlinked from this bot.');
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to unlink integration from this bot.');
+    } finally {
+      setIntegrationActionTargetId(null);
+      setIntegrationActionInFlight(null);
+    }
+  };
+
+  const handleLinkExchangeAccount = async (exchangeAccountId: string) => {
+    if (!selectedBot || !exchangeAccountId) return;
+    if (selectedBotLink.exchangeAccountId === exchangeAccountId) return;
+    if (selectedBotLink.exchangeAccountId && selectedBotLink.exchangeAccountId !== exchangeAccountId) {
+      setModalError('Unlink current exchange account before linking another account.');
+      setModalMessage('');
+      return;
+    }
+    setModalLoading(true);
+    setModalError('');
+    setModalMessage('');
+    try {
+      const links = upsertBotLink(selectedBot.id, { exchangeAccountId });
+      const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
+      if (!persisted) return;
+      setModalMessage('Exchange account linked.');
+    } catch (error: any) {
+      setModalError(error?.message || 'Failed to link exchange account.');
+    } finally {
+      setModalLoading(false);
+    }
   };
 
   const handleTestIntegration = async (integrationId: string) => {
@@ -2800,15 +2895,9 @@ export default function TradeBotsModule() {
 
   const handleIntegrationControl = async (integrationId: string, action: IntegrationLifecycleAction) => {
     if (!selectedBot) return;
-    if (action === 'delete') {
-      const confirmed = window.confirm('Delete this integration? Linked workflow references will be removed.');
-      if (!confirmed) return;
-    }
-    if (action === 'unlink') {
-      const confirmed = window.confirm(
-        'Unlink this integration from workflow routes and runtime links? The integration and credentials will be kept.'
-      );
-      if (!confirmed) return;
+    if (action === 'delete' || action === 'unlink') {
+      await handleUnlinkIntegrationLink(integrationId, action === 'delete');
+      return;
     }
 
     setIntegrationActionTargetId(integrationId);
@@ -2821,26 +2910,8 @@ export default function TradeBotsModule() {
           ? pauseIntegration
           : action === 'resume'
             ? resumeIntegration
-            : action === 'restart'
-              ? restartIntegration
-              : action === 'unlink'
-                ? unlinkIntegration
-                : deleteIntegrationAction;
+            : restartIntegration;
       const result = await runner(integrationId);
-
-      if (action === 'delete') {
-        setIntegrations((prev) => prev.filter((integration) => integration.id !== integrationId));
-        if (selectedBotLink.integrationId === integrationId) {
-          const links = upsertBotLink(selectedBot.id, { integrationId: null });
-          const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
-          if (!persisted) return;
-          setIntegrationDetail(null);
-          setExchangeSnapshot(null);
-          setTradingDetailsError('');
-        }
-        setModalMessage('Integration deleted.');
-        return;
-      }
 
       const nextIntegration = (result as any)?.integration || null;
       if (nextIntegration?.id) {
@@ -2849,30 +2920,10 @@ export default function TradeBotsModule() {
         );
       }
 
-      if (action === 'unlink') {
-        if (selectedBotLink.integrationId === integrationId) {
-          const links = upsertBotLink(selectedBot.id, { integrationId: null });
-          const persisted = await persistRuntimeConfigForBot(selectedBot.id, { links });
-          if (!persisted) return;
-          setIntegrationDetail(null);
-          setExchangeSnapshot(null);
-          setTradingDetailsError('');
-        }
-        const unlinkSummary = (result as any)?.unlinkResult || null;
-        if (unlinkSummary?.changed) {
-          const removedRules = Number(unlinkSummary.removedRules || 0);
-          const clearedRuntimeLinks = Number(unlinkSummary.clearedRuntimeLinks || 0);
-          setModalMessage(`Integration unlinked (rules ${removedRules}, runtime links ${clearedRuntimeLinks}).`);
-        } else {
-          setModalMessage('Integration already had no active workflow/runtime links.');
-        }
-        return;
-      }
-
       if (selectedBotLink.integrationId === integrationId) {
         await loadTradingDetails(integrationId);
       }
-      const label = action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'restarted';
+      const label = action === 'pause' ? 'stopped' : action === 'resume' ? 'resumed' : 'restarted';
       setModalMessage(`Integration ${label}.`);
     } catch (error: any) {
       setModalError(error?.message || `Failed to ${action} integration.`);
@@ -3248,6 +3299,14 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
+                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => handleBotControl('stop')}
+                          disabled={Boolean(botActionInFlight)}
+                        >
+                          Stop Bot
+                        </button>
+                        <button
+                          type="button"
                           className="rounded-lg border border-rose-400/45 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
                           onClick={() => handleBotControl('delete')}
                           disabled={Boolean(botActionInFlight)}
@@ -3359,6 +3418,8 @@ export default function TradeBotsModule() {
                     {webhookUrls.length === 0 && <p className="text-xs text-gray-400">No ingress URLs assigned yet.</p>}
                     {webhookUrls.map((url) => {
                       const linked = selectedBotLink.webhookUrl === url;
+                      const linkDisabled = modalLoading || linked || Boolean(selectedBotLink.webhookUrl && !linked);
+                      const unlinkDisabled = modalLoading || !linked;
                       return (
                         <div key={url} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <p className="break-all font-mono text-[11px] text-gray-200">{url}</p>
@@ -3368,10 +3429,19 @@ export default function TradeBotsModule() {
                             </span>
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
-                              onClick={() => handleLinkWebhook(url)}
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => void handleLinkWebhook(url)}
+                              disabled={linkDisabled}
                             >
                               Link
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => void handleUnlinkWebhook()}
+                              disabled={unlinkDisabled}
+                            >
+                              Unlink
                             </button>
                           </div>
                         </div>
@@ -3398,6 +3468,14 @@ export default function TradeBotsModule() {
                       const healthy = integrationIsHealthy(integration.status);
                       const isActionBusy = integrationActionTargetId === integration.id;
                       const statusTone = String(integration.status || '').toLowerCase();
+                      const linkDisabled =
+                        modalLoading ||
+                        isActionBusy ||
+                        Boolean(integrationActionInFlight) ||
+                        linked ||
+                        Boolean(selectedBotLink.integrationId && selectedBotLink.integrationId !== integration.id);
+                      const unlinkDisabled =
+                        modalLoading || isActionBusy || Boolean(integrationActionInFlight) || !linked;
                       return (
                         <div key={integration.id} className="rounded-lg border border-white/15 bg-black/35 p-2">
                           <div className="flex items-start justify-between gap-2">
@@ -3421,8 +3499,8 @@ export default function TradeBotsModule() {
                             <button
                               type="button"
                               className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
-                              onClick={() => handleLinkIntegration(integration.id)}
-                              disabled={isActionBusy}
+                              onClick={() => void handleLinkIntegration(integration.id)}
+                              disabled={linkDisabled}
                             >
                               {linked ? 'Linked' : 'Link'}
                             </button>
@@ -3430,7 +3508,7 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleTestIntegration(integration.id)}
-                              disabled={testingIntegrationId === integration.id || isActionBusy}
+                              disabled={testingIntegrationId === integration.id || isActionBusy || modalLoading}
                             >
                               {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
                             </button>
@@ -3438,15 +3516,15 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleIntegrationControl(integration.id, 'pause')}
-                              disabled={isActionBusy || statusTone === 'paused'}
+                              disabled={isActionBusy || modalLoading || statusTone === 'paused'}
                             >
-                              Pause
+                              Stop
                             </button>
                             <button
                               type="button"
                               className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleIntegrationControl(integration.id, 'resume')}
-                              disabled={isActionBusy || statusTone !== 'paused'}
+                              disabled={isActionBusy || modalLoading || statusTone !== 'paused'}
                             >
                               Resume
                             </button>
@@ -3454,7 +3532,7 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleIntegrationControl(integration.id, 'restart')}
-                              disabled={isActionBusy}
+                              disabled={isActionBusy || modalLoading}
                             >
                               Restart
                             </button>
@@ -3462,7 +3540,7 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleIntegrationControl(integration.id, 'unlink')}
-                              disabled={isActionBusy}
+                              disabled={unlinkDisabled}
                             >
                               Unlink
                             </button>
@@ -3470,9 +3548,9 @@ export default function TradeBotsModule() {
                               type="button"
                               className="rounded-lg border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => handleIntegrationControl(integration.id, 'delete')}
-                              disabled={isActionBusy}
+                              disabled={unlinkDisabled}
                             >
-                              Delete
+                              Delete Link
                             </button>
                           </div>
                         </div>
@@ -3498,8 +3576,9 @@ export default function TradeBotsModule() {
                             <p className="text-[11px] text-gray-400">Updated {formatDate(account.updatedAt)}</p>
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
-                              onClick={() => handleLinkExchangeAccount(account.id)}
+                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => void handleLinkExchangeAccount(account.id)}
+                              disabled={modalLoading || linked || Boolean(selectedBotLink.exchangeAccountId && !linked)}
                             >
                               {linked ? 'Linked' : 'Link'}
                             </button>
