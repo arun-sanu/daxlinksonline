@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import type { LucideIcon } from 'lucide-react';
+import { Activity, FileText, GanttChartSquare, GitBranch } from 'lucide-react';
 import {
   fetchWorkflowNodes,
   fetchRoutingRules,
@@ -17,6 +20,21 @@ import { listBots } from '../../../api/tradeBots';
 
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
+type WorkflowRouteTabKey = 'graph' | 'pipeline' | 'rules' | 'logs-events';
+type WorkflowTabKey = WorkflowRouteTabKey | 'overview';
+const WORKFLOW_ROUTE_TAB_KEYS: WorkflowRouteTabKey[] = ['graph', 'pipeline', 'rules', 'logs-events'];
+
+function isWorkflowRouteTabKey(value: string | null | undefined): value is WorkflowRouteTabKey {
+  if (!value) return false;
+  return WORKFLOW_ROUTE_TAB_KEYS.includes(value as WorkflowRouteTabKey);
+}
+
+const WORKFLOW_TAB_ITEMS: { key: WorkflowRouteTabKey; label: string; icon: LucideIcon }[] = [
+  { key: 'graph', label: 'Graph', icon: GitBranch },
+  { key: 'pipeline', label: 'Pipeline', icon: GanttChartSquare },
+  { key: 'rules', label: 'Rules', icon: FileText },
+  { key: 'logs-events', label: 'Logs + Events', icon: Activity }
+];
 
 type BotConnectivityLink = {
   webhookUrl?: string | null;
@@ -874,6 +892,9 @@ function EdgeLine({ edge, nodes, onSelect }: { edge: WorkflowEdge; nodes: Workfl
 
 export default function WorkflowModule() {
   console.log('[WM] Render started');
+  const { tabId } = useParams<{ tabId?: string }>();
+  const navigate = useNavigate();
+  const activeTab: WorkflowTabKey = isWorkflowRouteTabKey(tabId) ? tabId : 'overview';
   const [nodes, setNodes] = useState<WorkflowNode[] | null>([]);
   const [edges, setEdges] = useState<WorkflowEdge[]>([]);
   const [events, setEvents] = useState<WorkflowEvent[]>([]);
@@ -897,7 +918,6 @@ export default function WorkflowModule() {
   const [hoverPort, setHoverPort] = useState<{ nodeId: string; role: NodeRole; portKind: PortKind } | null>(null);
   const [simPreview, setSimPreview] = useState<{ message: string; severity: 'ok' | 'error'; data?: any; x: number; y: number } | null>(null);
   const [activityTab, setActivityTab] = useState<'executions' | 'events'>('executions');
-  const [viewTab, setViewTab] = useState<'graph' | 'catalog'>('graph');
   const [savingRules, setSavingRules] = useState(false);
   const [workflowStatus, setWorkflowStatus] = useState<'active' | 'paused'>('active');
   const [workflowActionInFlight, setWorkflowActionInFlight] = useState<WorkflowLifecycleAction | null>(null);
@@ -908,6 +928,16 @@ export default function WorkflowModule() {
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [fitScale, setFitScale] = useState(1);
+
+  useEffect(() => {
+    if (tabId === 'overview') {
+      navigate('/platform/workflow', { replace: true });
+      return;
+    }
+    if (tabId && !isWorkflowRouteTabKey(tabId)) {
+      navigate('/platform/workflow', { replace: true });
+    }
+  }, [navigate, tabId]);
 
   useEffect(() => {
     const el = canvasWrapRef.current;
@@ -1468,6 +1498,37 @@ export default function WorkflowModule() {
     }
   }
 
+  const sourceNodeCount = safeNodes.filter((node) => node.role === 'source').length;
+  const destinationNodeCount = safeNodes.filter((node) => node.role === 'destination').length;
+  const activeRulesCount = safeRules.filter((rule) => rule.enabled !== false).length;
+  const inactiveRulesCount = safeRules.filter((rule) => rule.enabled === false).length;
+
+  const tabRail = (
+    <nav className="grid grid-cols-3 gap-2 sm:w-fit">
+      {WORKFLOW_TAB_ITEMS.map((tab) => {
+        const isActive = activeTab === tab.key;
+        const Icon = tab.icon;
+        return (
+          <Link
+            key={tab.key}
+            to={`/platform/workflow/${tab.key}`}
+            className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
+              isActive
+                ? 'border-primary-200/80 bg-primary-400/10 text-white'
+                : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
+            }`}
+          >
+            <span className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-bl from-white/40 to-white/0 opacity-10"></span>
+            <span className={`relative z-10 flex h-10 w-10 items-center justify-center ${isActive ? 'opacity-100' : 'opacity-70'}`}>
+              <Icon className="h-6 w-6 text-white/85" strokeWidth={1.7} aria-hidden="true" />
+            </span>
+            <span className={`relative z-10 leading-snug text-base ${isActive ? 'text-white' : 'text-white/70'}`}>{tab.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+
   return (
     <>
       <RuleModal
@@ -1556,23 +1617,108 @@ export default function WorkflowModule() {
                 Delete
               </button>
             </div>
-            <div className="inline-flex rounded-full border border-white/15 bg-black/40 p-1 text-xs text-gray-200">
-              <button
-                className={`px-3 py-1.5 rounded-full transition ${viewTab === 'graph' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
-                onClick={() => setViewTab('graph')}
-              >
-                Graph
-              </button>
-              <button
-                className={`px-3 py-1.5 rounded-full transition ${viewTab === 'catalog' ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white'}`}
-                onClick={() => setViewTab('catalog')}
-              >
-                Catalog
-              </button>
-            </div>
+            <button
+              className="rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-100 hover:border-white/40"
+              onClick={() => setReloadNonce((value) => value + 1)}
+              disabled={isLoading}
+            >
+              Refresh
+            </button>
           </div>
         </div>
-        {viewTab === 'catalog' && (
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start">
+          <div>{tabRail}</div>
+          <div className="space-y-6">
+        {activeTab === 'overview' && (
+          <>
+            <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="section-label">Workflow Overview</p>
+              <p className="text-sm text-gray-300">
+                Use the tab rail to open Graph, Pipeline, Rules, or Logs + Events on their own pages.
+              </p>
+            </section>
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Sources</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{sourceNodeCount}</p>
+              </article>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Destinations</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{destinationNodeCount}</p>
+              </article>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Routing Rules</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{safeRules.length}</p>
+                <p className="text-xs text-gray-400">{activeRulesCount} active · {inactiveRulesCount} paused</p>
+              </article>
+              <article className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Activity</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{recentEvents.length + recentExecutions.length}</p>
+                <p className="text-xs text-gray-400">Latest executions + events</p>
+              </article>
+            </section>
+          </>
+        )}
+
+        {activeTab === 'pipeline' && (
+          <section className="card-shell space-y-4 border border-white/10 bg-white/5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Pipeline</p>
+                <p className="text-sm text-gray-300">Live routing lanes from source nodes to destination integrations.</p>
+              </div>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${
+                  workflowStatus === 'paused'
+                    ? 'border-amber-300/45 bg-amber-500/15 text-amber-100'
+                    : 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100'
+                }`}
+              >
+                workflow {workflowStatus}
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Pipelines</p>
+                <p className="mt-2 text-xl font-semibold text-white">{safeRules.length}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Healthy Lanes</p>
+                <p className="mt-2 text-xl font-semibold text-white">{activeRulesCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Sources</p>
+                <p className="mt-2 text-xl font-semibold text-white">{sourceNodeCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Destinations</p>
+                <p className="mt-2 text-xl font-semibold text-white">{destinationNodeCount}</p>
+              </article>
+            </div>
+            <div className="space-y-2">
+              {safeRules.length === 0 && <p className="rounded-xl border border-white/10 bg-black/30 px-3 py-4 text-sm text-gray-400">No pipelines available yet.</p>}
+              {safeRules.map((rule) => (
+                <div key={`pipeline-${rule.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm">
+                  <div className="flex items-center gap-2 text-gray-100">
+                    <span className="font-semibold text-white">{labelForNode(rule.sourceWebhookId)}</span>
+                    <span className="text-gray-500">→</span>
+                    <span className="font-semibold text-white">{labelForNode(rule.destinationIntegrationId)}</span>
+                  </div>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+                      rule.enabled === false ? 'bg-gray-700 text-gray-300' : 'bg-emerald-700/60 text-emerald-100'
+                    }`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${rule.enabled === false ? 'bg-gray-400' : 'bg-emerald-300'}`} />
+                    {rule.enabled === false ? 'Disabled' : 'Enabled'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'rules' && (
           <>
       <section className="card-shell space-y-4 w-full max-w-5xl mx-auto mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1827,7 +1973,7 @@ export default function WorkflowModule() {
           </>
         )}
 
-        {viewTab === 'graph' && (
+        {activeTab === 'graph' && (
           <>
       <div
         ref={canvasWrapRef}
@@ -2010,6 +2156,11 @@ export default function WorkflowModule() {
         </div>
 
       </div>
+          </>
+        )}
+
+        {activeTab === 'logs-events' && (
+          <>
       <section className="card-shell space-y-3 w-full max-w-5xl mx-auto mt-6 border border-white/10 bg-white/5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -2094,6 +2245,8 @@ export default function WorkflowModule() {
       </section>
           </>
         )}
+          </div>
+        </section>
 
       {detailInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setDetailInfo(null)}>
