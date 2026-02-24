@@ -1889,85 +1889,94 @@ export default function WorkflowModule() {
             </button>
           </div>
         </div>
-        <div className="overflow-hidden rounded-xl border border-white/10">
-          <div className="grid grid-cols-6 bg-white/5 px-4 py-2 text-[11px] uppercase tracking-[0.18em] text-gray-500">
-            <span>Source</span>
-            <span>Destination</span>
-            <span>Symbols</span>
-            <span>Sides / Min</span>
-            <span>Status</span>
-            <span className="text-right">Actions</span>
-          </div>
-          {safeRules.length === 0 && <p className="px-4 py-6 text-sm text-gray-500">No routing rules saved yet.</p>}
-          {safeRules.map((rule) => (
-            <div key={rule.id} className="grid grid-cols-6 items-center px-4 py-3 text-sm text-gray-100 border-t border-white/5">
-              <div className="truncate">
-                <p className="font-semibold text-white">{labelForNode(rule.sourceWebhookId)}</p>
-              </div>
-              <div className="truncate">
-                <p className="font-semibold text-white">{labelForNode(rule.destinationIntegrationId)}</p>
-              </div>
-              <div className="truncate text-gray-300">{rule.symbols?.length ? rule.symbols.join(', ') : '*'}</div>
-              <div className="truncate text-gray-300">
-                {rule.allowedSides?.length ? rule.allowedSides.join('/') : 'both'} · {rule.minNotional != null ? `min ${rule.minNotional}` : 'no min'}
-              </div>
-              <div className="text-gray-300">
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${rule.enabled === false ? 'bg-gray-700 text-gray-300' : 'bg-emerald-700/60 text-emerald-100'}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${rule.enabled === false ? 'bg-gray-400' : 'bg-emerald-300'}`} />
-                  {rule.enabled === false ? 'Disabled' : 'Enabled'}
-                </span>
-              </div>
-              <div className="flex justify-end gap-2 text-xs">
-                <button
-                  className="px-3 py-1 rounded-lg border border-amber-300/40 text-amber-100 hover:border-amber-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled === false}
-                  onClick={() => handleRuleLifecycleAction(rule.id, 'pause')}
-                >
-                  Pause
-                </button>
-                <button
-                  className="px-3 py-1 rounded-lg border border-emerald-300/40 text-emerald-100 hover:border-emerald-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled !== false}
-                  onClick={() => handleRuleLifecycleAction(rule.id, 'resume')}
-                >
-                  Resume
-                </button>
-                <button
-                  className="px-3 py-1 rounded-lg border border-primary-300/40 text-primary-100 hover:border-primary-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={savingRules || ruleActionTargetId === rule.id}
-                  onClick={() => handleRuleLifecycleAction(rule.id, 'restart')}
-                >
-                  Restart
-                </button>
-                <button
-                  className="px-3 py-1 rounded-lg border border-white/10 text-gray-200 hover:border-white/30"
-                  disabled={savingRules || ruleActionTargetId === rule.id}
-                  onClick={() =>
-                    setRuleModal({
-                      open: true,
-                      draft: {
-                        ...rule
-                      }
-                    })
-                  }
-                >
-                  Edit
-                </button>
-                <button
-                  className="px-3 py-1 rounded-lg border border-red-400/40 text-red-200 hover:border-red-300/80"
-                  disabled={savingRules || ruleActionTargetId === rule.id}
-                  onClick={() => handleRuleLifecycleAction(rule.id, 'delete')}
-                >
-                  Delete
-                </button>
-                {ruleActionTargetId === rule.id && (
-                  <span className="px-2 py-1 rounded-lg border border-primary-300/40 text-primary-100">
-                    {ruleActionInFlight}
-                  </span>
-                )}
-              </div>
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <div className="min-w-[1120px]">
+            <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] gap-3 bg-white/5 px-4 py-2 text-[11px] uppercase tracking-[0.18em] text-gray-500">
+              <span>Source</span>
+              <span>Destination</span>
+              <span>Symbols</span>
+              <span>Sides / Min</span>
+              <span>Status</span>
+              <span className="text-right">Actions</span>
             </div>
-          ))}
+            {safeRules.length === 0 && <p className="px-4 py-6 text-sm text-gray-500">No routing rules saved yet.</p>}
+            {safeRules.map((rule) => (
+              <div
+                key={rule.id}
+                className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] items-start gap-3 border-t border-white/5 px-4 py-3 text-sm text-gray-100"
+              >
+                <div className="min-w-0 truncate">
+                  <p className="font-semibold text-white">{labelForNode(rule.sourceWebhookId)}</p>
+                </div>
+                <div className="min-w-0 truncate">
+                  <p className="font-semibold text-white">{labelForNode(rule.destinationIntegrationId)}</p>
+                </div>
+                <div className="min-w-0 truncate text-gray-300">{rule.symbols?.length ? rule.symbols.join(', ') : '*'}</div>
+                <div className="min-w-0 truncate text-gray-300">
+                  {rule.allowedSides?.length ? rule.allowedSides.join('/') : 'both'} · {rule.minNotional != null ? `min ${rule.minNotional}` : 'no min'}
+                </div>
+                <div className="pt-0.5 text-gray-300">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+                      rule.enabled === false ? 'bg-gray-700 text-gray-300' : 'bg-emerald-700/60 text-emerald-100'
+                    }`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${rule.enabled === false ? 'bg-gray-400' : 'bg-emerald-300'}`} />
+                    {rule.enabled === false ? 'Disabled' : 'Enabled'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap justify-end gap-2 text-xs">
+                  <button
+                    className="px-3 py-1 rounded-lg border border-amber-300/40 text-amber-100 hover:border-amber-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled === false}
+                    onClick={() => handleRuleLifecycleAction(rule.id, 'pause')}
+                  >
+                    Pause
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-lg border border-emerald-300/40 text-emerald-100 hover:border-emerald-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled !== false}
+                    onClick={() => handleRuleLifecycleAction(rule.id, 'resume')}
+                  >
+                    Resume
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-lg border border-primary-300/40 text-primary-100 hover:border-primary-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={savingRules || ruleActionTargetId === rule.id}
+                    onClick={() => handleRuleLifecycleAction(rule.id, 'restart')}
+                  >
+                    Restart
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-lg border border-white/10 text-gray-200 hover:border-white/30"
+                    disabled={savingRules || ruleActionTargetId === rule.id}
+                    onClick={() =>
+                      setRuleModal({
+                        open: true,
+                        draft: {
+                          ...rule
+                        }
+                      })
+                    }
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded-lg border border-red-400/40 text-red-200 hover:border-red-300/80"
+                    disabled={savingRules || ruleActionTargetId === rule.id}
+                    onClick={() => handleRuleLifecycleAction(rule.id, 'delete')}
+                  >
+                    Delete
+                  </button>
+                  {ruleActionTargetId === rule.id && (
+                    <span className="px-2 py-1 rounded-lg border border-primary-300/40 text-primary-100">
+                      {ruleActionInFlight}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
           </>
