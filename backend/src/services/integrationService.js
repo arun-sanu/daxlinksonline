@@ -3,6 +3,7 @@ import { maskCredential, createCredentialReference } from './workspaceService.js
 import { createExchange } from '../sdk/index.js';
 import { encrypt, decrypt } from '../lib/kms.js';
 import { getWorkspaceWorkflowConfig, saveWorkspaceWorkflowConfig } from './workflowService.js';
+import { createMexcSpotClient } from './mexcSpotClient.js';
 
 const EMPTY_API_KEY_MASK = '****';
 export const SUPPORTED_INTEGRATION_CONTROL_ACTIONS = Object.freeze(['pause', 'resume', 'restart', 'delete', 'unlink']);
@@ -43,6 +44,86 @@ function isUnsupportedConnectivityError(error) {
   if (!error) return false;
   const message = typeof error === 'string' ? error : error.message || '';
   return /api not supported for exchange/i.test(message);
+}
+
+function normalizeIntegrationTestSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'auto' ? 'auto' : 'manual';
+}
+
+function buildIntegrationTestDetail({
+  source = 'manual',
+  success = false,
+  credentialId = null,
+  slotMarker = null,
+  connectivityMethod = null,
+  errorMessage = null
+}) {
+  const base = source === 'auto' ? 'Automated connectivity test' : 'Credential test';
+  const statusText = success ? 'succeeded' : 'failed';
+  const details = [`${base} ${statusText}`];
+  if (credentialId) {
+    details.push(`credential=${credentialId}`);
+  }
+  if (connectivityMethod) {
+    details.push(`check=${connectivityMethod}`);
+  }
+  if (slotMarker) {
+    details.push(`auto_slot=${slotMarker}`);
+  }
+  if (!success && errorMessage) {
+    details.push(`error=${errorMessage}`);
+  }
+  return details.join(' | ');
+}
+
+async function verifyExchangeConnectivity({ integration, decoded }) {
+  const exchangeId = String(integration?.exchange || '').trim().toLowerCase();
+  if (exchangeId === 'mexc') {
+    // For MEXC we must use a signed endpoint; adapter init alone is not enough to validate keys.
+    const client = createMexcSpotClient({
+      apiKey: decoded.apiKey,
+      apiSecret: decoded.apiSecret
+    });
+    await client.getAccount();
+    return { method: 'mexc.getAccount' };
+  }
+
+  const exchange = createExchange({
+    exchange: integration.exchange,
+    environment: integration.environment,
+    apiKey: decoded.apiKey,
+    apiSecret: decoded.apiSecret,
+    passphrase: decoded.passphrase || undefined
+  });
+
+  if (typeof exchange.testConnectivity === 'function') {
+    try {
+      await exchange.testConnectivity();
+      return { method: 'exchange.testConnectivity' };
+    } catch (err) {
+      if (!isUnsupportedConnectivityError(err)) throw err;
+      console.warn(`[integration:test] skipping testConnectivity for ${integration.exchange}: ${err.message}`);
+    }
+  }
+
+  if (typeof exchange.getAccount === 'function') {
+    await exchange.getAccount();
+    return { method: 'exchange.getAccount' };
+  }
+  if (typeof exchange.fetchBalance === 'function') {
+    await exchange.fetchBalance();
+    return { method: 'exchange.fetchBalance' };
+  }
+  if (typeof exchange.getBalance === 'function') {
+    await exchange.getBalance();
+    return { method: 'exchange.getBalance' };
+  }
+
+  throw Object.assign(
+    new Error(`No authenticated connectivity check available for exchange "${integration.exchange}"`),
+    { status: 400 }
+  );
 }
 
 function sortCredentials(credentials = []) {
@@ -353,7 +434,7 @@ export async function getIntegrationDetail(workspaceId, integrationId) {
   return { ...rest, credentials, logs };
 }
 
-export async function testIntegration(workspaceId, integrationId) {
+export async function testIntegration(workspaceId, integrationId, options = {}) {
   const integration = await prisma.integration.findFirst({
     where: { id: integrationId, workspaceId },
     include: { credentials: true }
@@ -367,10 +448,15 @@ export async function testIntegration(workspaceId, integrationId) {
     throw Object.assign(new Error('Integration credentials missing'), { status: 400 });
   }
 
+  const source = normalizeIntegrationTestSource(options?.source);
+  const slotMarker = typeof options?.slotMarker === 'string' && options.slotMarker.trim() ? options.slotMarker.trim() : null;
+  const successEventType = source === 'auto' ? 'integration.auto.test.succeeded' : 'integration.test.succeeded';
+  const failedEventType = source === 'auto' ? 'integration.auto.test.failed' : 'integration.test.failed';
   const now = new Date();
   try {
     const decoded = decodeCredentialSecrets(primaryCredential);
     let effectivePassphraseMasked = decoded.passphraseMasked;
+    let connectivityMethod = null;
 
     logCredentialSnapshot({
       exchange: integration.exchange,
@@ -381,6 +467,9 @@ export async function testIntegration(workspaceId, integrationId) {
       passphrase: decoded.passphrase
     });
 
+    const connectivity = await verifyExchangeConnectivity({ integration, decoded });
+    connectivityMethod = connectivity?.method || null;
+
     const exchange = createExchange({
       exchange: integration.exchange,
       environment: integration.environment,
@@ -388,19 +477,6 @@ export async function testIntegration(workspaceId, integrationId) {
       apiSecret: decoded.apiSecret,
       passphrase: decoded.passphrase || undefined
     });
-
-    if (typeof exchange.testConnectivity === 'function') {
-      try {
-        await exchange.testConnectivity();
-      } catch (err) {
-        if (isUnsupportedConnectivityError(err)) {
-          console.warn(`[integration:test] skipping testConnectivity for ${integration.exchange}: ${err.message}`);
-        } else {
-          throw err;
-        }
-      }
-    }
-
     if (typeof exchange.exportCredentialState === 'function') {
       const exported = await exchange.exportCredentialState();
       if (exported?.passphrase) {
@@ -428,14 +504,23 @@ export async function testIntegration(workspaceId, integrationId) {
       data: {
         workspaceId,
         integrationId,
-        eventType: 'integration.test.succeeded',
-        detail: `Credential test succeeded (${primaryCredential.id})`
+        eventType: successEventType,
+        detail: buildIntegrationTestDetail({
+          source,
+          success: true,
+          credentialId: primaryCredential.id,
+          slotMarker,
+          connectivityMethod
+        })
       }
     });
 
     return {
       status: 'connected',
-      rotatedAt: now.toISOString()
+      rotatedAt: now.toISOString(),
+      source,
+      slotMarker,
+      connectivityMethod
     };
   } catch (error) {
     await prisma.integration.update({
@@ -450,14 +535,22 @@ export async function testIntegration(workspaceId, integrationId) {
       data: {
         workspaceId,
         integrationId,
-        eventType: 'integration.test.failed',
-        detail: error?.message || 'Credential test failed'
+        eventType: failedEventType,
+        detail: buildIntegrationTestDetail({
+          source,
+          success: false,
+          credentialId: primaryCredential.id,
+          slotMarker,
+          errorMessage: error?.message || 'Credential test failed'
+        })
       }
     });
 
     return {
       status: 'error',
-      error: error?.message || 'Credential test failed'
+      error: error?.message || 'Credential test failed',
+      source,
+      slotMarker
     };
   }
 }
