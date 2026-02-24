@@ -1510,6 +1510,20 @@ export default function WorkflowModule() {
       .filter((value) => !value.startsWith('->') && !value.endsWith('->'))
   ).size;
   const rulesHealthPct = safeRules.length > 0 ? Math.round((activeRulesCount / safeRules.length) * 100) : 0;
+  const rulesQuickNavItems = [
+    { id: 'rules-routing-rules', label: 'Routing Rules' },
+    { id: 'rules-destinations', label: 'Destinations' },
+    { id: 'rules-signal-sources', label: 'Siginal Sources' },
+    { id: 'rules-resources', label: 'Resources' },
+    { id: 'rules-dax-assistant', label: 'DAX [Assistant]' }
+  ];
+
+  function scrollToRulesSection(sectionId: string) {
+    const node = document.getElementById(sectionId);
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
 
   const tabRail = (
     <nav className="grid grid-cols-3 gap-2 sm:w-fit">
@@ -1636,10 +1650,31 @@ export default function WorkflowModule() {
         </div>
         <section
           className={`grid gap-6 ${
-            activeTab === 'rules' ? 'grid-cols-1' : 'lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start'
+            activeTab === 'rules'
+              ? 'lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] lg:gap-x-8 lg:items-start'
+              : 'lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start'
           }`}
         >
-          <div>{tabRail}</div>
+          <div className="space-y-4">
+            {tabRail}
+            {activeTab === 'rules' && (
+              <nav className="card-shell space-y-3 border border-white/10 bg-black/60 p-4">
+                <p className="section-label">Rules Navbar</p>
+                <div className="flex flex-col gap-2">
+                  {rulesQuickNavItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-left text-xs uppercase tracking-[0.16em] text-gray-200 transition hover:border-primary-300/45 hover:text-white"
+                      onClick={() => scrollToRulesSection(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </nav>
+            )}
+          </div>
           <div className="space-y-6">
         {activeTab === 'overview' && (
           <>
@@ -1766,7 +1801,11 @@ export default function WorkflowModule() {
         </div>
       </section>
 
-      <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
+      <section
+        id="rules-signal-sources"
+        className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
+        style={{ scrollMarginTop: '7rem' }}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="section-label">Signal Sources</p>
@@ -1846,7 +1885,11 @@ export default function WorkflowModule() {
         </ul>
       </section>
 
-      <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
+      <section
+        id="rules-destinations"
+        className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
+        style={{ scrollMarginTop: '7rem' }}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="section-label">Destinations</p>
@@ -1911,7 +1954,11 @@ export default function WorkflowModule() {
         </ul>
       </section>
 
-      <section className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60">
+      <section
+        id="rules-routing-rules"
+        className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
+        style={{ scrollMarginTop: '7rem' }}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="section-label">Routing Rules</p>
@@ -2023,6 +2070,88 @@ export default function WorkflowModule() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section
+        id="rules-resources"
+        className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
+        style={{ scrollMarginTop: '7rem' }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="section-label">Resources</p>
+            <p className="text-sm text-gray-300">Quick references for routing setup and troubleshooting.</p>
+          </div>
+          <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
+            workflow tools
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Rule Editor</p>
+            <p className="mt-2 text-sm text-gray-200">Use <span className="text-white">New rule</span> to map source to destination.</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Lifecycle</p>
+            <p className="mt-2 text-sm text-gray-200">Pause, resume, restart, or delete each route safely.</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Health Tracking</p>
+            <p className="mt-2 text-sm text-gray-200">Monitor rule health from the widgets in this view.</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Connectivity</p>
+            <p className="mt-2 text-sm text-gray-200">Validate destination integration before enabling rules.</p>
+          </article>
+        </div>
+      </section>
+
+      <section
+        id="rules-dax-assistant"
+        className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60"
+        style={{ scrollMarginTop: '7rem' }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="section-label">DAX [Assistant]</p>
+            <p className="text-sm text-gray-300">Suggested prompts to speed up rule operations.</p>
+          </div>
+          <span className="rounded-full border border-primary-300/35 bg-primary-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-primary-100">
+            assistant
+          </span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <button
+            type="button"
+            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+            onClick={() => setReloadNonce((value) => value + 1)}
+          >
+            Refresh rules and recalculate health.
+          </button>
+          <button
+            type="button"
+            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+            onClick={() =>
+              setRuleModal({
+                open: true,
+                draft: {
+                  sourceWebhookId: selectedSource || '',
+                  destinationIntegrationId: '',
+                  enabled: true
+                }
+              })
+            }
+          >
+            Create a new route from current source selection.
+          </button>
+          <button
+            type="button"
+            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+            onClick={() => navigate('/platform/workflow/logs-events')}
+          >
+            Open Logs + Events to inspect execution failures.
+          </button>
         </div>
       </section>
           </>
