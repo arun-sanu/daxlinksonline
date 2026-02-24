@@ -998,6 +998,28 @@ function connectivityBadgeClass(connected: boolean) {
   return connected ? 'border-emerald-300/35 bg-emerald-500/15 text-emerald-100' : 'border-amber-300/30 bg-amber-500/15 text-amber-100';
 }
 
+const FUTURE_ACTION_PRIMARY =
+  'rounded-xl border border-cyan-300/45 bg-cyan-500/14 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-50 transition-all duration-200 hover:border-cyan-200/80 hover:bg-cyan-400/20 hover:shadow-[0_0_24px_rgba(34,211,238,0.25)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_ACTION_SUCCESS =
+  'rounded-xl border border-emerald-300/45 bg-emerald-500/14 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-50 transition-all duration-200 hover:border-emerald-200/80 hover:bg-emerald-400/20 hover:shadow-[0_0_24px_rgba(16,185,129,0.25)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_ACTION_WARNING =
+  'rounded-xl border border-amber-300/45 bg-amber-500/14 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-50 transition-all duration-200 hover:border-amber-200/80 hover:bg-amber-400/20 hover:shadow-[0_0_24px_rgba(251,191,36,0.25)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_ACTION_STOP =
+  'rounded-xl border border-slate-300/35 bg-slate-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-100 transition-all duration-200 hover:border-slate-200/70 hover:bg-slate-400/20 hover:shadow-[0_0_24px_rgba(148,163,184,0.22)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_ACTION_INFO =
+  'rounded-xl border border-sky-300/45 bg-sky-500/14 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-50 transition-all duration-200 hover:border-sky-200/80 hover:bg-sky-400/20 hover:shadow-[0_0_24px_rgba(56,189,248,0.25)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_ACTION_DANGER =
+  'rounded-xl border border-rose-300/45 bg-rose-500/14 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-50 transition-all duration-200 hover:border-rose-200/80 hover:bg-rose-400/20 hover:shadow-[0_0_24px_rgba(251,113,133,0.25)] disabled:cursor-not-allowed disabled:opacity-40';
+const FUTURE_BADGE_BUSY =
+  'rounded-xl border border-cyan-300/45 bg-cyan-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100';
+const FUTURE_BADGE_MUTED =
+  'rounded-xl border border-slate-300/25 bg-slate-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-200';
+const POPUP_SECTION_TAB_BASE =
+  'rounded-xl border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] transition-all duration-200';
+const POPUP_SECTION_TAB_ACTIVE =
+  'border-cyan-300/55 bg-cyan-500/18 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.2)]';
+const POPUP_SECTION_TAB_IDLE = 'border-white/10 bg-white/[0.02] text-slate-300 hover:border-cyan-300/35 hover:bg-cyan-500/10 hover:text-cyan-100';
+
 function estimatedBandwidthKbps(bot: TradeBotRow | null, connectedEndpoints: number) {
   if (!bot || connectedEndpoints <= 0) return '0.0 kbps';
   const instances = Number(bot.counts?.instances || 0);
@@ -3245,9 +3267,7 @@ export default function TradeBotsModule() {
                       key={section.key}
                       type="button"
                       onClick={() => setActivePopupSection(section.key)}
-                      className={`rounded-xl px-3 py-2 transition ${
-                        isActive ? 'bg-primary-500/20 text-primary-100' : 'text-gray-300 hover:bg-white/10'
-                      }`}
+                      className={`${POPUP_SECTION_TAB_BASE} ${isActive ? POPUP_SECTION_TAB_ACTIVE : POPUP_SECTION_TAB_IDLE}`}
                     >
                       {section.label}
                     </button>
@@ -3268,7 +3288,7 @@ export default function TradeBotsModule() {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          className={FUTURE_ACTION_WARNING}
                           onClick={() => handleBotControl('pause')}
                           disabled={Boolean(botActionInFlight)}
                         >
@@ -3276,7 +3296,7 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          className={FUTURE_ACTION_SUCCESS}
                           onClick={() => handleBotControl('resume')}
                           disabled={Boolean(botActionInFlight)}
                         >
@@ -3284,7 +3304,7 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          className={FUTURE_ACTION_PRIMARY}
                           onClick={() => handleBotControl('restart')}
                           disabled={Boolean(botActionInFlight)}
                         >
@@ -3292,7 +3312,7 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          className={FUTURE_ACTION_STOP}
                           onClick={() => handleBotControl('stop')}
                           disabled={Boolean(botActionInFlight)}
                         >
@@ -3300,23 +3320,23 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-rose-400/45 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          className={FUTURE_ACTION_DANGER}
                           onClick={() => handleBotControl('delete')}
                           disabled={Boolean(botActionInFlight)}
                         >
                           Delete Bot
                         </button>
                         {botActionInFlight && (
-                          <span className="rounded-lg border border-primary-300/45 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                          <span className={FUTURE_BADGE_BUSY}>
                             Applying {botActionInFlight}
                           </span>
                         )}
-                        <span className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200">
+                        <span className={FUTURE_BADGE_MUTED}>
                           running {runningInstanceCount}/{botInstances.length}
                         </span>
                         <button
                           type="button"
-                          className="btn btn-secondary btn-small"
+                          className={FUTURE_ACTION_PRIMARY}
                           onClick={() => loadBotInstances(selectedBot.id)}
                           disabled={instancesLoading}
                         >
@@ -3347,7 +3367,7 @@ export default function TradeBotsModule() {
                                     {status}
                                   </span>
                                   {isBusy && (
-                                    <span className="rounded border border-primary-300/45 bg-primary-500/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                                    <span className={FUTURE_BADGE_BUSY}>
                                       applying
                                     </span>
                                   )}
@@ -3361,7 +3381,7 @@ export default function TradeBotsModule() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <button
                                   type="button"
-                                  className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className={FUTURE_ACTION_SUCCESS}
                                   onClick={() => handleInstanceControl(instance.id, 'start')}
                                   disabled={isBusy || !canStart}
                                 >
@@ -3369,7 +3389,7 @@ export default function TradeBotsModule() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className={FUTURE_ACTION_WARNING}
                                   onClick={() => handleInstanceControl(instance.id, 'pause')}
                                   disabled={isBusy || !canPause}
                                 >
@@ -3377,7 +3397,7 @@ export default function TradeBotsModule() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className={FUTURE_ACTION_PRIMARY}
                                   onClick={() => handleInstanceControl(instance.id, 'restart')}
                                   disabled={isBusy || !canRestart}
                                 >
@@ -3385,7 +3405,7 @@ export default function TradeBotsModule() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className={FUTURE_ACTION_STOP}
                                   onClick={() => handleInstanceControl(instance.id, 'stop')}
                                   disabled={isBusy || !canStop}
                                 >
@@ -3422,7 +3442,7 @@ export default function TradeBotsModule() {
                             </span>
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_PRIMARY}
                               onClick={() => void handleLinkWebhook(url)}
                               disabled={linkDisabled}
                             >
@@ -3430,7 +3450,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_INFO}
                               onClick={() => void handleUnlinkWebhook()}
                               disabled={unlinkDisabled}
                             >
@@ -3484,14 +3504,14 @@ export default function TradeBotsModule() {
                           </div>
                           <p className="mt-1 text-[11px] text-gray-400">Last tested {formatDate(integration.lastTestedAt || null)}</p>
                           {isActionBusy && (
-                            <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-primary-100">
+                            <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-cyan-100">
                               Applying {integrationActionInFlight}
                             </p>
                           )}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                              className={FUTURE_ACTION_PRIMARY}
                               onClick={() => void handleLinkIntegration(integration.id)}
                               disabled={linkDisabled}
                             >
@@ -3499,7 +3519,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_STOP}
                               onClick={() => handleTestIntegration(integration.id)}
                               disabled={testingIntegrationId === integration.id || isActionBusy || modalLoading}
                             >
@@ -3507,7 +3527,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_WARNING}
                               onClick={() => handleIntegrationControl(integration.id, 'pause')}
                               disabled={isActionBusy || modalLoading || statusTone === 'paused'}
                             >
@@ -3515,7 +3535,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_SUCCESS}
                               onClick={() => handleIntegrationControl(integration.id, 'resume')}
                               disabled={isActionBusy || modalLoading || statusTone !== 'paused'}
                             >
@@ -3523,7 +3543,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_PRIMARY}
                               onClick={() => handleIntegrationControl(integration.id, 'restart')}
                               disabled={isActionBusy || modalLoading}
                             >
@@ -3531,7 +3551,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_INFO}
                               onClick={() => handleIntegrationControl(integration.id, 'unlink')}
                               disabled={unlinkDisabled}
                             >
@@ -3539,7 +3559,7 @@ export default function TradeBotsModule() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_DANGER}
                               onClick={() => handleIntegrationControl(integration.id, 'delete')}
                               disabled={unlinkDisabled}
                             >
@@ -3569,7 +3589,7 @@ export default function TradeBotsModule() {
                             <p className="text-[11px] text-gray-400">Updated {formatDate(account.updatedAt)}</p>
                             <button
                               type="button"
-                              className="rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              className={FUTURE_ACTION_PRIMARY}
                               onClick={() => void handleLinkExchangeAccount(account.id)}
                               disabled={modalLoading || linked || Boolean(selectedBotLink.exchangeAccountId && !linked)}
                             >
@@ -4666,7 +4686,7 @@ export default function TradeBotsModule() {
                       <p className="mt-1 text-xs text-gray-100">{formatDecimal(targetSpendSuggestedBaseQuote)}</p>
                       <button
                         type="button"
-                        className="mt-2 rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className={`mt-2 ${FUTURE_ACTION_PRIMARY}`}
                         disabled={targetSpendSuggestedBaseQuote === null}
                         onClick={() => {
                           if (targetSpendSuggestedBaseQuote === null) return;
@@ -4693,7 +4713,7 @@ export default function TradeBotsModule() {
                       <p className="text-[10px] uppercase tracking-[0.14em] text-gray-500">Quick target</p>
                       <button
                         type="button"
-                        className="mt-2 w-full rounded-lg border border-primary-300/40 bg-primary-500/15 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-primary-100"
+                        className={`mt-2 w-full ${FUTURE_ACTION_PRIMARY}`}
                         onClick={() => updateBotRulesDraft(algoIsSell ? { sellTargetSpendPct: 91.05 } : { targetSpendPct: 93.05 })}
                       >
                         {algoIsSell ? 'Set 91.05%' : 'Set 93.05%'}
@@ -4725,7 +4745,7 @@ export default function TradeBotsModule() {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          className={FUTURE_ACTION_STOP}
                           onClick={() => {
                             setAlgoBaseStart(10);
                             setAlgoBaseEnd(50);
@@ -4735,7 +4755,7 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          className={FUTURE_ACTION_STOP}
                           onClick={() => {
                             setAlgoBaseStart(51);
                             setAlgoBaseEnd(100);
@@ -4745,7 +4765,7 @@ export default function TradeBotsModule() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-gray-200"
+                          className={FUTURE_ACTION_STOP}
                           onClick={() => {
                             setAlgoBaseStart(101);
                             setAlgoBaseEnd(150);
