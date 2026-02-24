@@ -1502,6 +1502,14 @@ export default function WorkflowModule() {
   const destinationNodeCount = safeNodes.filter((node) => node.role === 'destination').length;
   const activeRulesCount = safeRules.filter((rule) => rule.enabled !== false).length;
   const inactiveRulesCount = safeRules.filter((rule) => rule.enabled === false).length;
+  const routedSourceCount = new Set(safeRules.map((rule) => String(rule.sourceWebhookId || '')).filter(Boolean)).size;
+  const routedDestinationCount = new Set(safeRules.map((rule) => String(rule.destinationIntegrationId || '')).filter(Boolean)).size;
+  const uniqueRoutePairsCount = new Set(
+    safeRules
+      .map((rule) => `${String(rule.sourceWebhookId || '').trim()}->${String(rule.destinationIntegrationId || '').trim()}`)
+      .filter((value) => !value.startsWith('->') && !value.endsWith('->'))
+  ).size;
+  const rulesHealthPct = safeRules.length > 0 ? Math.round((activeRulesCount / safeRules.length) * 100) : 0;
 
   const tabRail = (
     <nav className="grid grid-cols-3 gap-2 sm:w-fit">
@@ -1626,7 +1634,11 @@ export default function WorkflowModule() {
             </button>
           </div>
         </div>
-        <section className="grid gap-6 lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start">
+        <section
+          className={`grid gap-6 ${
+            activeTab === 'rules' ? 'grid-cols-1' : 'lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start'
+          }`}
+        >
           <div>{tabRail}</div>
           <div className="space-y-6">
         {activeTab === 'overview' && (
@@ -1720,7 +1732,41 @@ export default function WorkflowModule() {
 
         {activeTab === 'rules' && (
           <>
-      <section className="card-shell space-y-4 w-full max-w-5xl mx-auto mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
+      <section className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="section-label">Rules Widgets</p>
+            <p className="text-sm text-gray-300">Real-time coverage for routing rules.</p>
+          </div>
+          <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
+            Health {rulesHealthPct}%
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Total Rules</p>
+            <p className="mt-2 text-xl font-semibold text-white">{safeRules.length}</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Active Rules</p>
+            <p className="mt-2 text-xl font-semibold text-white">{activeRulesCount}</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Sources</p>
+            <p className="mt-2 text-xl font-semibold text-white">{routedSourceCount}</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Destinations</p>
+            <p className="mt-2 text-xl font-semibold text-white">{routedDestinationCount}</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Unique Routes</p>
+            <p className="mt-2 text-xl font-semibold text-white">{uniqueRoutePairsCount}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="section-label">Signal Sources</p>
@@ -1800,7 +1846,7 @@ export default function WorkflowModule() {
         </ul>
       </section>
 
-      <section className="card-shell space-y-4 w-full max-w-5xl mx-auto mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
+      <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="section-label">Destinations</p>
@@ -1865,7 +1911,7 @@ export default function WorkflowModule() {
         </ul>
       </section>
 
-      <section className="card-shell space-y-4 w-full max-w-6xl mx-auto mb-6 border border-white/10 bg-black/60">
+      <section className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="section-label">Routing Rules</p>
