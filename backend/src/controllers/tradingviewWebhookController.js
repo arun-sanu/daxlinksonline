@@ -56,6 +56,108 @@ function parseJsonObject(text) {
   }
 }
 
+function parseNumericToken(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseTimestampToken(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getTime();
+
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) {
+    return asNumber < 1e12 ? Math.floor(asNumber * 1000) : Math.floor(asNumber);
+  }
+  const parsed = Date.parse(String(value));
+  if (!Number.isNaN(parsed)) return parsed;
+  return null;
+}
+
+function normalizePlainTextSymbol(value) {
+  const raw = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[.,;!?]+$/g, '');
+  if (!raw) return null;
+
+  const tail = raw.includes(':') ? raw.split(':').pop() : raw;
+  const compact = String(tail || '')
+    .replace(/\//g, '')
+    .replace(/[^A-Z0-9_-]/g, '');
+  if (!compact || compact.length < 4 || compact.length > 20) return null;
+  return compact;
+}
+
+function normalizeSideToken(value) {
+  const side = String(value || '').trim().toUpperCase();
+  if (side === 'BUY' || side === 'LONG') return 'BUY';
+  if (side === 'SELL' || side === 'SHORT') return 'SELL';
+  return null;
+}
+
+function parsePositiveNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n > 0 ? n : null;
+}
+
+function resolveSignalQuantity(payload = {}) {
+  if (!payload || typeof payload !== 'object') return null;
+  const keys = ['qty', 'quantity', 'contracts', 'size'];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const qty = parsePositiveNumber(payload[key]);
+    if (qty !== null) return qty;
+  }
+  return null;
+}
+
+function parseTradingviewPlainTextSignal(text) {
+  if (typeof text !== 'string') return null;
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+
+  const sideToken =
+    normalized.match(/\border\s+(buy|sell|long|short)\b/i)?.[1] ||
+    normalized.match(/\b(?:side|action|direction)\s*[:=]\s*(buy|sell|long|short)\b/i)?.[1] ||
+    null;
+  const side = normalizeSideToken(sideToken);
+
+  const symbolToken =
+    normalized.match(/\bfilled\s+on\s+([A-Z0-9:\/._-]{4,40})\b/i)?.[1] ||
+    normalized.match(/\b(?:symbol|ticker|pair|market)\s*[:=]\s*([A-Z0-9:\/._-]{4,40})\b/i)?.[1] ||
+    null;
+  const symbol = normalizePlainTextSymbol(symbolToken);
+
+  if (!side || !symbol) return null;
+
+  const tsToken = normalized.match(
+    /\b(?:ts|timestamp|time)\s*[:=]\s*([0-9]{10,13}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T\s][0-9:.+\-Z]+)\b/i
+  )?.[1];
+  const ts = parseTimestampToken(tsToken) || Date.now();
+
+  const qty = parseNumericToken(
+    normalized.match(/\b(?:qty|quantity|contracts?|size)\s*[:=@]?\s*(-?\d*\.?\d+)\b/i)?.[1]
+  );
+  const price = parseNumericToken(normalized.match(/\border\s+(?:buy|sell|long|short)\s*@\s*(-?\d*\.?\d+)\b/i)?.[1]);
+  const strategyPosition = parseNumericToken(
+    normalized.match(/\bnew\s+strategy\s+position\s+is\s*(-?\d*\.?\d+)\b/i)?.[1]
+  );
+
+  return {
+    source: 'tradingview',
+    symbol,
+    side,
+    ts,
+    ...(qty !== null && qty > 0 ? { qty, quantity: qty } : {}),
+    ...(price !== null && price > 0 ? { price } : {}),
+    ...(strategyPosition !== null ? { strategyPosition } : {}),
+    plainTextSignal: true,
+    rawText: normalized
+  };
+}
+
 async function findUserByPrefix(prefix) {
   const normalizedPrefix = String(prefix || '').trim().toLowerCase();
   if (!normalizedPrefix) return null;
@@ -290,6 +392,7 @@ export function createTradingviewWebhookHandler(
       const contentType = String(req.headers?.['content-type'] || '').toLowerCase();
       let inboundPayload = null;
       let inboundParseError = null;
+      let usedPlainTextFallback = false;
 
       if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && !Buffer.isBuffer(req.body)) {
         inboundPayload = { ...req.body };
@@ -311,9 +414,36 @@ export function createTradingviewWebhookHandler(
       if (!inboundPayload) {
         inboundPayload = {};
       }
+      if (inboundParseError) {
+        const fallbackPayload = parseTradingviewPlainTextSignal(rawBody || (typeof req.body === 'string' ? req.body : ''));
+        if (fallbackPayload) {
+          inboundPayload = {
+            ...inboundPayload,
+            ...fallbackPayload
+          };
+          inboundParseError = null;
+          usedPlainTextFallback = true;
+        }
+      }
+      if (!usedPlainTextFallback && inboundPayload && typeof inboundPayload === 'object') {
+        const embeddedTextKey = ['message', 'text', 'signal', 'body'].find(
+          (key) => typeof inboundPayload?.[key] === 'string' && inboundPayload[key].trim().length > 0
+        );
+        if (embeddedTextKey && (!inboundPayload.symbol || !inboundPayload.side)) {
+          const fallbackPayload = parseTradingviewPlainTextSignal(inboundPayload[embeddedTextKey]);
+          if (fallbackPayload) {
+            inboundPayload = {
+              ...inboundPayload,
+              ...fallbackPayload
+            };
+            usedPlainTextFallback = true;
+          }
+        }
+      }
 
       debugWebhook('ingress', {
         contentType,
+        usedPlainTextFallback,
         bodyType: typeof req.body,
         rawPreview:
           typeof rawBody === 'string' && rawBody.length > 0 ? maybeRedactSnippet(rawBody.slice(0, 200)) : null,
@@ -482,6 +612,14 @@ export function createTradingviewWebhookHandler(
           reasonKey: 'payload_validation_failed'
         });
       }
+      const signalQty = resolveSignalQuantity(normalizedSignal.normalizedPayload || candidatePayload);
+      if (signalQty === null) {
+        return rejectInbound({
+          statusCode: 422,
+          reason: 'qty missing in signal payload',
+          reasonKey: 'payload_qty_missing'
+        });
+      }
 
       const signal = normalizedSignal.signal;
       const executionTarget = await resolveExecutionTarget(user.id);
@@ -531,6 +669,8 @@ export function createTradingviewWebhookHandler(
         sourceId: candidatePayload.sourceId,
         symbol: signal.symbol,
         side: signal.side,
+        qty: signalQty,
+        quantity: signalQty,
         type: 'market',
         ts: signal.ts,
         executionAuditId: executionAudit?.id || null,

@@ -24,7 +24,7 @@ function createReq({ prefix = 'demo', secret = 'secret', body, rawBody } = {}) {
     body ||
     (() => {
       const ts = Date.now();
-      return { ts, message: `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"ts\":${ts}}` };
+      return { ts, message: `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"qty\":0.01,\"ts\":${ts}}` };
     })();
   const buffer =
     rawBody ||
@@ -134,7 +134,7 @@ test('tradingview webhook handler validates sorted JSON payload HMAC', async () 
   const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: crypto.randomBytes(32).toString('hex') };
   const unordered = { z: 5, a: 'alpha', nested: { b: 2, a: 1 } };
   const ts = Date.now();
-  const payload = { ...unordered, symbol: 'BTCUSDC', side: 'BUY', ts };
+  const payload = { ...unordered, symbol: 'BTCUSDC', side: 'BUY', qty: 0.01, ts };
   const canonical = JSON.stringify(canonicalize(payload));
   const signature = crypto.createHmac('sha256', Buffer.from(user.webhookHmacKey, 'hex')).update(Buffer.from(canonical, 'utf8')).digest('hex');
   const req = createReq({
@@ -174,7 +174,7 @@ test('tradingview webhook handler enforces missing HMAC when required', async ()
 test('tradingview webhook handler accepts plain text payload HMAC', async () => {
   const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: crypto.randomBytes(32).toString('hex') };
   const ts = Date.now();
-  const message = `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"ts\":${ts}}`;
+  const message = `{\"symbol\":\"BTCUSDC\",\"side\":\"BUY\",\"qty\":0.01,\"ts\":${ts}}`;
   const hmac = crypto.createHmac('sha256', Buffer.from(user.webhookHmacKey, 'hex')).update(Buffer.from(message, 'utf8')).digest('hex');
   const body = { message, ts, hmac };
   const req = createReq({ body, rawBody: Buffer.from(message) });
@@ -189,4 +189,61 @@ test('tradingview webhook handler accepts plain text payload HMAC', async () => 
   const res = createRes();
   await handler(req, res, () => {});
   assert.equal(res.statusCode, 200);
+});
+
+test('tradingview webhook handler parses default plain text strategy fill messages', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const plainTextBody =
+    'ARN - Safe and Strict High Compounding Strategy (1, 1, 1.5, 90, 5, 2, 14, 20, 2, 0.05): order buy @ 1.5412 filled on ETHUSDE. New strategy position is 0.7708';
+  const req = {
+    subdomainPrefix: 'demo',
+    headers: { 'content-type': 'text/plain' },
+    query: { secret: 'secret' },
+    body: plainTextBody,
+    rawBody: Buffer.from(plainTextBody, 'utf8'),
+    rawBodyText: plainTextBody
+  };
+
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      ...noopExecutionDeps
+    }
+  );
+
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.payload?.error, 'qty missing in signal payload');
+  assert.equal(forwardedPayload, null);
+});
+
+test('tradingview webhook handler rejects JSON payload when qty is missing', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const ts = Date.now();
+  const req = createReq({
+    body: { ts, symbol: 'BTCUSDC', side: 'BUY' },
+    rawBody: Buffer.from(JSON.stringify({ ts, symbol: 'BTCUSDC', side: 'BUY' }), 'utf8')
+  });
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      ...noopExecutionDeps
+    }
+  );
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.payload?.error, 'qty missing in signal payload');
+  assert.equal(forwardedPayload, null);
 });
