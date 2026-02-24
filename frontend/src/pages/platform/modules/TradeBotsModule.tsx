@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import type { LucideIcon } from 'lucide-react';
+import { Link2 as Link2Icon, Pause, Play, Plus, RefreshCw, RotateCcw, Save, Search, Square, Trash2, Unlink2, X } from 'lucide-react';
 import {
   deleteBot,
   getTradeBotRuntimeConfig,
@@ -1019,6 +1021,15 @@ const POPUP_SECTION_TAB_BASE =
 const POPUP_SECTION_TAB_ACTIVE =
   'border-cyan-300/55 bg-cyan-500/18 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.2)]';
 const POPUP_SECTION_TAB_IDLE = 'border-white/10 bg-white/[0.02] text-slate-300 hover:border-cyan-300/35 hover:bg-cyan-500/10 hover:text-cyan-100';
+
+function PopupButtonLabel({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 leading-none">
+      <Icon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+      <span>{label}</span>
+    </span>
+  );
+}
 
 function estimatedBandwidthKbps(bot: TradeBotRow | null, connectedEndpoints: number) {
   if (!bot || connectedEndpoints <= 0) return '0.0 kbps';
@@ -3251,7 +3262,7 @@ export default function TradeBotsModule() {
                 </div>
               </div>
               <button type="button" className="btn btn-secondary btn-small" onClick={closeBotPopup}>
-                Close
+                <PopupButtonLabel icon={X} label="Close" />
               </button>
             </div>
 
@@ -3292,7 +3303,7 @@ export default function TradeBotsModule() {
                           onClick={() => handleBotControl('pause')}
                           disabled={Boolean(botActionInFlight)}
                         >
-                          Pause Bot
+                          <PopupButtonLabel icon={Pause} label="Pause Bot" />
                         </button>
                         <button
                           type="button"
@@ -3300,7 +3311,7 @@ export default function TradeBotsModule() {
                           onClick={() => handleBotControl('resume')}
                           disabled={Boolean(botActionInFlight)}
                         >
-                          Resume Bot
+                          <PopupButtonLabel icon={Play} label="Resume Bot" />
                         </button>
                         <button
                           type="button"
@@ -3308,7 +3319,7 @@ export default function TradeBotsModule() {
                           onClick={() => handleBotControl('restart')}
                           disabled={Boolean(botActionInFlight)}
                         >
-                          Restart Bot
+                          <PopupButtonLabel icon={RotateCcw} label="Restart Bot" />
                         </button>
                         <button
                           type="button"
@@ -3316,7 +3327,7 @@ export default function TradeBotsModule() {
                           onClick={() => handleBotControl('stop')}
                           disabled={Boolean(botActionInFlight)}
                         >
-                          Stop Bot
+                          <PopupButtonLabel icon={Square} label="Stop Bot" />
                         </button>
                         <button
                           type="button"
@@ -3324,7 +3335,7 @@ export default function TradeBotsModule() {
                           onClick={() => handleBotControl('delete')}
                           disabled={Boolean(botActionInFlight)}
                         >
-                          Delete Bot
+                          <PopupButtonLabel icon={Trash2} label="Delete Bot" />
                         </button>
                         {botActionInFlight && (
                           <span className={FUTURE_BADGE_BUSY}>
@@ -3340,7 +3351,7 @@ export default function TradeBotsModule() {
                           onClick={() => loadBotInstances(selectedBot.id)}
                           disabled={instancesLoading}
                         >
-                          {instancesLoading ? 'Refreshing...' : 'Refresh Instances'}
+                          <PopupButtonLabel icon={RefreshCw} label={instancesLoading ? 'Refreshing...' : 'Refresh Instances'} />
                         </button>
                       </div>
                     </div>
@@ -3385,7 +3396,7 @@ export default function TradeBotsModule() {
                                   onClick={() => handleInstanceControl(instance.id, 'start')}
                                   disabled={isBusy || !canStart}
                                 >
-                                  Start
+                                  <PopupButtonLabel icon={Play} label="Start" />
                                 </button>
                                 <button
                                   type="button"
@@ -3393,7 +3404,7 @@ export default function TradeBotsModule() {
                                   onClick={() => handleInstanceControl(instance.id, 'pause')}
                                   disabled={isBusy || !canPause}
                                 >
-                                  Pause
+                                  <PopupButtonLabel icon={Pause} label="Pause" />
                                 </button>
                                 <button
                                   type="button"
@@ -3401,7 +3412,7 @@ export default function TradeBotsModule() {
                                   onClick={() => handleInstanceControl(instance.id, 'restart')}
                                   disabled={isBusy || !canRestart}
                                 >
-                                  Restart
+                                  <PopupButtonLabel icon={RotateCcw} label="Restart" />
                                 </button>
                                 <button
                                   type="button"
@@ -3409,7 +3420,7 @@ export default function TradeBotsModule() {
                                   onClick={() => handleInstanceControl(instance.id, 'stop')}
                                   disabled={isBusy || !canStop}
                                 >
-                                  Stop
+                                  <PopupButtonLabel icon={Square} label="Stop" />
                                 </button>
                               </div>
                             </div>
@@ -3423,7 +3434,7 @@ export default function TradeBotsModule() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">TradingView ingress</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleAssignIngress} disabled={modalLoading}>
-                      Assign
+                      <PopupButtonLabel icon={Plus} label="Assign" />
                     </button>
                   </div>
                   <p className="mt-1 text-xs text-gray-400">Available webhook URLs for TradingView alerts.</p>
@@ -3446,7 +3457,7 @@ export default function TradeBotsModule() {
                               onClick={() => void handleLinkWebhook(url)}
                               disabled={linkDisabled}
                             >
-                              Link
+                              <PopupButtonLabel icon={Link2Icon} label="Link" />
                             </button>
                             <button
                               type="button"
@@ -3454,7 +3465,7 @@ export default function TradeBotsModule() {
                               onClick={() => void handleUnlinkWebhook()}
                               disabled={unlinkDisabled}
                             >
-                              Unlink
+                              <PopupButtonLabel icon={Unlink2} label="Unlink" />
                             </button>
                           </div>
                         </div>
@@ -3462,7 +3473,7 @@ export default function TradeBotsModule() {
                     })}
                   </div>
                   <button type="button" className="mt-3 btn btn-secondary btn-small" onClick={handleVerifyIngress} disabled={modalLoading}>
-                    Check Connectivity
+                    <PopupButtonLabel icon={Search} label="Check Connectivity" />
                   </button>
                 </section>
 
@@ -3470,7 +3481,7 @@ export default function TradeBotsModule() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">Exchange integrations</p>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRefreshConnectivity} disabled={modalLoading}>
-                      Refresh
+                      <PopupButtonLabel icon={RefreshCw} label="Refresh" />
                     </button>
                   </div>
                   <p className="mt-1 text-xs text-gray-400">Link any exchange integration and run a connection test.</p>
@@ -3515,7 +3526,7 @@ export default function TradeBotsModule() {
                               onClick={() => void handleLinkIntegration(integration.id)}
                               disabled={linkDisabled}
                             >
-                              {linked ? 'Linked' : 'Link'}
+                              <PopupButtonLabel icon={Link2Icon} label={linked ? 'Linked' : 'Link'} />
                             </button>
                             <button
                               type="button"
@@ -3523,7 +3534,10 @@ export default function TradeBotsModule() {
                               onClick={() => handleTestIntegration(integration.id)}
                               disabled={testingIntegrationId === integration.id || isActionBusy || modalLoading}
                             >
-                              {testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
+                              <PopupButtonLabel
+                                icon={Search}
+                                label={testingIntegrationId === integration.id ? 'Testing...' : 'Check Connectivity'}
+                              />
                             </button>
                             <button
                               type="button"
@@ -3531,7 +3545,7 @@ export default function TradeBotsModule() {
                               onClick={() => handleIntegrationControl(integration.id, 'pause')}
                               disabled={isActionBusy || modalLoading || statusTone === 'paused'}
                             >
-                              Stop
+                              <PopupButtonLabel icon={Square} label="Stop" />
                             </button>
                             <button
                               type="button"
@@ -3539,7 +3553,7 @@ export default function TradeBotsModule() {
                               onClick={() => handleIntegrationControl(integration.id, 'resume')}
                               disabled={isActionBusy || modalLoading || statusTone !== 'paused'}
                             >
-                              Resume
+                              <PopupButtonLabel icon={Play} label="Resume" />
                             </button>
                             <button
                               type="button"
@@ -3547,7 +3561,7 @@ export default function TradeBotsModule() {
                               onClick={() => handleIntegrationControl(integration.id, 'restart')}
                               disabled={isActionBusy || modalLoading}
                             >
-                              Restart
+                              <PopupButtonLabel icon={RotateCcw} label="Restart" />
                             </button>
                             <button
                               type="button"
@@ -3555,7 +3569,7 @@ export default function TradeBotsModule() {
                               onClick={() => handleIntegrationControl(integration.id, 'unlink')}
                               disabled={unlinkDisabled}
                             >
-                              Unlink
+                              <PopupButtonLabel icon={Unlink2} label="Unlink" />
                             </button>
                             <button
                               type="button"
@@ -3563,7 +3577,7 @@ export default function TradeBotsModule() {
                               onClick={() => handleIntegrationControl(integration.id, 'delete')}
                               disabled={unlinkDisabled}
                             >
-                              Delete Link
+                              <PopupButtonLabel icon={Trash2} label="Delete Link" />
                             </button>
                           </div>
                         </div>
@@ -3593,7 +3607,7 @@ export default function TradeBotsModule() {
                               onClick={() => void handleLinkExchangeAccount(account.id)}
                               disabled={modalLoading || linked || Boolean(selectedBotLink.exchangeAccountId && !linked)}
                             >
-                              {linked ? 'Linked' : 'Link'}
+                              <PopupButtonLabel icon={Link2Icon} label={linked ? 'Linked' : 'Link'} />
                             </button>
                           </div>
                         </div>
@@ -3619,10 +3633,10 @@ export default function TradeBotsModule() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleAnalyzePineScript}>
-                      Analyze Script
+                      <PopupButtonLabel icon={Search} label="Analyze Script" />
                     </button>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleApplyPineToRules}>
-                      Apply To Rules
+                      <PopupButtonLabel icon={Save} label="Apply To Rules" />
                     </button>
                     <button
                       type="button"
@@ -3633,7 +3647,7 @@ export default function TradeBotsModule() {
                         updateBotRulesDraft({ pineAnalysis: null });
                       }}
                     >
-                      Clear
+                      <PopupButtonLabel icon={X} label="Clear" />
                     </button>
                   </div>
                 </div>
@@ -3742,10 +3756,10 @@ export default function TradeBotsModule() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesReset}>
-                      Reset Defaults
+                      <PopupButtonLabel icon={RotateCcw} label="Reset Defaults" />
                     </button>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
-                      Save Rules
+                      <PopupButtonLabel icon={Save} label="Save Rules" />
                     </button>
                   </div>
                 </div>
@@ -3759,7 +3773,7 @@ export default function TradeBotsModule() {
                       </p>
                     </div>
                     <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
-                      Refresh From Code
+                      <PopupButtonLabel icon={RefreshCw} label="Refresh From Code" />
                     </button>
                   </div>
 
@@ -4340,10 +4354,10 @@ export default function TradeBotsModule() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button type="button" className="btn btn-secondary btn-small" onClick={handleResetArnParameterDefaults}>
-                        Reset ARN Defaults
+                        <PopupButtonLabel icon={RotateCcw} label="Reset ARN Defaults" />
                       </button>
                       <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
-                        Save Rules
+                        <PopupButtonLabel icon={Save} label="Save Rules" />
                       </button>
                     </div>
                   </div>
@@ -4434,7 +4448,7 @@ export default function TradeBotsModule() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button type="button" className="btn btn-secondary btn-small" onClick={handleRulesSave}>
-                        Save Rules
+                        <PopupButtonLabel icon={Save} label="Save Rules" />
                       </button>
                     </div>
                   </div>
@@ -4449,7 +4463,7 @@ export default function TradeBotsModule() {
                           : 'text-emerald-200/75 hover:bg-emerald-500/10'
                       }`}
                     >
-                      Buy
+                      <PopupButtonLabel icon={Play} label="Buy" />
                     </button>
                     <button
                       type="button"
@@ -4460,7 +4474,7 @@ export default function TradeBotsModule() {
                           : 'text-rose-200/75 hover:bg-rose-500/10'
                       }`}
                     >
-                      Sell
+                      <PopupButtonLabel icon={Square} label="Sell" />
                     </button>
                   </div>
 
@@ -4705,7 +4719,7 @@ export default function TradeBotsModule() {
                           );
                         }}
                       >
-                        Apply Auto Base Quote
+                        <PopupButtonLabel icon={Save} label="Apply Auto Base Quote" />
                       </button>
                     </div>
 
@@ -4716,7 +4730,7 @@ export default function TradeBotsModule() {
                         className={`mt-2 w-full ${FUTURE_ACTION_PRIMARY}`}
                         onClick={() => updateBotRulesDraft(algoIsSell ? { sellTargetSpendPct: 91.05 } : { targetSpendPct: 93.05 })}
                       >
-                        {algoIsSell ? 'Set 91.05%' : 'Set 93.05%'}
+                        <PopupButtonLabel icon={Plus} label={algoIsSell ? 'Set 91.05%' : 'Set 93.05%'} />
                       </button>
                     </div>
                   </div>
@@ -4751,7 +4765,7 @@ export default function TradeBotsModule() {
                             setAlgoBaseEnd(50);
                           }}
                         >
-                          10-50
+                          <PopupButtonLabel icon={RotateCcw} label="10-50" />
                         </button>
                         <button
                           type="button"
@@ -4761,7 +4775,7 @@ export default function TradeBotsModule() {
                             setAlgoBaseEnd(100);
                           }}
                         >
-                          51-100
+                          <PopupButtonLabel icon={RotateCcw} label="51-100" />
                         </button>
                         <button
                           type="button"
@@ -4771,7 +4785,7 @@ export default function TradeBotsModule() {
                             setAlgoBaseEnd(150);
                           }}
                         >
-                          101-150
+                          <PopupButtonLabel icon={RotateCcw} label="101-150" />
                         </button>
                       </div>
                     </div>
@@ -4858,7 +4872,7 @@ export default function TradeBotsModule() {
                       onClick={handleRefreshTradingDetails}
                       disabled={!selectedBotLink.integrationId || tradingDetailsLoading}
                     >
-                      {tradingDetailsLoading ? 'Pulling...' : 'Pull from Exchange'}
+                      <PopupButtonLabel icon={RefreshCw} label={tradingDetailsLoading ? 'Pulling...' : 'Pull from Exchange'} />
                     </button>
                   </div>
                 </div>
@@ -4931,7 +4945,7 @@ export default function TradeBotsModule() {
                       onClick={handleRefreshTradingDetails}
                       disabled={!selectedBotLink.integrationId || tradingDetailsLoading}
                     >
-                      {tradingDetailsLoading ? 'Pulling...' : 'Refresh Trades'}
+                      <PopupButtonLabel icon={RefreshCw} label={tradingDetailsLoading ? 'Pulling...' : 'Refresh Trades'} />
                     </button>
                   </div>
 
