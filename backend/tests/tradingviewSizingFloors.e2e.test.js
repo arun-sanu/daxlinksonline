@@ -228,6 +228,8 @@ describe('TradingView sizing floors (minQuoteSpend)', () => {
 
       expect(audit.status).toBe('REJECTED');
       expect(audit.sizingDebug?.rejectedReason).toBe('insufficient_base_for_sell');
+      expect(Number(audit.sizingDebug?.qtyAfterStepRounding)).toBe(0);
+      expect(Number(audit.qtyRounded)).toBe(0);
       expect(sizingScope.isDone()).toBe(true);
       expect(postOrderScope.isDone()).toBe(false);
     });

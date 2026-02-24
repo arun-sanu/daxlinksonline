@@ -22,6 +22,11 @@ function normalizePayload(detail) {
   }
 }
 
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function toLegacyAlertRow(row) {
   const payload = normalizePayload(row.detail);
   return {
@@ -47,6 +52,7 @@ function toExecutionAlertRow(row) {
   const payload = normalizePayload(row.parsedPayload) || {};
   const symbol = row.symbol || payload.symbol || payload.ticker || null;
   const side = row.side || payload.side || payload.action || null;
+  const sizingDebug = row?.sizingDebug && typeof row.sizingDebug === 'object' ? row.sizingDebug : null;
   const statusUpper = String(row.status || 'RECEIVED').toUpperCase();
   const tvTsNumber = row.tvTs !== null && row.tvTs !== undefined ? Number(row.tvTs) : null;
   const parsedTs = Number.isFinite(tvTsNumber) ? new Date(tvTsNumber).toISOString() : null;
@@ -54,6 +60,27 @@ function toExecutionAlertRow(row) {
   const status = parseFailed ? 'parse_failed' : statusUpper.toLowerCase();
   const errorMessage = row.errorMessage || (parseFailed ? 'PARSE_FAILED' : '');
   const type = String(payload.type || payload.orderType || 'MARKET').toUpperCase();
+  const computedQty = toFiniteNumber(
+    row.qtyRounded ??
+      row.qtyRaw ??
+      sizingDebug?.qtyAfterStepRounding ??
+      sizingDebug?.qtyRounded ??
+      sizingDebug?.qtyRaw
+  );
+  const requestedQty = toFiniteNumber(
+    payload.quantity ??
+      payload.qty ??
+      payload.amount ??
+      payload.orderQty ??
+      payload.order_qty ??
+      payload.size
+  );
+  const shouldPreferRequestedQty =
+    (status === 'rejected' || status === 'failed' || status === 'error') &&
+    (computedQty === null || computedQty <= 0) &&
+    requestedQty !== null &&
+    requestedQty > 0;
+  const quantity = shouldPreferRequestedQty ? requestedQty : (computedQty ?? requestedQty ?? '');
 
   return {
     id: row.id,
@@ -65,7 +92,7 @@ function toExecutionAlertRow(row) {
     side,
     type,
     orderType: type,
-    quantity: row.qtyRounded ?? '',
+    quantity,
     takeProfit: payload.tp ?? payload.takeProfit ?? payload.take_profit ?? '',
     stopLoss: payload.sl ?? payload.stopLoss ?? payload.stop_loss ?? '',
     errorMessage,

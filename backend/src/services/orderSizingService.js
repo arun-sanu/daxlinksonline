@@ -323,6 +323,10 @@ function computeSellQuantityFromInputs({
   }
 
   if (!safeFreeBase || safeFreeBase <= 0) {
+    sizingDebug.qtyRaw = 0;
+    sizingDebug.qtyAfterStepRounding = 0;
+    sizingDebug.quoteSpendComputed = 0;
+    sizingDebug.notionalAfterRounding = 0;
     throwSizingError(
       'Cannot compute sell quantity because free base balance is zero.',
       sizingDebug,
@@ -1111,6 +1115,10 @@ export async function computeMexcBaseQuantityForSignal({ workspaceId, integratio
 
   if (normalizedSide === 'SELL') {
     if (!freeBase || freeBase <= 0) {
+      sizingDebug.qtyRaw = 0;
+      sizingDebug.qtyAfterStepRounding = 0;
+      sizingDebug.quoteSpendComputed = 0;
+      sizingDebug.notionalAfterRounding = 0;
       throwSizingError(
         'Cannot compute sell quantity because free base balance is zero.',
         sizingDebug,

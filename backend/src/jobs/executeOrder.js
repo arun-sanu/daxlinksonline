@@ -295,6 +295,16 @@ async function markSignalExecutionError({
   };
   if (sizingDebug !== undefined) {
     auditPatch.sizingDebug = sizingDebug;
+    if (sizingDebug && typeof sizingDebug === 'object') {
+      if (Object.prototype.hasOwnProperty.call(sizingDebug, 'qtyRaw')) {
+        auditPatch.qtyRaw = sizingDebug.qtyRaw;
+      }
+      if (Object.prototype.hasOwnProperty.call(sizingDebug, 'qtyAfterStepRounding')) {
+        auditPatch.qtyRounded = sizingDebug.qtyAfterStepRounding;
+      } else if (Object.prototype.hasOwnProperty.call(sizingDebug, 'qtyRounded')) {
+        auditPatch.qtyRounded = sizingDebug.qtyRounded;
+      }
+    }
   }
   await markExecutionAudit(auditId, auditPatch);
   await prisma.forwardedSignal.update({
