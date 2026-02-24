@@ -260,29 +260,29 @@ async function controlInstanceAction(botId: string, id: string, action: Instance
   return fetchJson<BotInstance>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} instance`).catch(() => null);
 }
 
-export async function controlBotAction(botId: string, action: BotControlAction): Promise<any | null> {
+export async function controlBotAction(botId: string, action: BotControlAction): Promise<any> {
   const ws = getWorkspaceId();
   const url = `/api/v1/trade-bots/${ws}/bots/${botId}/actions/${action}`;
-  return fetchJson<any>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} bot`).catch(() => null);
+  return fetchJson<any>(url, { method: 'POST', headers: { ...authHeaders() } }, `Failed to ${action} bot`);
 }
 
-export async function pauseBot(botId: string): Promise<any | null> {
+export async function pauseBot(botId: string): Promise<any> {
   return controlBotAction(botId, 'pause');
 }
 
-export async function resumeBot(botId: string): Promise<any | null> {
+export async function resumeBot(botId: string): Promise<any> {
   return controlBotAction(botId, 'resume');
 }
 
-export async function restartBot(botId: string): Promise<any | null> {
+export async function restartBot(botId: string): Promise<any> {
   return controlBotAction(botId, 'restart');
 }
 
-export async function stopBot(botId: string): Promise<any | null> {
+export async function stopBot(botId: string): Promise<any> {
   return controlBotAction(botId, 'stop');
 }
 
-export async function deleteBot(botId: string): Promise<any | null> {
+export async function deleteBot(botId: string): Promise<any> {
   return controlBotAction(botId, 'delete');
 }
 

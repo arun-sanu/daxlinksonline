@@ -62,7 +62,6 @@ function normalizePopupSectionFromQuery(value: string | null): BotPopupSection |
   return null;
 }
 
-const DEFAULT_WORKSPACE_ID = '1cf2ee51-ff24-4b38-a7a3-bd0a45a9d0ba';
 const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
 const BOT_RULES_STORAGE_KEY = 'dax_trade_bot_rules_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
@@ -240,14 +239,6 @@ function getWorkspaceId() {
     return localStorage.getItem('workspaceId') || '';
   } catch {
     return '';
-  }
-}
-
-function setWorkspaceId(value: string) {
-  try {
-    localStorage.setItem('workspaceId', value);
-  } catch {
-    // ignore storage failures
   }
 }
 
@@ -2096,8 +2087,15 @@ export default function TradeBotsModule() {
   );
 
   const load = async () => {
-    const ws = getWorkspaceId().trim() || DEFAULT_WORKSPACE_ID;
-    setWorkspaceId(ws);
+    const ws = getWorkspaceId().trim();
+    if (!ws) {
+      setBots([]);
+      setRentals([]);
+      setBotsError('Workspace not found. Please sign in again.');
+      setRentalsError('');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setBotsError('');
     setRentalsError('');
@@ -2246,12 +2244,7 @@ export default function TradeBotsModule() {
   };
 
   useEffect(() => {
-    const existing = getWorkspaceId();
-    const ws = existing || DEFAULT_WORKSPACE_ID;
-    if (!existing) {
-      setWorkspaceId(ws);
-    }
-    load();
+    void load();
   }, []);
 
   const applyRuntimeConfigFromBackend = (

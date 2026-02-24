@@ -2010,10 +2010,7 @@ export async function controlTradeBot(workspaceId, botId, action) {
     return deleteTradeBot(workspaceId, botId);
   }
 
-  const bot = await assertBotInWorkspace(workspaceId, botId, { allowRented: false });
-  if (bot.workspaceId !== workspaceId) {
-    throw httpError('Trade bot not found', 404);
-  }
+  await assertBotInWorkspace(workspaceId, botId, { allowRented: true });
 
   const now = new Date();
   let where = {
