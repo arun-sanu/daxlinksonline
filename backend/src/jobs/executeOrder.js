@@ -600,11 +600,39 @@ export async function executePreparedSignal(signalId) {
 
       const payloadSizingRequested = hasSignalPayloadSizingHint(signal);
       const payloadSizingRequest = extractSignalPayloadSizingRequest(signal);
+      const hasRequestedPayloadSizing =
+        (payloadSizingRequest.requestedQty && payloadSizingRequest.requestedQty > 0) ||
+        (payloadSizingRequest.requestedAmount && payloadSizingRequest.requestedAmount > 0);
       const payloadSizingApplied =
-        runtimeBot.arnOriginal &&
-        payloadSizingRequested &&
-        ((payloadSizingRequest.requestedQty && payloadSizingRequest.requestedQty > 0) ||
-          (payloadSizingRequest.requestedAmount && payloadSizingRequest.requestedAmount > 0));
+        runtimeBot.arnLimitOnly
+          ? hasRequestedPayloadSizing
+          : runtimeBot.arnOriginal && payloadSizingRequested && hasRequestedPayloadSizing;
+      if (runtimeBot.arnLimitOnly && !payloadSizingApplied) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN limit-only bot requires qty or quoteQty in signal payload',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+      const preResolvedLimitPrice = isLimitOrderType(orderType)
+        ? resolveSignalLimitPrice(signal, side, null)
+        : null;
+      let requestedQtyForPayloadSizing = payloadSizingRequest.requestedQty;
+      let requestedAmountForPayloadSizing = payloadSizingRequest.requestedAmount;
+      // For limit-only payloads using quoteQty, derive base qty from limitPrice to avoid runtime-risk sizing.
+      if (
+        runtimeBot.arnLimitOnly &&
+        (!requestedQtyForPayloadSizing || requestedQtyForPayloadSizing <= 0) &&
+        requestedAmountForPayloadSizing &&
+        requestedAmountForPayloadSizing > 0 &&
+        preResolvedLimitPrice &&
+        preResolvedLimitPrice > 0
+      ) {
+        requestedQtyForPayloadSizing = requestedAmountForPayloadSizing / preResolvedLimitPrice;
+        requestedAmountForPayloadSizing = null;
+      }
       const ignoredPayloadSizing = payloadSizingRequested && !payloadSizingApplied;
 
       const sizing = payloadSizingApplied
@@ -612,8 +640,8 @@ export async function executePreparedSignal(signalId) {
             symbol,
             side,
             client: mexcClient,
-            requestedQty: payloadSizingRequest.requestedQty,
-            requestedAmount: payloadSizingRequest.requestedAmount
+            requestedQty: requestedQtyForPayloadSizing,
+            requestedAmount: requestedAmountForPayloadSizing
           })
         : await computeMexcBaseQuantityForSignal({
             workspaceId: integration.workspaceId,
@@ -623,11 +651,13 @@ export async function executePreparedSignal(signalId) {
             client: mexcClient
           });
       const effectiveSizingSource = payloadSizingApplied
-        ? 'pine_payload_arn_original'
+        ? (runtimeBot.arnLimitOnly ? 'signal_payload_arn_limit_only' : 'pine_payload_arn_original')
         : sizing.sizingSource || 'trade_bot_runtime';
       const resolvedAuditBotId = runtimeBot.botId || integration.id;
       const limitPrice = isLimitOrderType(orderType)
-        ? resolveSignalLimitPrice(signal, side, sizing.computedPrice)
+        ? (preResolvedLimitPrice && preResolvedLimitPrice > 0
+            ? preResolvedLimitPrice
+            : resolveSignalLimitPrice(signal, side, sizing.computedPrice))
         : null;
       if (isLimitOrderType(orderType) && (!limitPrice || limitPrice <= 0)) {
         return markSignalExecutionError({

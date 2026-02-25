@@ -699,20 +699,27 @@ export function createTradingviewWebhookHandler(
           reasonKey: 'payload_validation_failed'
         });
       }
-      const signalQty = resolveSignalQuantity(normalizedSignal.normalizedPayload || candidatePayload);
-      if (signalQty === null) {
+      const signal = normalizedSignal.signal;
+      const executionTarget = await resolveExecutionTarget(user.id);
+      const runtimeOrderPolicy = executionTarget?.workspaceId && executionTarget?.integrationId
+        ? await resolveRuntimeOrderPolicyForIntegration(executionTarget.workspaceId, executionTarget.integrationId)
+        : { arnLimitOnly: false, runtimeOrderType: null };
+      const normalizedPayloadForSizing = normalizedSignal.normalizedPayload || candidatePayload;
+      const signalQty = resolveSignalQuantity(normalizedPayloadForSizing);
+      const signalQuoteQty = parsePositiveNumber(
+        normalizedPayloadForSizing?.quoteQty ??
+        normalizedPayloadForSizing?.quote_qty ??
+        normalizedPayloadForSizing?.quoteAmount ??
+        normalizedPayloadForSizing?.amount
+      );
+      const allowMissingQtyForLimitOnly = runtimeOrderPolicy.arnLimitOnly && signalQuoteQty !== null;
+      if (signalQty === null && !allowMissingQtyForLimitOnly) {
         return rejectInbound({
           statusCode: 422,
           reason: 'qty missing in signal payload',
           reasonKey: 'payload_qty_missing'
         });
       }
-
-      const signal = normalizedSignal.signal;
-      const executionTarget = await resolveExecutionTarget(user.id);
-      const runtimeOrderPolicy = executionTarget?.workspaceId && executionTarget?.integrationId
-        ? await resolveRuntimeOrderPolicyForIntegration(executionTarget.workspaceId, executionTarget.integrationId)
-        : { arnLimitOnly: false, runtimeOrderType: null };
       const requestedOrderType = resolveRequestedOrderType(normalizedSignal.normalizedPayload || candidatePayload);
       let resolvedOrderType = requestedOrderType || 'MARKET';
       if (runtimeOrderPolicy.arnLimitOnly && resolvedOrderType === 'MARKET') {
@@ -772,8 +779,7 @@ export function createTradingviewWebhookHandler(
         sourceId: candidatePayload.sourceId,
         symbol: signal.symbol,
         side: signal.side,
-        qty: signalQty,
-        quantity: signalQty,
+        ...(signalQty !== null ? { qty: signalQty, quantity: signalQty } : {}),
         orderType: resolvedOrderType,
         type: resolvedOrderType.toLowerCase(),
         ts: signal.ts,
