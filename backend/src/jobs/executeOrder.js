@@ -13,6 +13,7 @@ import { recordTradeTransaction } from '../services/tradeTransactionsService.js'
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
+const ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT = 48.98;
 const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-orginal',
   'arn-s-shcs-original'
@@ -105,6 +106,49 @@ function isLimitOrderType(value) {
 function parseNumeric(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function clampPercentage(value, fallback = ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT) {
+  const parsed = parseNumeric(value);
+  const pct = parsed !== null ? parsed : fallback;
+  if (pct < 0) return 0;
+  if (pct > 100) return 100;
+  return pct;
+}
+
+function inferQuoteAssetFromSymbol(symbol) {
+  const normalized = String(symbol || '')
+    .trim()
+    .toUpperCase();
+  if (!normalized) return null;
+  const knownQuotes = ['USDC', 'USDT', 'USD', 'BTC', 'ETH', 'INR', 'EUR'];
+  for (const quote of knownQuotes) {
+    if (normalized.endsWith(quote) && normalized.length > quote.length) return quote;
+  }
+  return null;
+}
+
+function inferBaseAssetFromSymbol(symbol, quoteAsset) {
+  const normalized = String(symbol || '')
+    .trim()
+    .toUpperCase();
+  const quote = String(quoteAsset || '')
+    .trim()
+    .toUpperCase();
+  if (!normalized || !quote || !normalized.endsWith(quote)) return null;
+  const base = normalized.slice(0, -quote.length).trim();
+  return base || null;
+}
+
+function extractFreeBalance(accountPayload, asset) {
+  const wantedAsset = String(asset || '')
+    .trim()
+    .toUpperCase();
+  if (!wantedAsset) return 0;
+  const balances = Array.isArray(accountPayload?.balances) ? accountPayload.balances : [];
+  const row = balances.find((entry) => String(entry?.asset || '').toUpperCase() === wantedAsset);
+  const free = parseNumeric(row?.free);
+  return free && free > 0 ? free : 0;
 }
 
 function normalizeTextSlug(value = '') {
@@ -230,6 +274,43 @@ function resolveSignalLimitPrice(signal, side, fallbackPrice = null) {
   return referencePrice;
 }
 
+async function resolveArnLimitOnlyBalanceSizing({ client, symbol, investmentPct }) {
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  const clampedPct = clampPercentage(investmentPct, ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT);
+  const [account, ticker, filters] = await Promise.all([
+    client.getAccount(),
+    client.getTickerPrice(normalizedSymbol),
+    client.getSymbolFilters(normalizedSymbol)
+  ]);
+
+  const quoteAsset = String(
+    filters?.quoteAsset || inferQuoteAssetFromSymbol(normalizedSymbol) || 'USDC'
+  ).toUpperCase();
+  const baseAsset = String(
+    filters?.baseAsset || inferBaseAssetFromSymbol(normalizedSymbol, quoteAsset) || ''
+  ).toUpperCase() || null;
+  const price = parseNumeric(ticker?.price);
+  if (!price || price <= 0) {
+    throw new Error('Cannot compute ARN limit-only size: invalid ticker price');
+  }
+
+  const freeQuote = extractFreeBalance(account, quoteAsset);
+  const freeBase = baseAsset ? extractFreeBalance(account, baseAsset) : 0;
+  const equityQuote = freeQuote + (freeBase * price);
+  const requestedAmount = equityQuote * (clampedPct / 100);
+
+  return {
+    requestedAmount,
+    equityQuote,
+    investmentPct: clampedPct,
+    freeQuote,
+    freeBase,
+    quoteAsset,
+    baseAsset,
+    price
+  };
+}
+
 function extractSignalPayloadSizingRequest(signal) {
   const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
   const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
@@ -267,6 +348,7 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botName: null,
       strategy: null,
       runtimeOrderType: null,
+      runtimeInvestmentPct: null,
       arnOriginal: false,
       arnLimitOnly: false
     };
@@ -283,6 +365,7 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botName: null,
       strategy: null,
       runtimeOrderType: null,
+      runtimeInvestmentPct: null,
       arnOriginal: false,
       arnLimitOnly: false
     };
@@ -291,6 +374,7 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
   let matchedBotId = null;
   let matchedStrategy = null;
   let matchedOrderType = null;
+  let matchedInvestmentPct = null;
   for (const [botId, entry] of Object.entries(runtimeConfigs)) {
     if (!entry || typeof entry !== 'object') continue;
     const linkedIntegrationId = String(entry?.links?.integrationId || '').trim();
@@ -305,6 +389,13 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       codeParameters?.orderType ||
       codeParameters?.order_type ||
       null;
+    matchedInvestmentPct =
+      parseNumeric(
+        rules?.investmentPercentage ||
+        rules?.investment_percentage ||
+        codeParameters?.investmentPercentage ||
+        codeParameters?.investment_percentage
+      );
     break;
   }
 
@@ -314,6 +405,7 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botName: null,
       strategy: null,
       runtimeOrderType: null,
+      runtimeInvestmentPct: null,
       arnOriginal: false,
       arnLimitOnly: false
     };
@@ -332,6 +424,7 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
     botName,
     strategy: matchedStrategy,
     runtimeOrderType: normalizeOrderType(matchedOrderType, null),
+    runtimeInvestmentPct: matchedInvestmentPct,
     arnOriginal,
     arnLimitOnly
   };
@@ -603,35 +696,31 @@ export async function executePreparedSignal(signalId) {
       const hasRequestedPayloadSizing =
         (payloadSizingRequest.requestedQty && payloadSizingRequest.requestedQty > 0) ||
         (payloadSizingRequest.requestedAmount && payloadSizingRequest.requestedAmount > 0);
-      const payloadSizingApplied =
-        runtimeBot.arnLimitOnly
-          ? hasRequestedPayloadSizing
-          : runtimeBot.arnOriginal && payloadSizingRequested && hasRequestedPayloadSizing;
-      if (runtimeBot.arnLimitOnly && !payloadSizingApplied) {
-        return markSignalExecutionError({
-          signalId,
-          alertId,
-          auditId: executionAuditId,
-          message: 'ARN limit-only bot requires qty or quoteQty in signal payload',
-          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
-        });
-      }
+      let payloadSizingApplied = runtimeBot.arnOriginal && payloadSizingRequested && hasRequestedPayloadSizing;
       const preResolvedLimitPrice = isLimitOrderType(orderType)
         ? resolveSignalLimitPrice(signal, side, null)
         : null;
       let requestedQtyForPayloadSizing = payloadSizingRequest.requestedQty;
       let requestedAmountForPayloadSizing = payloadSizingRequest.requestedAmount;
-      // For limit-only payloads using quoteQty, derive base qty from limitPrice to avoid runtime-risk sizing.
-      if (
-        runtimeBot.arnLimitOnly &&
-        (!requestedQtyForPayloadSizing || requestedQtyForPayloadSizing <= 0) &&
-        requestedAmountForPayloadSizing &&
-        requestedAmountForPayloadSizing > 0 &&
-        preResolvedLimitPrice &&
-        preResolvedLimitPrice > 0
-      ) {
-        requestedQtyForPayloadSizing = requestedAmountForPayloadSizing / preResolvedLimitPrice;
-        requestedAmountForPayloadSizing = null;
+      let arnBalanceSizing = null;
+      if (runtimeBot.arnLimitOnly) {
+        arnBalanceSizing = await resolveArnLimitOnlyBalanceSizing({
+          client: mexcClient,
+          symbol,
+          investmentPct: runtimeBot.runtimeInvestmentPct
+        });
+        requestedQtyForPayloadSizing = null;
+        requestedAmountForPayloadSizing = arnBalanceSizing.requestedAmount;
+        payloadSizingApplied = true;
+      }
+      if (runtimeBot.arnLimitOnly && (!requestedAmountForPayloadSizing || requestedAmountForPayloadSizing <= 0)) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN limit-only computed quote amount is zero. Check exchange balances.',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
       }
       const ignoredPayloadSizing = payloadSizingRequested && !payloadSizingApplied;
 
@@ -651,7 +740,7 @@ export async function executePreparedSignal(signalId) {
             client: mexcClient
           });
       const effectiveSizingSource = payloadSizingApplied
-        ? (runtimeBot.arnLimitOnly ? 'signal_payload_arn_limit_only' : 'pine_payload_arn_original')
+        ? (runtimeBot.arnLimitOnly ? 'balance_pct_arn_limit_only' : 'pine_payload_arn_original')
         : sizing.sizingSource || 'trade_bot_runtime';
       const resolvedAuditBotId = runtimeBot.botId || integration.id;
       const limitPrice = isLimitOrderType(orderType)
@@ -689,6 +778,10 @@ export async function executePreparedSignal(signalId) {
           runtimeBotArnOriginal: runtimeBot.arnOriginal === true,
           runtimeBotArnLimitOnly: runtimeBot.arnLimitOnly === true,
           runtimeOrderType: runtimeOrderType || null,
+          runtimeInvestmentPct: runtimeBot.runtimeInvestmentPct ?? null,
+          arnInvestmentPct: arnBalanceSizing?.investmentPct ?? null,
+          arnAccountEquityQuote: arnBalanceSizing?.equityQuote ?? null,
+          arnRequestedQuoteAmount: arnBalanceSizing?.requestedAmount ?? null,
           orderTypeResolved: orderType,
           orderTypeCoercedForLimitOnly,
           limitPrice: limitPrice || null

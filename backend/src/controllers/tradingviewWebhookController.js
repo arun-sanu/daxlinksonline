@@ -706,13 +706,7 @@ export function createTradingviewWebhookHandler(
         : { arnLimitOnly: false, runtimeOrderType: null };
       const normalizedPayloadForSizing = normalizedSignal.normalizedPayload || candidatePayload;
       const signalQty = resolveSignalQuantity(normalizedPayloadForSizing);
-      const signalQuoteQty = parsePositiveNumber(
-        normalizedPayloadForSizing?.quoteQty ??
-        normalizedPayloadForSizing?.quote_qty ??
-        normalizedPayloadForSizing?.quoteAmount ??
-        normalizedPayloadForSizing?.amount
-      );
-      const allowMissingQtyForLimitOnly = runtimeOrderPolicy.arnLimitOnly && signalQuoteQty !== null;
+      const allowMissingQtyForLimitOnly = runtimeOrderPolicy.arnLimitOnly;
       if (signalQty === null && !allowMissingQtyForLimitOnly) {
         return rejectInbound({
           statusCode: 422,
