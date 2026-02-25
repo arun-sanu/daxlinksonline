@@ -76,6 +76,8 @@ npm run bot:register:arn-s-shcs-limit-only -- --workspaceId=<provider-workspace-
 ARN limit-only service file:
 
 - `python-bot/arn_bot_service_limit_only.py` (FastAPI endpoint: `POST /webhook?token=...`)
+- Supports linked-exchange runtime mode (`RESOLVE_EXCHANGE_FROM_BACKEND=true`) so TradingView webhook signals execute on the exchange account integrated with the bot instance.
+- In linked mode it resolves credentials via `GET /api/v1/internal/bot/runtime-config/:botInstanceId` and reports fills via `POST /api/v1/internal/bot/order-result`.
 
 ## Notes
 
