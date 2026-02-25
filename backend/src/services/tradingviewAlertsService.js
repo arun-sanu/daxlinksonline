@@ -31,6 +31,50 @@ function extractStopLoss(payload) {
   );
 }
 
+function normalizeOrderTypeToken(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized) return null;
+  if (normalized === 'LIMIT') return 'limit';
+  if (normalized === 'LIMIT_MAKER' || normalized === 'POST_ONLY' || normalized === 'POSTONLY' || normalized === 'MAKER') {
+    return 'limit_maker';
+  }
+  if (normalized === 'MARKET') return 'market';
+  return null;
+}
+
+function hasLimitOrderHints(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const keys = ['limitPrice', 'limit_price', 'limitStyle', 'limit_style', 'slippageBps', 'slippage_bps'];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const value = payload[key];
+    if (value !== null && value !== undefined && value !== '') return true;
+  }
+  return false;
+}
+
+function resolveAlertOrderType(normalizedPayload = {}, mergedPayload = {}) {
+  const candidates = [
+    normalizedPayload?.type,
+    normalizedPayload?.orderType,
+    normalizedPayload?.order_type,
+    mergedPayload?.type,
+    mergedPayload?.orderType,
+    mergedPayload?.order_type
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeOrderTypeToken(candidate);
+    if (!normalized) continue;
+    if (normalized === 'market' && hasLimitOrderHints(mergedPayload)) return 'limit';
+    return normalized;
+  }
+  if (hasLimitOrderHints(mergedPayload)) return 'limit';
+  return 'market';
+}
+
 export async function createTradingviewAlert({
   userId,
   payload,
@@ -43,13 +87,14 @@ export async function createTradingviewAlert({
   const mergedPayload = signal.normalizedPayload || payload || {};
   const normalized = normalizePayload(mergedPayload);
   const normalizedSide = signal?.signal?.side ? signal.signal.side.toLowerCase() : normalized.side || null;
+  const resolvedOrderType = resolveAlertOrderType(normalized, mergedPayload);
   const data = {
     userId,
     source: 'tradingview',
     strategyName: extractStrategyFromSignal(mergedPayload),
     symbol: signal?.signal?.symbol || normalized.symbol || null,
     side: normalizedSide,
-    orderType: (normalized.type || 'market').toLowerCase(),
+    orderType: resolvedOrderType,
     quantity: normalized.amount ?? null,
     takeProfit: extractTakeProfit(mergedPayload),
     stopLoss: extractStopLoss(mergedPayload),

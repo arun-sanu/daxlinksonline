@@ -223,6 +223,19 @@ function hasLimitOrderHints(signal) {
   return false;
 }
 
+function hasArnLimitOnlySignalHints(signal) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const sources = [rawPayload, payload];
+  const hasKey = (keys = []) =>
+    sources.some((source) => keys.some((key) => Object.prototype.hasOwnProperty.call(source || {}, key)));
+  return (
+    hasKey(['limitStyle', 'limit_style']) &&
+    hasKey(['slippageBps', 'slippage_bps']) &&
+    hasKey(['quoteQty', 'quote_qty', 'tpPercent', 'tp_percent', 'slAtrMult', 'sl_atr_mult'])
+  );
+}
+
 function pickFirstPositiveNumericValue(sources = [], keys = []) {
   for (const source of sources) {
     if (!source || typeof source !== 'object') continue;
@@ -663,10 +676,11 @@ export async function executePreparedSignal(signalId) {
       const mexcClient = createMexcSpotClient({ apiKey, apiSecret });
       const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
       const runtimeOrderType = normalizeOrderType(runtimeBot.runtimeOrderType, null);
+      const enforceLimitOnlyOrderTypes = runtimeBot.arnLimitOnly || hasArnLimitOnlySignalHints(signal);
       if (orderType === 'MARKET' && hasLimitOrderHints(signal)) {
         orderType = 'LIMIT';
       }
-      const orderTypeCoercedForLimitOnly = runtimeBot.arnLimitOnly && orderType === 'MARKET';
+      const orderTypeCoercedForLimitOnly = enforceLimitOnlyOrderTypes && orderType === 'MARKET';
       if (orderTypeCoercedForLimitOnly) {
         orderType = isLimitOrderType(runtimeOrderType) ? runtimeOrderType : 'LIMIT';
       }
@@ -681,7 +695,7 @@ export async function executePreparedSignal(signalId) {
           auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
         });
       }
-      if (runtimeBot.arnLimitOnly && !isLimitOrderType(orderType)) {
+      if (enforceLimitOnlyOrderTypes && !isLimitOrderType(orderType)) {
         return markSignalExecutionError({
           signalId,
           alertId,
@@ -690,6 +704,40 @@ export async function executePreparedSignal(signalId) {
           auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
         });
       }
+      if (
+        String(signal.type || '').toLowerCase() !== String(orderType || '').toLowerCase() ||
+        String(signal?.payload?.type || '').toLowerCase() !== String(orderType || '').toLowerCase() ||
+        String(signal?.payload?.orderType || '').toUpperCase() !== String(orderType || '').toUpperCase()
+      ) {
+        const existingPayload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+        const normalizedType = String(orderType || '').toLowerCase();
+        signal.type = normalizedType || signal.type;
+        signal.payload = {
+          ...existingPayload,
+          type: normalizedType || existingPayload.type,
+          orderType: orderType || existingPayload.orderType
+        };
+        try {
+          await prisma.forwardedSignal.update({
+            where: { id: signalId },
+            data: {
+              type: normalizedType || signal.type || null,
+              payload: signal.payload
+            }
+          });
+        } catch {
+          // Do not fail execution due to payload bookkeeping write.
+        }
+      }
+      await markExecutionAudit(executionAuditId, {
+        parsedPayload: {
+          ...(signal?.payload && typeof signal.payload === 'object' ? signal.payload : {}),
+          symbol,
+          side,
+          orderType,
+          type: String(orderType || '').toLowerCase()
+        }
+      });
 
       const payloadSizingRequested = hasSignalPayloadSizingHint(signal);
       const payloadSizingRequest = extractSignalPayloadSizingRequest(signal);
@@ -777,6 +825,7 @@ export async function executePreparedSignal(signalId) {
           runtimeBotStrategy: runtimeBot.strategy || null,
           runtimeBotArnOriginal: runtimeBot.arnOriginal === true,
           runtimeBotArnLimitOnly: runtimeBot.arnLimitOnly === true,
+          limitOnlyEnforcedBySignalHints: runtimeBot.arnLimitOnly !== true && enforceLimitOnlyOrderTypes,
           runtimeOrderType: runtimeOrderType || null,
           runtimeInvestmentPct: runtimeBot.runtimeInvestmentPct ?? null,
           arnInvestmentPct: arnBalanceSizing?.investmentPct ?? null,

@@ -56,11 +56,105 @@ function normalizeLimitOrderType(value) {
   return null;
 }
 
+function normalizePrecisionDigits(value) {
+  const parsed = asNumber(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
+}
+
+function precisionStep(digits) {
+  if (!Number.isFinite(digits) || digits < 0) return 0;
+  return 10 ** (-digits);
+}
+
+function stepDecimals(stepNum) {
+  const stepString = String(stepNum || '').trim().toLowerCase();
+  if (!stepString) return 0;
+  if (stepString.includes('e-')) {
+    const [coeff, expPart] = stepString.split('e-');
+    const exp = Number(expPart);
+    if (!Number.isFinite(exp) || exp <= 0) return 0;
+    const coeffDecimals = coeff.includes('.') ? coeff.split('.')[1].replace(/0+$/, '').length : 0;
+    return exp + coeffDecimals;
+  }
+  if (stepString.includes('.')) {
+    return stepString.split('.')[1].replace(/0+$/, '').length;
+  }
+  return 0;
+}
+
+function roundDownToStep(value, step) {
+  const num = asNumber(value);
+  const stepNum = asNumber(step);
+  if (!num || num <= 0) return 0;
+  if (!stepNum || stepNum <= 0) return num;
+  const decimals = Math.max(0, Math.min(stepDecimals(stepNum), 12));
+  const scale = 10 ** decimals;
+  const stepScaled = Math.round(stepNum * scale);
+  if (!stepScaled || stepScaled <= 0) return Number(num.toFixed(decimals));
+  const valueScaled = num * scale;
+  const flooredScaled = Math.floor((valueScaled + 1e-6) / stepScaled) * stepScaled;
+  return Number((flooredScaled / scale).toFixed(decimals));
+}
+
+function roundToPrecision(value, digits, mode = 'floor') {
+  const num = asNumber(value);
+  const precisionDigits = normalizePrecisionDigits(digits);
+  if (!num || num <= 0) return 0;
+  if (precisionDigits === null) return num;
+  const scale = 10 ** precisionDigits;
+  if (!Number.isFinite(scale) || scale <= 0) return num;
+  if (mode === 'ceil') {
+    return Math.ceil((num - 1e-12) * scale) / scale;
+  }
+  return Math.floor((num + 1e-12) * scale) / scale;
+}
+
 function toFixedString(value, maxDecimals = 12) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   const asFixed = numeric.toFixed(maxDecimals).replace(/\.?0+$/, '');
   return asFixed || '0';
+}
+
+function normalizeQuantityForOrder(quantity, filters = null) {
+  const qtyNum = asNumber(quantity);
+  if (!qtyNum || qtyNum <= 0) return null;
+  const qtyStep = asNumber(filters?.stepSize) || 0;
+  const qtyPrecision = normalizePrecisionDigits(filters?.quantityPrecision ?? filters?.baseAssetPrecision);
+  let normalized = qtyNum;
+  if (qtyStep > 0) normalized = roundDownToStep(normalized, qtyStep);
+  normalized = roundToPrecision(normalized, qtyPrecision, 'floor');
+  if (qtyStep > 0) normalized = roundDownToStep(normalized, qtyStep);
+  if (!normalized || normalized <= 0) return null;
+  const stepDigits = qtyStep > 0 ? stepDecimals(qtyStep) : 12;
+  const maxDecimals = Math.max(0, Math.min(12, qtyPrecision === null ? stepDigits : Math.min(stepDigits, qtyPrecision)));
+  return toFixedString(normalized, maxDecimals);
+}
+
+function normalizePriceForOrder(price, filters = null, side = null) {
+  const priceNum = asNumber(price);
+  if (!priceNum || priceNum <= 0) return null;
+  const normalizedSide = normalizeSide(side) || 'BUY';
+  const priceStep = asNumber(filters?.tickSize) || 0;
+  const pricePrecision = normalizePrecisionDigits(filters?.pricePrecision ?? filters?.quotePrecision);
+  const roundingMode = normalizedSide === 'SELL' ? 'ceil' : 'floor';
+  let normalized = priceNum;
+  if (priceStep > 0) {
+    normalized = roundingMode === 'ceil'
+      ? roundToPrecision(Math.ceil((normalized - 1e-12) / priceStep) * priceStep, 12, 'ceil')
+      : roundDownToStep(normalized, priceStep);
+  }
+  normalized = roundToPrecision(normalized, pricePrecision, roundingMode);
+  if (priceStep > 0) {
+    normalized = roundingMode === 'ceil'
+      ? roundToPrecision(Math.ceil((normalized - 1e-12) / priceStep) * priceStep, 12, 'ceil')
+      : roundDownToStep(normalized, priceStep);
+  }
+  if (!normalized || normalized <= 0) return null;
+  const stepDigits = priceStep > 0 ? stepDecimals(priceStep) : 12;
+  const maxDecimals = Math.max(0, Math.min(12, pricePrecision === null ? stepDigits : Math.min(stepDigits, pricePrecision)));
+  return toFixedString(normalized, maxDecimals);
 }
 
 export function extractSymbolFilters(exchangeInfoPayload, symbol) {
@@ -78,10 +172,21 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
     asNumber(symbolInfo?.quoteAmountPrecision) ||
     asNumber(symbolInfo?.minQuoteAmount) ||
     0;
-  const basePrecision = asNumber(symbolInfo?.baseSizePrecision);
-  const stepSize = basePrecision && basePrecision > 0
-    ? basePrecision
+  const baseSizePrecision = asNumber(symbolInfo?.baseSizePrecision);
+  const baseAssetPrecision = normalizePrecisionDigits(symbolInfo?.baseAssetPrecision);
+  const quotePrecision = normalizePrecisionDigits(symbolInfo?.quotePrecision);
+  const precisionStepSize = precisionStep(baseAssetPrecision);
+  const rawStepSize = baseSizePrecision && baseSizePrecision > 0
+    ? baseSizePrecision
     : asNumber(lotSize.stepSize) || 0;
+  const stepSize = rawStepSize > 0
+    ? (precisionStepSize > 0 ? Math.max(rawStepSize, precisionStepSize) : rawStepSize)
+    : precisionStepSize;
+  const rawTickSize = asNumber(priceFilter.tickSize) || 0;
+  const precisionTickSize = precisionStep(quotePrecision);
+  const tickSize = rawTickSize > 0
+    ? (precisionTickSize > 0 ? Math.max(rawTickSize, precisionTickSize) : rawTickSize)
+    : precisionTickSize;
   const minNotional =
     asNumber(minNotionalFilter.minNotional) ||
     asNumber(minNotionalFilter.notional) ||
@@ -92,8 +197,12 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
     baseAsset: symbolInfo?.baseAsset || null,
     quoteAsset: symbolInfo?.quoteAsset || null,
     orderTypes: Array.isArray(symbolInfo?.orderTypes) ? symbolInfo.orderTypes : [],
+    baseAssetPrecision,
+    quotePrecision,
+    quantityPrecision: baseAssetPrecision,
+    pricePrecision: quotePrecision,
     stepSize,
-    tickSize: asNumber(priceFilter.tickSize) || 0,
+    tickSize,
     minQty: asNumber(lotSize.minQty) || 0,
     minNotional
   };
@@ -201,7 +310,8 @@ export function createMexcSpotClient({
     async placeMarketOrderBaseQty({ symbol, side, quantity, newClientOrderId }) {
       const normalizedSymbol = String(symbol || '').toUpperCase();
       const normalizedSide = normalizeSide(side);
-      const qty = toFixedString(quantity, 12);
+      const filters = await this.getSymbolFilters(normalizedSymbol).catch(() => null);
+      const qty = normalizeQuantityForOrder(quantity, filters);
       if (!normalizedSymbol) throw new Error('symbol is required for MEXC order');
       if (!normalizedSide) throw new Error('side must be BUY or SELL');
       if (!qty || Number(qty) <= 0) throw new Error('quantity must be > 0');
@@ -234,8 +344,9 @@ export function createMexcSpotClient({
       const normalizedSymbol = String(symbol || '').toUpperCase();
       const normalizedSide = normalizeSide(side);
       const normalizedType = normalizeLimitOrderType(orderType);
-      const qty = toFixedString(quantity, 12);
-      const limitPrice = toFixedString(price, 12);
+      const filters = await this.getSymbolFilters(normalizedSymbol).catch(() => null);
+      const qty = normalizeQuantityForOrder(quantity, filters);
+      const limitPrice = normalizePriceForOrder(price, filters, normalizedSide);
       if (!normalizedSymbol) throw new Error('symbol is required for MEXC order');
       if (!normalizedSide) throw new Error('side must be BUY or SELL');
       if (!normalizedType) throw new Error('orderType must be LIMIT or LIMIT_MAKER');

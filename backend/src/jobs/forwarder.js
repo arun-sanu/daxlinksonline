@@ -12,6 +12,60 @@ import {
 } from '../services/executionAuditService.js';
 import { normalizeSignalTimestamp } from '../services/tradingviewSignalService.js';
 
+function normalizeOrderTypeToken(value) {
+  const type = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!type) return null;
+  if (type === 'MARKET') return 'MARKET';
+  if (type === 'LIMIT') return 'LIMIT';
+  if (type === 'LIMIT_MAKER' || type === 'POST_ONLY' || type === 'POSTONLY' || type === 'MAKER') return 'LIMIT_MAKER';
+  return null;
+}
+
+function hasLimitOrderHints(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const keys = [
+    'limitPrice',
+    'limit_price',
+    'limitStyle',
+    'limit_style',
+    'slippageBps',
+    'slippage_bps',
+    'postOnly',
+    'post_only'
+  ];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const value = payload[key];
+    if (value !== null && value !== undefined && value !== '') return true;
+  }
+  return false;
+}
+
+function resolveNormalizedOrderType(normalizedInput = {}) {
+  const payload = normalizedInput?.raw && typeof normalizedInput.raw === 'object' ? normalizedInput.raw : {};
+  const mappedOrder =
+    payload?.mappedOrder && typeof payload.mappedOrder === 'object' ? payload.mappedOrder : {};
+  const candidates = [
+    payload?.orderType,
+    payload?.order_type,
+    mappedOrder?.orderType,
+    mappedOrder?.order_type,
+    payload?.type,
+    normalizedInput?.type
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeOrderTypeToken(candidate);
+    if (!normalized) continue;
+    if (normalized === 'MARKET' && hasLimitOrderHints(payload)) return 'limit';
+    return normalized.toLowerCase();
+  }
+  if (hasLimitOrderHints(payload)) return 'limit';
+  return 'market';
+}
+
 export async function processForwardJob(job) {
   const { userId, payload, alertId, executionAuditId } = job.data || {};
   if (!userId) return;
@@ -19,7 +73,7 @@ export async function processForwardJob(job) {
     const normalizedInput = normalizePayload(payload);
     const normalized = {
       ...normalizedInput,
-      type: normalizedInput.type || 'market'
+      type: resolveNormalizedOrderType(normalizedInput)
     };
     const tvTs = normalizeSignalTimestamp(payload?.ts ?? payload?.timestamp ?? payload?.time);
     const idemKey = computeIdempotencyKey({ userId, normalized });
