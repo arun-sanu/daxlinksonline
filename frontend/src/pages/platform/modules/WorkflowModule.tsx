@@ -1526,7 +1526,7 @@ export default function WorkflowModule() {
   }
 
   const tabRail = (
-    <nav className="grid grid-cols-3 gap-2 sm:w-fit">
+    <nav className="grid w-full max-w-[30rem] grid-cols-3 gap-2">
       {WORKFLOW_TAB_ITEMS.map((tab) => {
         const isActive = activeTab === tab.key;
         const Icon = tab.icon;
@@ -1534,7 +1534,7 @@ export default function WorkflowModule() {
           <Link
             key={tab.key}
             to={`/platform/workflow/${tab.key}`}
-            className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition sm:w-40 ${
+            className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
                 : 'border-white/10 bg-transparent text-white/80 hover:border-primary-400/40 hover:bg-primary-500/10'
@@ -1651,31 +1651,47 @@ export default function WorkflowModule() {
         <section
           className={`grid gap-6 ${
             activeTab === 'rules'
-              ? 'lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] lg:gap-x-8 lg:items-start'
+              ? 'lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] lg:gap-x-10 lg:items-start'
               : 'lg:grid-cols-[minmax(0,31rem)_minmax(0,1fr)] lg:gap-x-24 lg:items-start'
           }`}
         >
-          <div className="space-y-4">
-            {tabRail}
-            {activeTab === 'rules' && (
-              <nav className="card-shell space-y-3 border border-white/10 bg-black/60 p-4">
-                <p className="section-label">Rules Navbar</p>
-                <div className="flex flex-col gap-2">
-                  {rulesQuickNavItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-left text-xs uppercase tracking-[0.16em] text-gray-200 transition hover:border-primary-300/45 hover:text-white"
-                      onClick={() => scrollToRulesSection(item.id)}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </nav>
-            )}
-          </div>
+          <div className="space-y-4">{tabRail}</div>
           <div className="space-y-6">
+        {activeTab === 'rules' && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Rules Widgets</p>
+                <p className="text-sm text-gray-300">Real-time coverage for routing rules.</p>
+              </div>
+              <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
+                Health {rulesHealthPct}%
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Total Rules</p>
+                <p className="mt-2 text-xl font-semibold text-white">{safeRules.length}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Active Rules</p>
+                <p className="mt-2 text-xl font-semibold text-white">{activeRulesCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Sources</p>
+                <p className="mt-2 text-xl font-semibold text-white">{routedSourceCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Destinations</p>
+                <p className="mt-2 text-xl font-semibold text-white">{routedDestinationCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Unique Routes</p>
+                <p className="mt-2 text-xl font-semibold text-white">{uniqueRoutePairsCount}</p>
+              </article>
+            </div>
+          </div>
+        )}
         {activeTab === 'overview' && (
           <>
             <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -1763,398 +1779,6 @@ export default function WorkflowModule() {
               ))}
             </div>
           </section>
-        )}
-
-        {activeTab === 'rules' && (
-          <>
-      <section className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="section-label">Rules Widgets</p>
-            <p className="text-sm text-gray-300">Real-time coverage for routing rules.</p>
-          </div>
-          <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
-            Health {rulesHealthPct}%
-          </span>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Total Rules</p>
-            <p className="mt-2 text-xl font-semibold text-white">{safeRules.length}</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Active Rules</p>
-            <p className="mt-2 text-xl font-semibold text-white">{activeRulesCount}</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Sources</p>
-            <p className="mt-2 text-xl font-semibold text-white">{routedSourceCount}</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Routed Destinations</p>
-            <p className="mt-2 text-xl font-semibold text-white">{routedDestinationCount}</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Unique Routes</p>
-            <p className="mt-2 text-xl font-semibold text-white">{uniqueRoutePairsCount}</p>
-          </article>
-        </div>
-      </section>
-
-      <section
-        id="rules-signal-sources"
-        className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
-        style={{ scrollMarginTop: '7rem' }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-2">
-            <p className="section-label">Signal Sources</p>
-            <p className="text-sm text-gray-300">Webhooks & bots pulled from backend.</p>
-          </div>
-        </div>
-        <ul className="space-y-2 text-sm text-gray-200">
-          {safeNodes
-            .filter((n) => n.role === 'source')
-            .map((n) => (
-              <li key={n.id} className={`flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5 ${mode === 'create' && selectedSource === n.id ? 'ring-2 ring-sky-300' : ''}`}>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span>{n.label}</span>
-                    <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
-                  </div>
-                  {n.id === 'tradingview' ? (
-                    n.dnsRecords && n.dnsRecords.length > 0 ? (
-                      <div className="space-y-1 text-[11px] text-gray-400">
-                        {n.dnsRecords.map((record, idx) => (
-                          <div key={`${record.subdomain || 'dns'}-${idx}`} className="space-y-0.5">
-                            <span className="block text-gray-300">
-                              {record.subdomain || n.subdomain || 'DNS record'}
-                            </span>
-                            <span className="block font-mono text-gray-400 break-all">
-                              {record.url || n.url || 'Ingress not provisioned'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : n.url ? (
-                      <p className="text-[11px] font-mono text-gray-400 break-all">{n.url}</p>
-                    ) : (
-                      <p className="text-[11px] text-gray-500">Ingress not provisioned</p>
-                    )
-                  ) : (
-                    n.description && <p className="text-[11px] text-gray-400 break-all">{n.description}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <button
-                    className="rounded-lg border border-white/15 px-2 py-1 text-gray-200 hover:border-white/40"
-                    onClick={() =>
-                      setRuleModal({
-                        open: true,
-                        draft: {
-                          sourceWebhookId: n.id,
-                          destinationIntegrationId: '',
-                          enabled: true
-                        }
-                      })
-                    }
-                  >
-                    Add routing rule
-                  </button>
-                  <button
-                    className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
-                    onClick={() =>
-                      setRuleModal({
-                        open: true,
-                        draft: {
-                          sourceWebhookId: n.id,
-                          destinationIntegrationId: '',
-                          enabled: true
-                        }
-                      })
-                    }
-                  >
-                    Configure
-                  </button>
-                </div>
-              </li>
-            ))}
-          {!safeNodes.filter((n) => n.role === 'source').length && (
-            <li className="px-3 py-2 text-gray-500 text-sm">No sources found. Create a webhook to begin routing.</li>
-          )}
-        </ul>
-      </section>
-
-      <section
-        id="rules-destinations"
-        className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
-        style={{ scrollMarginTop: '7rem' }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-2">
-            <p className="section-label">Destinations</p>
-            <p className="text-sm text-gray-300">Integrations pulled from backend.</p>
-          </div>
-        </div>
-        <ul className="space-y-2 text-sm text-gray-200">
-          {safeNodes
-            .filter((n) => n.role === 'destination')
-            .map((n) => (
-              <li key={n.id} className="flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span>{n.label}</span>
-                    <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
-                  </div>
-                  {(n.exchange || n.apiKeyMasked) && (
-                    <p className="text-[11px] text-gray-400">
-                      {[n.exchange ? n.exchange.toUpperCase() : null, n.apiKeyMasked ? `API ${n.apiKeyMasked}` : null]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <button
-                    className="rounded-lg border border-white/15 px-2 py-1 text-gray-200 hover:border-white/40"
-                    onClick={() =>
-                      setRuleModal({
-                        open: true,
-                        draft: {
-                          sourceWebhookId: '',
-                          destinationIntegrationId: n.id,
-                          enabled: true
-                        }
-                      })
-                    }
-                  >
-                    Add routing rule
-                  </button>
-                  <button
-                    className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
-                    onClick={() =>
-                      setRuleModal({
-                        open: true,
-                        draft: {
-                          sourceWebhookId: '',
-                          destinationIntegrationId: n.id,
-                          enabled: true
-                        }
-                      })
-                    }
-                  >
-                    Configure
-                  </button>
-                </div>
-              </li>
-            ))}
-          {!safeNodes.filter((n) => n.role === 'destination').length && (
-            <li className="px-3 py-2 text-gray-500 text-sm">No destinations found. Connect an integration.</li>
-          )}
-        </ul>
-      </section>
-
-      <section
-        id="rules-routing-rules"
-        className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
-        style={{ scrollMarginTop: '7rem' }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="section-label">Routing Rules</p>
-            <p className="text-sm text-gray-300">Source → destination guardrails synced with backend.</p>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <button
-              className="btn btn-white-animated btn-small"
-              onClick={() =>
-                setRuleModal({
-                  open: true,
-                  draft: {
-                    sourceWebhookId: selectedSource || '',
-                    destinationIntegrationId: '',
-                    enabled: true
-                  }
-                })
-              }
-            >
-              New rule
-            </button>
-          </div>
-        </div>
-        <div className="overflow-x-auto rounded-xl border border-white/10">
-          <div className="min-w-[1120px]">
-            <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] gap-3 bg-white/5 px-4 py-2 text-[11px] uppercase tracking-[0.18em] text-gray-500">
-              <span>Source</span>
-              <span>Destination</span>
-              <span>Symbols</span>
-              <span>Sides / Min</span>
-              <span>Status</span>
-              <span className="text-right">Actions</span>
-            </div>
-            {safeRules.length === 0 && <p className="px-4 py-6 text-sm text-gray-500">No routing rules saved yet.</p>}
-            {safeRules.map((rule) => (
-              <div
-                key={rule.id}
-                className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] items-start gap-3 border-t border-white/5 px-4 py-3 text-sm text-gray-100"
-              >
-                <div className="min-w-0 truncate">
-                  <p className="font-semibold text-white">{labelForNode(rule.sourceWebhookId)}</p>
-                </div>
-                <div className="min-w-0 truncate">
-                  <p className="font-semibold text-white">{labelForNode(rule.destinationIntegrationId)}</p>
-                </div>
-                <div className="min-w-0 truncate text-gray-300">{rule.symbols?.length ? rule.symbols.join(', ') : '*'}</div>
-                <div className="min-w-0 truncate text-gray-300">
-                  {rule.allowedSides?.length ? rule.allowedSides.join('/') : 'both'} · {rule.minNotional != null ? `min ${rule.minNotional}` : 'no min'}
-                </div>
-                <div className="pt-0.5 text-gray-300">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
-                      rule.enabled === false ? 'bg-gray-700 text-gray-300' : 'bg-emerald-700/60 text-emerald-100'
-                    }`}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${rule.enabled === false ? 'bg-gray-400' : 'bg-emerald-300'}`} />
-                    {rule.enabled === false ? 'Disabled' : 'Enabled'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 text-xs">
-                  <button
-                    className="px-3 py-1 rounded-lg border border-amber-300/40 text-amber-100 hover:border-amber-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled === false}
-                    onClick={() => handleRuleLifecycleAction(rule.id, 'pause')}
-                  >
-                    Pause
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded-lg border border-emerald-300/40 text-emerald-100 hover:border-emerald-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled !== false}
-                    onClick={() => handleRuleLifecycleAction(rule.id, 'resume')}
-                  >
-                    Resume
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded-lg border border-primary-300/40 text-primary-100 hover:border-primary-200/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={savingRules || ruleActionTargetId === rule.id}
-                    onClick={() => handleRuleLifecycleAction(rule.id, 'restart')}
-                  >
-                    Restart
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded-lg border border-white/10 text-gray-200 hover:border-white/30"
-                    disabled={savingRules || ruleActionTargetId === rule.id}
-                    onClick={() =>
-                      setRuleModal({
-                        open: true,
-                        draft: {
-                          ...rule
-                        }
-                      })
-                    }
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded-lg border border-red-400/40 text-red-200 hover:border-red-300/80"
-                    disabled={savingRules || ruleActionTargetId === rule.id}
-                    onClick={() => handleRuleLifecycleAction(rule.id, 'delete')}
-                  >
-                    Delete
-                  </button>
-                  {ruleActionTargetId === rule.id && (
-                    <span className="px-2 py-1 rounded-lg border border-primary-300/40 text-primary-100">
-                      {ruleActionInFlight}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section
-        id="rules-resources"
-        className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
-        style={{ scrollMarginTop: '7rem' }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="section-label">Resources</p>
-            <p className="text-sm text-gray-300">Quick references for routing setup and troubleshooting.</p>
-          </div>
-          <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
-            workflow tools
-          </span>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Rule Editor</p>
-            <p className="mt-2 text-sm text-gray-200">Use <span className="text-white">New rule</span> to map source to destination.</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Lifecycle</p>
-            <p className="mt-2 text-sm text-gray-200">Pause, resume, restart, or delete each route safely.</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Health Tracking</p>
-            <p className="mt-2 text-sm text-gray-200">Monitor rule health from the widgets in this view.</p>
-          </article>
-          <article className="rounded-xl border border-white/10 bg-black/30 p-3">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Connectivity</p>
-            <p className="mt-2 text-sm text-gray-200">Validate destination integration before enabling rules.</p>
-          </article>
-        </div>
-      </section>
-
-      <section
-        id="rules-dax-assistant"
-        className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60"
-        style={{ scrollMarginTop: '7rem' }}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="section-label">DAX [Assistant]</p>
-            <p className="text-sm text-gray-300">Suggested prompts to speed up rule operations.</p>
-          </div>
-          <span className="rounded-full border border-primary-300/35 bg-primary-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-primary-100">
-            assistant
-          </span>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <button
-            type="button"
-            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
-            onClick={() => setReloadNonce((value) => value + 1)}
-          >
-            Refresh rules and recalculate health.
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
-            onClick={() =>
-              setRuleModal({
-                open: true,
-                draft: {
-                  sourceWebhookId: selectedSource || '',
-                  destinationIntegrationId: '',
-                  enabled: true
-                }
-              })
-            }
-          >
-            Create a new route from current source selection.
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
-            onClick={() => navigate('/platform/workflow/logs-events')}
-          >
-            Open Logs + Events to inspect execution failures.
-          </button>
-        </div>
-      </section>
-          </>
         )}
 
         {activeTab === 'graph' && (
@@ -2431,6 +2055,377 @@ export default function WorkflowModule() {
         )}
           </div>
         </section>
+
+      {activeTab === 'rules' && (
+        <div className="mt-5 space-y-4">
+          <nav className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/40 px-3 py-2">
+            {rulesQuickNavItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs uppercase tracking-[0.16em] text-gray-200 transition hover:border-primary-300/45 hover:text-white"
+                onClick={() => scrollToRulesSection(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <section
+            id="rules-signal-sources"
+            className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
+            style={{ scrollMarginTop: '7rem' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-2">
+                <p className="section-label">Signal Sources</p>
+                <p className="text-sm text-gray-300">Webhooks & bots pulled from backend.</p>
+              </div>
+            </div>
+            <ul className="space-y-2 text-sm text-gray-200">
+              {safeNodes
+                .filter((n) => n.role === 'source')
+                .map((n) => (
+                  <li key={n.id} className={`flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5 ${mode === 'create' && selectedSource === n.id ? 'ring-2 ring-sky-300' : ''}`}>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span>{n.label}</span>
+                        <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                      </div>
+                      {n.id === 'tradingview' ? (
+                        n.dnsRecords && n.dnsRecords.length > 0 ? (
+                          <div className="space-y-1 text-[11px] text-gray-400">
+                            {n.dnsRecords.map((record, idx) => (
+                              <div key={`${record.subdomain || 'dns'}-${idx}`} className="space-y-0.5">
+                                <span className="block text-gray-300">
+                                  {record.subdomain || n.subdomain || 'DNS record'}
+                                </span>
+                                <span className="block font-mono text-gray-400 break-all">
+                                  {record.url || n.url || 'Ingress not provisioned'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : n.url ? (
+                          <p className="text-[11px] font-mono text-gray-400 break-all">{n.url}</p>
+                        ) : (
+                          <p className="text-[11px] text-gray-500">Ingress not provisioned</p>
+                        )
+                      ) : (
+                        n.description && <p className="text-[11px] text-gray-400 break-all">{n.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <button
+                        className="rounded-lg border border-white/15 px-2 py-1 text-gray-200 hover:border-white/40"
+                        onClick={() =>
+                          setRuleModal({
+                            open: true,
+                            draft: {
+                              sourceWebhookId: n.id,
+                              destinationIntegrationId: '',
+                              enabled: true
+                            }
+                          })
+                        }
+                      >
+                        Add routing rule
+                      </button>
+                      <button
+                        className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
+                        onClick={() =>
+                          setRuleModal({
+                            open: true,
+                            draft: {
+                              sourceWebhookId: n.id,
+                              destinationIntegrationId: '',
+                              enabled: true
+                            }
+                          })
+                        }
+                      >
+                        Configure
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              {!safeNodes.filter((n) => n.role === 'source').length && (
+                <li className="px-3 py-2 text-gray-500 text-sm">No sources found. Create a webhook to begin routing.</li>
+              )}
+            </ul>
+          </section>
+
+          <section
+            id="rules-destinations"
+            className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
+            style={{ scrollMarginTop: '7rem' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-2">
+                <p className="section-label">Destinations</p>
+                <p className="text-sm text-gray-300">Integrations pulled from backend.</p>
+              </div>
+            </div>
+            <ul className="space-y-2 text-sm text-gray-200">
+              {safeNodes
+                .filter((n) => n.role === 'destination')
+                .map((n) => (
+                  <li key={n.id} className="flex items-center justify-between border border-white/10 rounded-xl px-3 py-2 bg-white/5">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span>{n.label}</span>
+                        <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{n.type}</span>
+                      </div>
+                      {(n.exchange || n.apiKeyMasked) && (
+                        <p className="text-[11px] text-gray-400">
+                          {[n.exchange ? n.exchange.toUpperCase() : null, n.apiKeyMasked ? `API ${n.apiKeyMasked}` : null]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <button
+                        className="rounded-lg border border-white/15 px-2 py-1 text-gray-200 hover:border-white/40"
+                        onClick={() =>
+                          setRuleModal({
+                            open: true,
+                            draft: {
+                              sourceWebhookId: '',
+                              destinationIntegrationId: n.id,
+                              enabled: true
+                            }
+                          })
+                        }
+                      >
+                        Add routing rule
+                      </button>
+                      <button
+                        className="rounded-lg border border-white/10 px-2 py-1 text-gray-200 hover:border-white/40"
+                        onClick={() =>
+                          setRuleModal({
+                            open: true,
+                            draft: {
+                              sourceWebhookId: '',
+                              destinationIntegrationId: n.id,
+                              enabled: true
+                            }
+                          })
+                        }
+                      >
+                        Configure
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              {!safeNodes.filter((n) => n.role === 'destination').length && (
+                <li className="px-3 py-2 text-gray-500 text-sm">No destinations found. Connect an integration.</li>
+              )}
+            </ul>
+          </section>
+
+          <section
+            id="rules-routing-rules"
+            className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
+            style={{ scrollMarginTop: '7rem' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Routing Rules</p>
+                <p className="text-sm text-gray-300">Source → destination guardrails synced with backend.</p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  className="btn btn-white-animated btn-small"
+                  onClick={() =>
+                    setRuleModal({
+                      open: true,
+                      draft: {
+                        sourceWebhookId: selectedSource || '',
+                        destinationIntegrationId: '',
+                        enabled: true
+                      }
+                    })
+                  }
+                >
+                  New rule
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+              <div className="min-w-[1120px]">
+                <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] gap-3 bg-white/5 px-4 py-2 text-[11px] uppercase tracking-[0.18em] text-gray-500">
+                  <span>Source</span>
+                  <span>Destination</span>
+                  <span>Symbols</span>
+                  <span>Sides / Min</span>
+                  <span>Status</span>
+                  <span className="text-right">Actions</span>
+                </div>
+                {safeRules.length === 0 && <p className="px-4 py-6 text-sm text-gray-500">No routing rules saved yet.</p>}
+                {safeRules.map((rule) => (
+                  <div
+                    key={rule.id}
+                    className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.45fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,2.2fr)] items-start gap-3 border-t border-white/5 px-4 py-3 text-sm text-gray-100"
+                  >
+                    <div className="min-w-0 truncate">
+                      <p className="font-semibold text-white">{labelForNode(rule.sourceWebhookId)}</p>
+                    </div>
+                    <div className="min-w-0 truncate">
+                      <p className="font-semibold text-white">{labelForNode(rule.destinationIntegrationId)}</p>
+                    </div>
+                    <div className="min-w-0 truncate text-gray-300">{rule.symbols?.length ? rule.symbols.join(', ') : '*'}</div>
+                    <div className="min-w-0 truncate text-gray-300">
+                      {rule.allowedSides?.length ? rule.allowedSides.join('/') : 'both'} · {rule.minNotional != null ? `min ${rule.minNotional}` : 'no min'}
+                    </div>
+                    <div className="pt-0.5 text-gray-300">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+                          rule.enabled === false ? 'bg-gray-700 text-gray-300' : 'bg-emerald-700/60 text-emerald-100'
+                        }`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${rule.enabled === false ? 'bg-gray-400' : 'bg-emerald-300'}`} />
+                        {rule.enabled === false ? 'Disabled' : 'Enabled'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2 text-xs">
+                      <button
+                        className="px-3 py-1 rounded-lg border border-amber-300/40 text-amber-100 hover:border-amber-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled === false}
+                        onClick={() => handleRuleLifecycleAction(rule.id, 'pause')}
+                      >
+                        Pause
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded-lg border border-emerald-300/40 text-emerald-100 hover:border-emerald-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={savingRules || ruleActionTargetId === rule.id || rule.enabled !== false}
+                        onClick={() => handleRuleLifecycleAction(rule.id, 'resume')}
+                      >
+                        Resume
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded-lg border border-primary-300/40 text-primary-100 hover:border-primary-200/70 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={savingRules || ruleActionTargetId === rule.id}
+                        onClick={() => handleRuleLifecycleAction(rule.id, 'restart')}
+                      >
+                        Restart
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded-lg border border-white/10 text-gray-200 hover:border-white/30"
+                        disabled={savingRules || ruleActionTargetId === rule.id}
+                        onClick={() =>
+                          setRuleModal({
+                            open: true,
+                            draft: {
+                              ...rule
+                            }
+                          })
+                        }
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded-lg border border-red-400/40 text-red-200 hover:border-red-300/80"
+                        disabled={savingRules || ruleActionTargetId === rule.id}
+                        onClick={() => handleRuleLifecycleAction(rule.id, 'delete')}
+                      >
+                        Delete
+                      </button>
+                      {ruleActionTargetId === rule.id && (
+                        <span className="px-2 py-1 rounded-lg border border-primary-300/40 text-primary-100">
+                          {ruleActionInFlight}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section
+            id="rules-resources"
+            className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
+            style={{ scrollMarginTop: '7rem' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Resources</p>
+                <p className="text-sm text-gray-300">Quick references for routing setup and troubleshooting.</p>
+              </div>
+              <span className="rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-300">
+                workflow tools
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Rule Editor</p>
+                <p className="mt-2 text-sm text-gray-200">Use <span className="text-white">New rule</span> to map source to destination.</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Lifecycle</p>
+                <p className="mt-2 text-sm text-gray-200">Pause, resume, restart, or delete each route safely.</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Health Tracking</p>
+                <p className="mt-2 text-sm text-gray-200">Monitor rule health from the widgets in this view.</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/30 p-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Connectivity</p>
+                <p className="mt-2 text-sm text-gray-200">Validate destination integration before enabling rules.</p>
+              </article>
+            </div>
+          </section>
+
+          <section
+            id="rules-dax-assistant"
+            className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60"
+            style={{ scrollMarginTop: '7rem' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">DAX [Assistant]</p>
+                <p className="text-sm text-gray-300">Suggested prompts to speed up rule operations.</p>
+              </div>
+              <span className="rounded-full border border-primary-300/35 bg-primary-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-primary-100">
+                assistant
+              </span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+                onClick={() => setReloadNonce((value) => value + 1)}
+              >
+                Refresh rules and recalculate health.
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+                onClick={() =>
+                  setRuleModal({
+                    open: true,
+                    draft: {
+                      sourceWebhookId: selectedSource || '',
+                      destinationIntegrationId: '',
+                      enabled: true
+                    }
+                  })
+                }
+              >
+                Create a new route from current source selection.
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-left text-sm text-gray-200 transition hover:border-white/30"
+                onClick={() => navigate('/platform/workflow/logs-events')}
+              >
+                Open Logs + Events to inspect execution failures.
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {detailInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setDetailInfo(null)}>
