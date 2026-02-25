@@ -34,7 +34,7 @@ const MODULE_COMPONENTS: Record<string, () => JSX.Element> = {
 };
 
 export default function PlatformModulePage() {
-  const { moduleId, tabId } = useParams();
+  const { moduleId, tabId, subTabId } = useParams();
   const navigate = useNavigate();
   const [now, setNow] = useState(() => new Date());
 
@@ -75,7 +75,7 @@ export default function PlatformModulePage() {
       </header>
 
       <section className="space-y-6">
-        <Detail key={`${moduleId}:${tabId || ''}`} />
+        <Detail key={`${moduleId}:${tabId || ''}:${subTabId || ''}`} />
       </section>
     </div>
   );

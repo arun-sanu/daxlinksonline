@@ -22,11 +22,24 @@ const BOT_LINKS_STORAGE_KEY = 'dax_trade_bot_links_v1';
 const BOT_CANONICAL_NAME = 'moneyplantbot1-robot';
 type WorkflowRouteTabKey = 'graph' | 'pipeline' | 'rules' | 'logs-events';
 type WorkflowTabKey = WorkflowRouteTabKey | 'overview';
+type WorkflowRulesSectionKey = 'routing-rules' | 'destinations' | 'signal-sources' | 'resources' | 'dax-assistant';
 const WORKFLOW_ROUTE_TAB_KEYS: WorkflowRouteTabKey[] = ['graph', 'pipeline', 'rules', 'logs-events'];
+const WORKFLOW_RULES_SECTION_KEYS: WorkflowRulesSectionKey[] = [
+  'routing-rules',
+  'destinations',
+  'signal-sources',
+  'resources',
+  'dax-assistant'
+];
 
 function isWorkflowRouteTabKey(value: string | null | undefined): value is WorkflowRouteTabKey {
   if (!value) return false;
   return WORKFLOW_ROUTE_TAB_KEYS.includes(value as WorkflowRouteTabKey);
+}
+
+function isWorkflowRulesSectionKey(value: string | null | undefined): value is WorkflowRulesSectionKey {
+  if (!value) return false;
+  return WORKFLOW_RULES_SECTION_KEYS.includes(value as WorkflowRulesSectionKey);
 }
 
 const WORKFLOW_TAB_ITEMS: { key: WorkflowRouteTabKey; label: string; icon: LucideIcon }[] = [
@@ -34,6 +47,14 @@ const WORKFLOW_TAB_ITEMS: { key: WorkflowRouteTabKey; label: string; icon: Lucid
   { key: 'pipeline', label: 'Pipeline', icon: GanttChartSquare },
   { key: 'rules', label: 'Rules', icon: FileText },
   { key: 'logs-events', label: 'Logs + Events', icon: Activity }
+];
+
+const WORKFLOW_RULES_SECTION_ITEMS: { key: WorkflowRulesSectionKey; label: string }[] = [
+  { key: 'routing-rules', label: 'Routing Rules' },
+  { key: 'destinations', label: 'Destinations' },
+  { key: 'signal-sources', label: 'Signal Sources' },
+  { key: 'resources', label: 'Resources' },
+  { key: 'dax-assistant', label: 'DAX [Assistant]' }
 ];
 
 type BotConnectivityLink = {
@@ -892,9 +913,10 @@ function EdgeLine({ edge, nodes, onSelect }: { edge: WorkflowEdge; nodes: Workfl
 
 export default function WorkflowModule() {
   console.log('[WM] Render started');
-  const { tabId } = useParams<{ tabId?: string }>();
+  const { tabId, subTabId } = useParams<{ tabId?: string; subTabId?: string }>();
   const navigate = useNavigate();
   const activeTab: WorkflowTabKey = isWorkflowRouteTabKey(tabId) ? tabId : 'overview';
+  const activeRulesSection: WorkflowRulesSectionKey = isWorkflowRulesSectionKey(subTabId) ? subTabId : 'routing-rules';
   const [nodes, setNodes] = useState<WorkflowNode[] | null>([]);
   const [edges, setEdges] = useState<WorkflowEdge[]>([]);
   const [events, setEvents] = useState<WorkflowEvent[]>([]);
@@ -934,10 +956,14 @@ export default function WorkflowModule() {
       navigate('/platform/workflow', { replace: true });
       return;
     }
+    if (tabId === 'rules' && !isWorkflowRulesSectionKey(subTabId)) {
+      navigate('/platform/workflow/rules/routing-rules', { replace: true });
+      return;
+    }
     if (tabId && !isWorkflowRouteTabKey(tabId)) {
       navigate('/platform/workflow', { replace: true });
     }
-  }, [navigate, tabId]);
+  }, [navigate, subTabId, tabId]);
 
   useEffect(() => {
     const el = canvasWrapRef.current;
@@ -1510,30 +1536,17 @@ export default function WorkflowModule() {
       .filter((value) => !value.startsWith('->') && !value.endsWith('->'))
   ).size;
   const rulesHealthPct = safeRules.length > 0 ? Math.round((activeRulesCount / safeRules.length) * 100) : 0;
-  const rulesQuickNavItems = [
-    { id: 'rules-routing-rules', label: 'Routing Rules' },
-    { id: 'rules-destinations', label: 'Destinations' },
-    { id: 'rules-signal-sources', label: 'Siginal Sources' },
-    { id: 'rules-resources', label: 'Resources' },
-    { id: 'rules-dax-assistant', label: 'DAX [Assistant]' }
-  ];
-
-  function scrollToRulesSection(sectionId: string) {
-    const node = document.getElementById(sectionId);
-    if (node) {
-      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }
 
   const tabRail = (
     <nav className="grid w-full max-w-[30rem] grid-cols-3 gap-2">
       {WORKFLOW_TAB_ITEMS.map((tab) => {
         const isActive = activeTab === tab.key;
         const Icon = tab.icon;
+        const tabHref = tab.key === 'rules' ? '/platform/workflow/rules/routing-rules' : `/platform/workflow/${tab.key}`;
         return (
           <Link
             key={tab.key}
-            to={`/platform/workflow/${tab.key}`}
+            to={tabHref}
             className={`group relative flex aspect-square w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 py-5 text-center text-base font-semibold transition ${
               isActive
                 ? 'border-primary-200/80 bg-primary-400/10 text-white'
@@ -2058,24 +2071,30 @@ export default function WorkflowModule() {
 
       {activeTab === 'rules' && (
         <div className="mt-5 space-y-4">
-          <nav className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/40 px-3 py-2">
-            {rulesQuickNavItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs uppercase tracking-[0.16em] text-gray-200 transition hover:border-primary-300/45 hover:text-white"
-                onClick={() => scrollToRulesSection(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
+          <nav className="relative overflow-hidden rounded-2xl border border-primary-300/25 bg-gradient-to-r from-[#0a1020] via-[#111831] to-[#0c1022] p-2 shadow-[0_16px_46px_rgba(9,20,54,0.45)]">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_20%,rgba(56,189,248,0.16),transparent_38%),radial-gradient(circle_at_85%_76%,rgba(99,102,241,0.2),transparent_42%)]" />
+            <div className="relative z-10 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              {WORKFLOW_RULES_SECTION_ITEMS.map((item) => {
+                const isActiveSection = activeRulesSection === item.key;
+                return (
+                  <Link
+                    key={item.key}
+                    to={`/platform/workflow/rules/${item.key}`}
+                    className={`rounded-xl border px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                      isActiveSection
+                        ? 'border-primary-300/70 bg-primary-500/20 text-white shadow-[0_0_18px_rgba(96,165,250,0.35)]'
+                        : 'border-white/10 bg-black/30 text-gray-200 hover:border-primary-300/40 hover:bg-primary-500/10 hover:text-white'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
           </nav>
 
-          <section
-            id="rules-signal-sources"
-            className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
-            style={{ scrollMarginTop: '7rem' }}
-          >
+          {activeRulesSection === 'signal-sources' && (
+          <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-2">
                 <p className="section-label">Signal Sources</p>
@@ -2154,12 +2173,10 @@ export default function WorkflowModule() {
               )}
             </ul>
           </section>
+          )}
 
-          <section
-            id="rules-destinations"
-            className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20"
-            style={{ scrollMarginTop: '7rem' }}
-          >
+          {activeRulesSection === 'destinations' && (
+          <section className="card-shell space-y-4 w-full mb-4 bg-black/70 backdrop-blur-xl border border-white/20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-2">
                 <p className="section-label">Destinations</p>
@@ -2223,12 +2240,10 @@ export default function WorkflowModule() {
               )}
             </ul>
           </section>
+          )}
 
-          <section
-            id="rules-routing-rules"
-            className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
-            style={{ scrollMarginTop: '7rem' }}
-          >
+          {activeRulesSection === 'routing-rules' && (
+          <section className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="section-label">Routing Rules</p>
@@ -2342,12 +2357,10 @@ export default function WorkflowModule() {
               </div>
             </div>
           </section>
+          )}
 
-          <section
-            id="rules-resources"
-            className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60"
-            style={{ scrollMarginTop: '7rem' }}
-          >
+          {activeRulesSection === 'resources' && (
+          <section className="card-shell space-y-4 w-full mb-4 border border-white/10 bg-black/60">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="section-label">Resources</p>
@@ -2376,12 +2389,10 @@ export default function WorkflowModule() {
               </article>
             </div>
           </section>
+          )}
 
-          <section
-            id="rules-dax-assistant"
-            className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60"
-            style={{ scrollMarginTop: '7rem' }}
-          >
+          {activeRulesSection === 'dax-assistant' && (
+          <section className="card-shell space-y-4 w-full mb-6 border border-white/10 bg-black/60">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="section-label">DAX [Assistant]</p>
@@ -2424,6 +2435,7 @@ export default function WorkflowModule() {
               </button>
             </div>
           </section>
+          )}
         </div>
       )}
 
