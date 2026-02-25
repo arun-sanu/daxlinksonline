@@ -2071,19 +2071,18 @@ export default function WorkflowModule() {
 
       {activeTab === 'rules' && (
         <div className="mt-5 space-y-4">
-          <nav className="relative overflow-hidden rounded-2xl border border-primary-300/25 bg-gradient-to-r from-[#0a1020] via-[#111831] to-[#0c1022] p-2 shadow-[0_16px_46px_rgba(9,20,54,0.45)]">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_20%,rgba(56,189,248,0.16),transparent_38%),radial-gradient(circle_at_85%_76%,rgba(99,102,241,0.2),transparent_42%)]" />
-            <div className="relative z-10 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <nav className="rounded-2xl border border-white/15 bg-[linear-gradient(90deg,rgba(72,79,132,0.5)_0%,rgba(61,66,113,0.46)_55%,rgba(42,46,86,0.5)_100%)] p-1.5 backdrop-blur-md shadow-[0_10px_28px_rgba(10,14,36,0.35)]">
+            <div className="flex items-center gap-1 overflow-x-auto">
               {WORKFLOW_RULES_SECTION_ITEMS.map((item) => {
                 const isActiveSection = activeRulesSection === item.key;
                 return (
                   <Link
                     key={item.key}
                     to={`/platform/workflow/rules/${item.key}`}
-                    className={`rounded-xl border px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                    className={`shrink-0 rounded-xl px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition ${
                       isActiveSection
-                        ? 'border-primary-300/70 bg-primary-500/20 text-white shadow-[0_0_18px_rgba(96,165,250,0.35)]'
-                        : 'border-white/10 bg-black/30 text-gray-200 hover:border-primary-300/40 hover:bg-primary-500/10 hover:text-white'
+                        ? 'border border-primary-200/45 bg-primary-500/35 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]'
+                        : 'text-gray-100/85 hover:bg-white/10 hover:text-white'
                     }`}
                   >
                     {item.label}
