@@ -66,6 +66,17 @@ ARN service file:
 
 - `python-bot/arn_bot_service_pine_faithful.py` (FastAPI endpoint: `POST /signal`)
 
+Register the ARN limit-only template:
+
+```bash
+cd /opt/daxlinks/backend/backend
+npm run bot:register:arn-s-shcs-limit-only -- --workspaceId=<provider-workspace-uuid>
+```
+
+ARN limit-only service file:
+
+- `python-bot/arn_bot_service_limit_only.py` (FastAPI endpoint: `POST /webhook?token=...`)
+
 ## Notes
 
 - The backend currently validates internal token (`Authorization: Bearer ...` or `X-Internal-Token`).

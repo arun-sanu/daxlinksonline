@@ -182,6 +182,11 @@ const ARN_PINE_FAITHFUL_BOT_SLUGS = new Set([
   'arn-pine-faithful',
   'moneyplantbot1-robot'
 ]);
+const ARN_LIMIT_ONLY_BOT_SLUGS = new Set([
+  'arn-s-shcs-limit-only',
+  'arn-s-shcs-limitonly',
+  'arn-bot-service-limit-only'
+]);
 
 function normalizeTextSlug(value = '') {
   return String(value || '')
@@ -205,10 +210,22 @@ function isMexcMacdBollingerBot(bot = null) {
   return slug.includes('mexc') && (slug.includes('bollinger') || slug.includes('hvms'));
 }
 
+function isArnLimitOnlyBot(bot = null) {
+  const slug = normalizeTextSlug(bot?.name || '');
+  if (!slug) return false;
+  if (ARN_LIMIT_ONLY_BOT_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs') && slug.includes('limit');
+}
+
 function isArnPineFaithfulBot(bot = null) {
   const slug = normalizeTextSlug(bot?.name || '');
+  if (isArnLimitOnlyBot(bot)) return false;
   if (ARN_PINE_FAITHFUL_BOT_SLUGS.has(slug)) return true;
-  return slug.includes('arn') && slug.includes('shcs');
+  return (
+    slug.includes('arn') &&
+    slug.includes('shcs') &&
+    (slug.includes('orginal') || slug.includes('original') || slug.includes('faithful') || slug.includes('moneyplantbot1'))
+  );
 }
 
 function buildMexcMacdBollingerDefaultRules({ symbol = 'BTCUSDC' } = {}) {
@@ -540,8 +557,128 @@ function buildArnPineFaithfulDefaultRules({ symbol = 'BTCUSDT' } = {}) {
   };
 }
 
+function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
+  const normalizedSymbol = normalizeTradingSymbol(symbol, 'BTCUSDC');
+  const parameterSchema = [
+    {
+      key: 'symbol_default',
+      label: 'Symbol',
+      type: 'string',
+      defaultValue: normalizedSymbol,
+      source: 'template:arn-limit-only',
+      description: 'Default symbol used when alert payload omits symbol.',
+      line: null
+    },
+    {
+      key: 'min_quote_qty',
+      label: 'Min Quote Qty',
+      type: 'number',
+      defaultValue: 1.05,
+      source: 'template:arn-limit-only',
+      description: 'Minimum quote amount per entry order.',
+      line: null
+    },
+    {
+      key: 'daily_loss_limit_pct',
+      label: 'Daily Loss Limit %',
+      type: 'number',
+      defaultValue: 5.0,
+      source: 'template:arn-limit-only',
+      description: 'Stop trading for day when equity drawdown exceeds this percentage.',
+      line: null
+    },
+    {
+      key: 'cooldown_seconds',
+      label: 'Cooldown Seconds',
+      type: 'number',
+      defaultValue: 120,
+      source: 'template:arn-limit-only',
+      description: 'Minimum delay between filled entries.',
+      line: null
+    },
+    {
+      key: 'entry_ttl_seconds',
+      label: 'Entry TTL',
+      type: 'number',
+      defaultValue: 20,
+      source: 'template:arn-limit-only',
+      description: 'Seconds to wait for each limit entry attempt.',
+      line: null
+    },
+    {
+      key: 'ladder_steps',
+      label: 'Ladder Steps',
+      type: 'number',
+      defaultValue: 3,
+      source: 'template:arn-limit-only',
+      description: 'Number of limit retry steps per signal.',
+      line: null
+    },
+    {
+      key: 'ladder_step_bps',
+      label: 'Ladder Step Bps',
+      type: 'number',
+      defaultValue: 3,
+      source: 'template:arn-limit-only',
+      description: 'Price adjustment per retry step in basis points.',
+      line: null
+    },
+    {
+      key: 'tp_percent',
+      label: 'TP Percent',
+      type: 'number',
+      defaultValue: 1.0,
+      source: 'template:arn-limit-only',
+      description: 'Take-profit percentage from entry.',
+      line: null
+    },
+    {
+      key: 'sl_atr_mult',
+      label: 'SL ATR Mult',
+      type: 'number',
+      defaultValue: 1.5,
+      source: 'template:arn-limit-only',
+      description: 'ATR multiplier used for stop-loss placement.',
+      line: null
+    }
+  ];
+
+  return {
+    strategy: 'ARN_LIMIT_ONLY',
+    source: 'python_bot',
+    exchange: 'MEXC',
+    symbol: normalizedSymbol,
+    minQuoteQty: 1.05,
+    dailyLossLimitPct: 5.0,
+    cooldownSeconds: 120,
+    entryTtlSeconds: 20,
+    ladderSteps: 3,
+    ladderStepBps: 3,
+    tpPercent: 1.0,
+    slAtrMult: 1.5,
+    resolveExchangeFromBackend: true,
+    runtimeConfigPath: '/api/v1/internal/bot/runtime-config',
+    signalPath: '/webhook',
+    codeParameterSchema: parameterSchema,
+    codeParameters: {
+      symbol_default: normalizedSymbol,
+      min_quote_qty: 1.05,
+      daily_loss_limit_pct: 5.0,
+      cooldown_seconds: 120,
+      entry_ttl_seconds: 20,
+      ladder_steps: 3,
+      ladder_step_bps: 3,
+      tp_percent: 1.0,
+      sl_atr_mult: 1.5
+    }
+  };
+}
+
 function getDefaultRuntimeRulesForBot(bot = null, { symbol = null } = {}) {
   if (!bot) return null;
+  if (isArnLimitOnlyBot(bot)) {
+    return buildArnLimitOnlyDefaultRules({ symbol: symbol || bot?.symbol || 'BTCUSDC' });
+  }
   if (isArnPineFaithfulBot(bot)) {
     return buildArnPineFaithfulDefaultRules({ symbol: symbol || bot?.symbol || 'BTCUSDT' });
   }
@@ -2468,7 +2605,7 @@ export async function rentMarketBot(workspaceId, botId, payload = {}) {
   const requestedSymbol = String(payload.symbol || '')
     .trim()
     .toUpperCase();
-  const defaultSymbol = isMexcMacdBollingerBot(bot) ? 'BTCUSDC' : 'BTCUSDT';
+  const defaultSymbol = isMexcMacdBollingerBot(bot) || isArnLimitOnlyBot(bot) ? 'BTCUSDC' : 'BTCUSDT';
   const symbol = normalizeTradingSymbol(requestedSymbol || defaultSymbol, defaultSymbol);
 
   const [version, plan] = await Promise.all([

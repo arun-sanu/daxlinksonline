@@ -19,7 +19,8 @@
     "bot:register:trade-exec": "node scripts/registerTradeExecBot.js",
     "bot:register:mexc-macd-bollinger": "node scripts/registerMexcMacdBollingerBot.js",
     "bot:register:moneyplantbot1-robot": "node scripts/registerMoneyplantbot1Robot.js",
-    "bot:register:arn-s-shcs-original": "node scripts/registerMoneyplantbot1Robot.js"
+    "bot:register:arn-s-shcs-original": "node scripts/registerMoneyplantbot1Robot.js",
+    "bot:register:arn-s-shcs-limit-only": "node scripts/registerArnSshcsLimitOnlyBot.js"
   },
   "dependencies": {
     "@compendiumfi/pendax": "^2.1.22",
