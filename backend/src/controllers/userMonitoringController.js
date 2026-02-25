@@ -27,8 +27,50 @@ function toFiniteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeOrderTypeToken(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized) return null;
+  if (normalized === 'LIMIT') return 'LIMIT';
+  if (normalized === 'LIMIT_MAKER' || normalized === 'POST_ONLY' || normalized === 'POSTONLY' || normalized === 'MAKER') {
+    return 'LIMIT_MAKER';
+  }
+  if (normalized === 'MARKET') return 'MARKET';
+  return null;
+}
+
+function hasLimitOrderHints(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const keys = ['limitPrice', 'limit_price', 'limitStyle', 'limit_style', 'slippageBps', 'slippage_bps'];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const value = payload[key];
+    if (value !== null && value !== undefined && value !== '') return true;
+  }
+  return false;
+}
+
+function resolveAlertOrderType(payload = {}, sizingDebug = null) {
+  const typeCandidates = [
+    payload?.type,
+    payload?.orderType,
+    payload?.order_type,
+    sizingDebug?.orderTypeResolved,
+    sizingDebug?.runtimeOrderType
+  ];
+  for (const candidate of typeCandidates) {
+    const normalized = normalizeOrderTypeToken(candidate);
+    if (normalized) return normalized;
+  }
+  if (hasLimitOrderHints(payload)) return 'LIMIT';
+  return 'MARKET';
+}
+
 function toLegacyAlertRow(row) {
   const payload = normalizePayload(row.detail);
+  const orderType = resolveAlertOrderType(payload);
   return {
     id: row.id,
     receivedAt: row.createdAt,
@@ -36,7 +78,8 @@ function toLegacyAlertRow(row) {
     strategyName: payload?.strategy || payload?.strategyName || payload?.ruleName || '',
     symbol: payload?.symbol || payload?.ticker || '',
     side: payload?.side || payload?.direction || '',
-    orderType: payload?.orderType || payload?.type || '',
+    orderType,
+    type: orderType,
     quantity: payload?.quantity ?? payload?.qty ?? '',
     takeProfit: payload?.takeProfit ?? payload?.tp ?? '',
     stopLoss: payload?.stopLoss ?? payload?.sl ?? '',
@@ -59,7 +102,7 @@ function toExecutionAlertRow(row) {
   const parseFailed = statusUpper === 'RECEIVED' && (!symbol || !side);
   const status = parseFailed ? 'parse_failed' : statusUpper.toLowerCase();
   const errorMessage = row.errorMessage || (parseFailed ? 'PARSE_FAILED' : '');
-  const type = String(payload.type || payload.orderType || 'MARKET').toUpperCase();
+  const type = resolveAlertOrderType(payload, sizingDebug);
   const computedQty = toFiniteNumber(
     row.qtyRounded ??
       row.qtyRaw ??

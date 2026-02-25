@@ -727,6 +727,17 @@ export function createTradingviewWebhookHandler(
           reasonKey: 'payload_order_type_invalid'
         });
       }
+      const resolvedParsedPayload = {
+        ...(normalizedSignal.normalizedPayload || candidatePayload || {}),
+        source: 'tradingview',
+        sourceId: candidatePayload.sourceId,
+        symbol: signal.symbol,
+        side: signal.side,
+        ...(signalQty !== null ? { qty: signalQty, quantity: signalQty } : {}),
+        orderType: resolvedOrderType,
+        type: resolvedOrderType.toLowerCase(),
+        ts: signal.ts
+      };
       let dedupeKey = null;
       if (executionTarget?.botId && signal?.ts) {
         dedupeKey = buildExecutionDedupeKey({
@@ -743,7 +754,7 @@ export function createTradingviewWebhookHandler(
           side: signal.side,
           tvTs: signal.ts,
           dedupeKey,
-          parsedPayload: normalizedSignal.normalizedPayload
+          parsedPayload: resolvedParsedPayload
         });
         const duplicate = await findDuplicateAudit({
           botId: executionTarget.botId,
@@ -763,20 +774,12 @@ export function createTradingviewWebhookHandler(
           symbol: signal.symbol,
           side: signal.side,
           tvTs: signal.ts,
-          parsedPayload: normalizedSignal.normalizedPayload
+          parsedPayload: resolvedParsedPayload
         });
       }
 
       const payload = payloadSchema.parse({
-        ...(normalizedSignal.normalizedPayload || candidatePayload || {}),
-        source: 'tradingview',
-        sourceId: candidatePayload.sourceId,
-        symbol: signal.symbol,
-        side: signal.side,
-        ...(signalQty !== null ? { qty: signalQty, quantity: signalQty } : {}),
-        orderType: resolvedOrderType,
-        type: resolvedOrderType.toLowerCase(),
-        ts: signal.ts,
+        ...resolvedParsedPayload,
         executionAuditId: executionAudit?.id || null,
         dedupeKey: dedupeKey || null,
         workspaceId: executionTarget?.workspaceId || null,
