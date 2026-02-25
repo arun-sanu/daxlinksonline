@@ -579,12 +579,39 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
       line: null
     },
     {
-      key: 'daily_loss_limit_pct',
+      key: 'leverage',
+      label: 'Leverage',
+      type: 'number',
+      defaultValue: 1.0,
+      source: 'template:arn-limit-only',
+      description: 'Reference leverage from Pine payload/backtest sizing.',
+      line: null
+    },
+    {
+      key: 'investment_percentage',
+      label: 'Reinvestment %',
+      type: 'number',
+      defaultValue: 90.0,
+      source: 'template:arn-limit-only',
+      description: 'TradingView-side quote sizing percentage of equity.',
+      line: null
+    },
+    {
+      key: 'daily_loss_limit',
       label: 'Daily Loss Limit %',
       type: 'number',
       defaultValue: 5.0,
       source: 'template:arn-limit-only',
       description: 'Stop trading for day when equity drawdown exceeds this percentage.',
+      line: null
+    },
+    {
+      key: 'cooldown_candles',
+      label: 'Cooldown Candles',
+      type: 'number',
+      defaultValue: 2,
+      source: 'template:arn-limit-only',
+      description: 'TradingView-side cooldown bars after a trade signal.',
       line: null
     },
     {
@@ -624,6 +651,60 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
       line: null
     },
     {
+      key: 'limit_style',
+      label: 'Limit Style',
+      type: 'string',
+      defaultValue: 'MID',
+      source: 'template:arn-limit-only',
+      description: 'TradingView limit reference style (MID/BID/ASK/CLOSE).',
+      line: null
+    },
+    {
+      key: 'slippage_bps',
+      label: 'Slippage Bps',
+      type: 'number',
+      defaultValue: 5,
+      source: 'template:arn-limit-only',
+      description: 'TradingView-side limit offset in basis points.',
+      line: null
+    },
+    {
+      key: 'rsi_length',
+      label: 'RSI Length',
+      type: 'number',
+      defaultValue: 14,
+      source: 'template:arn-limit-only',
+      description: 'TradingView RSI period used by entry logic.',
+      line: null
+    },
+    {
+      key: 'bb_length',
+      label: 'Bollinger Length',
+      type: 'number',
+      defaultValue: 20,
+      source: 'template:arn-limit-only',
+      description: 'TradingView Bollinger basis length.',
+      line: null
+    },
+    {
+      key: 'bb_mult',
+      label: 'Bollinger Multiplier',
+      type: 'number',
+      defaultValue: 2.0,
+      source: 'template:arn-limit-only',
+      description: 'TradingView Bollinger deviation multiplier.',
+      line: null
+    },
+    {
+      key: 'volatility_threshold',
+      label: 'Volatility Threshold %',
+      type: 'number',
+      defaultValue: 0.05,
+      source: 'template:arn-limit-only',
+      description: 'TradingView volatility spike threshold percentage.',
+      line: null
+    },
+    {
       key: 'tp_percent',
       label: 'TP Percent',
       type: 'number',
@@ -633,12 +714,21 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
       line: null
     },
     {
-      key: 'sl_atr_mult',
-      label: 'SL ATR Mult',
+      key: 'sl_atr_multiplier',
+      label: 'SL ATR Multiplier',
       type: 'number',
       defaultValue: 1.5,
       source: 'template:arn-limit-only',
       description: 'ATR multiplier used for stop-loss placement.',
+      line: null
+    },
+    {
+      key: 'timezone',
+      label: 'Timezone',
+      type: 'string',
+      defaultValue: 'Asia/Kolkata',
+      source: 'template:arn-limit-only',
+      description: 'Reference timezone for end-of-day behavior in Pine.',
       line: null
     }
   ];
@@ -648,14 +738,25 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
     source: 'python_bot',
     exchange: 'MEXC',
     symbol: normalizedSymbol,
+    leverage: 1.0,
+    investmentPercentage: 90.0,
     minQuoteQty: 1.05,
     dailyLossLimitPct: 5.0,
+    dailyLossLimit: 5.0,
+    cooldownCandles: 2,
     cooldownSeconds: 120,
     entryTtlSeconds: 20,
     ladderSteps: 3,
     ladderStepBps: 3,
+    limitStyle: 'MID',
+    slippageBps: 5,
+    rsiLength: 14,
+    bbLength: 20,
+    bbMult: 2.0,
+    volatilityThreshold: 0.05,
     tpPercent: 1.0,
-    slAtrMult: 1.5,
+    slAtrMultiplier: 1.5,
+    timezone: 'Asia/Kolkata',
     resolveExchangeFromBackend: true,
     runtimeConfigPath: '/api/v1/internal/bot/runtime-config',
     signalPath: '/webhook',
@@ -663,13 +764,23 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
     codeParameters: {
       symbol_default: normalizedSymbol,
       min_quote_qty: 1.05,
-      daily_loss_limit_pct: 5.0,
+      leverage: 1.0,
+      investment_percentage: 90.0,
+      daily_loss_limit: 5.0,
+      cooldown_candles: 2,
       cooldown_seconds: 120,
       entry_ttl_seconds: 20,
       ladder_steps: 3,
       ladder_step_bps: 3,
+      limit_style: 'MID',
+      slippage_bps: 5,
+      rsi_length: 14,
+      bb_length: 20,
+      bb_mult: 2.0,
+      volatility_threshold: 0.05,
       tp_percent: 1.0,
-      sl_atr_mult: 1.5
+      sl_atr_multiplier: 1.5,
+      timezone: 'Asia/Kolkata'
     }
   };
 }

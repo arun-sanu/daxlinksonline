@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -52,6 +51,7 @@ exchange = ccxt.mexc(
 # -----------------------------
 STATE = {
     'last_trade_ts': 0.0,
+    'last_trade_bar_by_symbol': {},
     'day_key': None,  # YYYY-MM-DD in IST
     'day_start_equity': None,  # quote-equity snapshot (USDC/USDT-ish)
 }
@@ -68,8 +68,8 @@ def day_key_ist() -> str:
     return now_ist().strftime('%Y-%m-%d')
 
 
-def clamp_min_quote(q: float) -> float:
-    return max(q, MIN_QUOTE_QTY)
+def clamp_min_quote(q: float, min_quote_qty: float) -> float:
+    return max(q, min_quote_qty)
 
 
 def bps_to_mult(bps: int) -> float:
@@ -81,6 +81,26 @@ def safe_float(x, name='value') -> float:
         return float(x)
     except Exception as exc:
         raise ValueError(f'Invalid {name}: {x}') from exc
+
+
+def safe_bool(x, fallback=False) -> bool:
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, (int, float)):
+        return x != 0
+    text = str(x or '').strip().lower()
+    if text in ['true', '1', 'yes', 'on']:
+        return True
+    if text in ['false', '0', 'no', 'off']:
+        return False
+    return fallback
+
+
+def pick_first(payload: dict, keys: list[str], fallback=None):
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+    return fallback
 
 
 def require_token(given: str):
@@ -137,18 +157,27 @@ def ensure_day_reset(symbol: str):
         STATE['day_start_equity'] = eq
 
 
-def hit_daily_loss(symbol: str) -> bool:
+def hit_daily_loss(symbol: str, daily_loss_limit_pct: float) -> bool:
     ensure_day_reset(symbol)
     start_eq = STATE['day_start_equity']
     if start_eq is None:
         return False
     eq = fetch_quote_equity(symbol)
-    threshold = start_eq * (1.0 - DAILY_LOSS_LIMIT_PCT / 100.0)
+    threshold = start_eq * (1.0 - daily_loss_limit_pct / 100.0)
     return eq < threshold
 
 
-def in_cooldown() -> bool:
-    return (time.time() - STATE['last_trade_ts']) < COOLDOWN_SECONDS
+def in_cooldown(symbol: str, cooldown_seconds: int, cooldown_candles: int, bar_index: int | None) -> bool:
+    if (time.time() - STATE['last_trade_ts']) < cooldown_seconds:
+        return True
+
+    if bar_index is None or cooldown_candles <= 0:
+        return False
+
+    last_bar = STATE['last_trade_bar_by_symbol'].get(symbol)
+    if last_bar is None:
+        return False
+    return (bar_index - last_bar) <= cooldown_candles
 
 
 def get_market_filters(symbol: str):
@@ -299,6 +328,23 @@ def approx_atr_14(symbol: str) -> float:
         return 0.0
 
 
+def derive_limit_price(side: str, payload: dict, symbol: str, slippage_bps: int) -> float:
+    direct = pick_first(payload, ['limitPrice', 'limit_price'], None)
+    if direct is not None:
+        return safe_float(direct, 'limitPrice')
+
+    # Pine uses close for MID/BID/ASK/CLOSE approximation in alert mode.
+    ref = safe_float(pick_first(payload, ['price', 'close'], 0), 'price')
+    if ref <= 0:
+        ticker = exchange.fetch_ticker(symbol)
+        ref = float(ticker.get('last') or ticker.get('close') or 0.0)
+    if ref <= 0:
+        raise ValueError('Unable to derive limitPrice from payload or ticker.')
+
+    slip = bps_to_mult(slippage_bps)
+    return ref * (1.0 - slip) if side == 'BUY' else ref * (1.0 + slip)
+
+
 # -----------------------------
 # Core execution
 # -----------------------------
@@ -306,27 +352,79 @@ def execute_signal(payload: dict) -> dict:
     tv_symbol = payload.get('symbol') or SYMBOL_DEFAULT
     symbol = normalize_symbol(tv_symbol)
 
-    if hit_daily_loss(symbol):
+    min_quote_qty = max(0.0, safe_float(pick_first(payload, ['minQuoteQty', 'min_quote_qty'], MIN_QUOTE_QTY), 'minQuoteQty'))
+    daily_loss_limit_pct = max(
+        0.0,
+        safe_float(
+            pick_first(
+                payload,
+                ['dailyLossLimit', 'daily_loss_limit', 'daily_loss_limit_pct'],
+                DAILY_LOSS_LIMIT_PCT,
+            ),
+            'dailyLossLimit',
+        ),
+    )
+    cooldown_seconds = max(
+        0,
+        int(safe_float(pick_first(payload, ['cooldownSeconds', 'cooldown_seconds'], COOLDOWN_SECONDS), 'cooldownSeconds')),
+    )
+    cooldown_candles = max(
+        0,
+        int(safe_float(pick_first(payload, ['cooldownCandles', 'cooldown_candles'], 0), 'cooldownCandles')),
+    )
+    bar_index_raw = pick_first(payload, ['barIndex', 'bar_index'], None)
+    bar_index = int(safe_float(bar_index_raw, 'barIndex')) if bar_index_raw is not None else None
+    entry_ttl_seconds = max(
+        1,
+        int(safe_float(pick_first(payload, ['entryTtlSeconds', 'entry_ttl_seconds'], ENTRY_TTL_SECONDS), 'entryTtlSeconds')),
+    )
+    ladder_steps = max(1, int(safe_float(pick_first(payload, ['ladderSteps', 'ladder_steps'], LADDER_STEPS), 'ladderSteps')))
+    ladder_step_bps = max(
+        0,
+        int(safe_float(pick_first(payload, ['ladderStepBps', 'ladder_step_bps'], LADDER_STEP_BPS), 'ladderStepBps')),
+    )
+    limit_style = str(pick_first(payload, ['limitStyle', 'limit_style'], 'MID') or 'MID').strip().upper()
+    slippage_bps = max(0, int(safe_float(pick_first(payload, ['slippageBps', 'slippage_bps'], 0), 'slippageBps')))
+
+    if hit_daily_loss(symbol, daily_loss_limit_pct):
         return {'ok': False, 'reason': 'Daily loss limit hit. Trading halted for today.'}
 
-    if in_cooldown():
+    if in_cooldown(symbol, cooldown_seconds, cooldown_candles, bar_index):
         return {'ok': False, 'reason': 'Cooldown active. Skipping trade.'}
 
     side = (payload.get('side') or '').upper()
     if side not in ['BUY', 'SELL']:
         return {'ok': False, 'reason': f'Invalid side: {side}'}
 
-    quote_qty = clamp_min_quote(safe_float(payload.get('quoteQty', MIN_QUOTE_QTY), 'quoteQty'))
-    limit_price = safe_float(payload.get('limitPrice', 0), 'limitPrice')
+    investment_percentage = safe_float(
+        pick_first(payload, ['investmentPercentage', 'investment_percentage'], 90.0), 'investmentPercentage'
+    )
+    investment_percentage = max(0.0, min(investment_percentage, 100.0))
 
-    tp_percent = safe_float(payload.get('tpPercent', 1.0), 'tpPercent')
-    sl_atr_mult = safe_float(payload.get('slAtrMult', 1.5), 'slAtrMult')
+    quote_qty_value = pick_first(payload, ['quoteQty', 'quote_qty'], None)
+    if quote_qty_value is None:
+        equity = fetch_quote_equity(symbol)
+        investment_size_raw = equity * (investment_percentage / 100.0)
+        investment_size = max(investment_size_raw, equity * 0.01)
+        quote_qty = clamp_min_quote(investment_size, min_quote_qty)
+    else:
+        quote_qty = clamp_min_quote(safe_float(quote_qty_value, 'quoteQty'), min_quote_qty)
 
-    step_mult = bps_to_mult(LADDER_STEP_BPS)
+    limit_price = derive_limit_price(side, payload, symbol, slippage_bps)
+
+    tp_percent = safe_float(pick_first(payload, ['tpPercent', 'tp_percent'], 1.0), 'tpPercent')
+    sl_atr_mult = safe_float(
+        pick_first(payload, ['slAtrMult', 'sl_atr_mult', 'slAtrMultiplier', 'sl_atr_multiplier'], 1.5), 'slAtrMult'
+    )
+    atr_payload = pick_first(payload, ['atr'], None)
+    atr_from_payload = safe_float(atr_payload, 'atr') if atr_payload is not None else None
+    volatility_spike = safe_bool(pick_first(payload, ['volatilitySpike', 'volatility_spike'], False), False)
+
+    step_mult = bps_to_mult(ladder_step_bps)
     last_order = None
     filled = None
 
-    for step in range(LADDER_STEPS):
+    for step in range(ladder_steps):
         if step > 0:
             if side == 'BUY':
                 limit_price = limit_price * (1.0 + step_mult)
@@ -336,7 +434,7 @@ def execute_signal(payload: dict) -> dict:
         last_order = place_limit_entry(symbol, side, quote_qty, limit_price)
         order_id = last_order.get('id')
 
-        filled = wait_for_fill(symbol, order_id, ENTRY_TTL_SECONDS)
+        filled = wait_for_fill(symbol, order_id, entry_ttl_seconds)
         if filled:
             break
 
@@ -346,13 +444,15 @@ def execute_signal(payload: dict) -> dict:
         return {'ok': False, 'reason': 'Entry not filled after ladder attempts.', 'lastOrder': last_order}
 
     STATE['last_trade_ts'] = time.time()
+    if bar_index is not None:
+        STATE['last_trade_bar_by_symbol'][symbol] = bar_index
 
     avg_price = float(filled.get('average') or filled.get('price') or limit_price)
     filled_amount = float(filled.get('filled') or filled.get('amount') or 0.0)
 
     tp_order = place_take_profit(symbol, side, filled_amount, tp_percent, avg_price)
-    atr = approx_atr_14(symbol)
-    sl_order = place_stop_loss_stop_limit(symbol, side, filled_amount, sl_atr_mult, atr, avg_price)
+    atr = atr_from_payload if atr_from_payload is not None and atr_from_payload > 0 else approx_atr_14(symbol)
+    sl_order = None if volatility_spike else place_stop_loss_stop_limit(symbol, side, filled_amount, sl_atr_mult, atr, avg_price)
 
     return {
         'ok': True,
@@ -369,10 +469,30 @@ def execute_signal(payload: dict) -> dict:
             if sl_order
             else {
                 'id': None,
-                'note': 'Stop-limit not supported via CCXT params; add monitor loop or native MEXC conditional order params.',
+                'note': (
+                    'SL skipped due volatility_spike.'
+                    if volatility_spike
+                    else 'Stop-limit not supported via CCXT params; add monitor loop or native MEXC conditional order params.'
+                ),
             }
         ),
         'atrApprox': atr,
+        'settings': {
+            'minQuoteQty': min_quote_qty,
+            'dailyLossLimitPct': daily_loss_limit_pct,
+            'cooldownCandles': cooldown_candles,
+            'barIndex': bar_index,
+            'cooldownSeconds': cooldown_seconds,
+            'entryTtlSeconds': entry_ttl_seconds,
+            'ladderSteps': ladder_steps,
+            'ladderStepBps': ladder_step_bps,
+            'limitStyle': limit_style,
+            'slippageBps': slippage_bps,
+            'investmentPercentage': investment_percentage,
+            'volatilitySpike': volatility_spike,
+            'tpPercent': tp_percent,
+            'slAtrMult': sl_atr_mult,
+        },
     }
 
 
@@ -389,8 +509,8 @@ async def webhook(request: Request, token: str = ''):
     except Exception as exc:
         raise HTTPException(status_code=400, detail='Invalid JSON body.') from exc
 
-    if 'side' not in data or 'limitPrice' not in data:
-        raise HTTPException(status_code=400, detail='Missing required fields: side, limitPrice.')
+    if 'side' not in data:
+        raise HTTPException(status_code=400, detail='Missing required field: side.')
 
     try:
         result = execute_signal(data)
