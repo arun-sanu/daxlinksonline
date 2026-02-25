@@ -102,6 +102,93 @@ function parsePositiveNumber(value) {
   return n > 0 ? n : null;
 }
 
+function normalizeOrderTypeToken(value) {
+  const type = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!type) return null;
+  if (type === 'MARKET') return 'MARKET';
+  if (type === 'LIMIT') return 'LIMIT';
+  if (type === 'LIMIT_MAKER' || type === 'POST_ONLY' || type === 'POSTONLY' || type === 'MAKER') return 'LIMIT_MAKER';
+  return null;
+}
+
+function resolveRequestedOrderType(payload = {}) {
+  if (!payload || typeof payload !== 'object') return null;
+  const explicitType = normalizeOrderTypeToken(payload.orderType || payload.order_type || payload.type);
+  if (explicitType) return explicitType;
+  const hasLimitPrice = parsePositiveNumber(payload.limitPrice ?? payload.limit_price) !== null;
+  if (hasLimitPrice) return 'LIMIT';
+  return null;
+}
+
+async function resolveRuntimeOrderPolicyForIntegration(workspaceId, integrationId) {
+  const normalizedWorkspaceId = String(workspaceId || '').trim();
+  const normalizedIntegrationId = String(integrationId || '').trim();
+  if (!normalizedWorkspaceId || !normalizedIntegrationId) {
+    return {
+      arnLimitOnly: false,
+      runtimeOrderType: null
+    };
+  }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: normalizedWorkspaceId },
+    select: { workflowConfig: true }
+  });
+  const runtimeConfigs = workspace?.workflowConfig?.tradeBots?.runtimeConfigs;
+  if (!runtimeConfigs || typeof runtimeConfigs !== 'object' || Array.isArray(runtimeConfigs)) {
+    return {
+      arnLimitOnly: false,
+      runtimeOrderType: null
+    };
+  }
+
+  let matchedBotId = null;
+  let matchedStrategy = null;
+  let matchedOrderType = null;
+  for (const [botId, entry] of Object.entries(runtimeConfigs)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const linkedIntegrationId = String(entry?.links?.integrationId || '').trim();
+    if (!linkedIntegrationId || linkedIntegrationId !== normalizedIntegrationId) continue;
+    const rules = entry?.rules && typeof entry.rules === 'object' ? entry.rules : {};
+    const codeParameters = rules?.codeParameters && typeof rules.codeParameters === 'object' ? rules.codeParameters : {};
+    matchedBotId = botId;
+    matchedStrategy = String(rules?.strategy || '').trim().toUpperCase() || null;
+    matchedOrderType = normalizeOrderTypeToken(
+      rules?.orderType || rules?.order_type || codeParameters?.orderType || codeParameters?.order_type
+    );
+    break;
+  }
+
+  if (!matchedBotId) {
+    return {
+      arnLimitOnly: false,
+      runtimeOrderType: null
+    };
+  }
+
+  let botName = '';
+  try {
+    const bot = await prisma.bot.findUnique({
+      where: { id: matchedBotId },
+      select: { name: true }
+    });
+    botName = String(bot?.name || '').toLowerCase();
+  } catch {
+    botName = '';
+  }
+
+  const arnLimitOnly =
+    matchedStrategy === 'ARN_LIMIT_ONLY' ||
+    (botName.includes('arn') && botName.includes('shcs') && botName.includes('limit'));
+  return {
+    arnLimitOnly,
+    runtimeOrderType: matchedOrderType
+  };
+}
+
 function resolveSignalQuantity(payload = {}) {
   if (!payload || typeof payload !== 'object') return null;
   const keys = ['qty', 'quantity', 'contracts', 'size'];
@@ -623,6 +710,22 @@ export function createTradingviewWebhookHandler(
 
       const signal = normalizedSignal.signal;
       const executionTarget = await resolveExecutionTarget(user.id);
+      const runtimeOrderPolicy = executionTarget?.workspaceId && executionTarget?.integrationId
+        ? await resolveRuntimeOrderPolicyForIntegration(executionTarget.workspaceId, executionTarget.integrationId)
+        : { arnLimitOnly: false, runtimeOrderType: null };
+      const requestedOrderType = resolveRequestedOrderType(normalizedSignal.normalizedPayload || candidatePayload);
+      let resolvedOrderType = requestedOrderType || 'MARKET';
+      if (runtimeOrderPolicy.arnLimitOnly && resolvedOrderType === 'MARKET') {
+        resolvedOrderType = runtimeOrderPolicy.runtimeOrderType || 'LIMIT';
+      }
+      const limitOnlyOrderTypes = new Set(['LIMIT', 'LIMIT_MAKER']);
+      if (runtimeOrderPolicy.arnLimitOnly && !limitOnlyOrderTypes.has(resolvedOrderType)) {
+        return rejectInbound({
+          statusCode: 422,
+          reason: 'Invalid orderType for ARN limit-only bot. Use LIMIT or LIMIT_MAKER.',
+          reasonKey: 'payload_order_type_invalid'
+        });
+      }
       let dedupeKey = null;
       if (executionTarget?.botId && signal?.ts) {
         dedupeKey = buildExecutionDedupeKey({
@@ -671,7 +774,8 @@ export function createTradingviewWebhookHandler(
         side: signal.side,
         qty: signalQty,
         quantity: signalQty,
-        type: 'market',
+        orderType: resolvedOrderType,
+        type: resolvedOrderType.toLowerCase(),
         ts: signal.ts,
         executionAuditId: executionAudit?.id || null,
         dedupeKey: dedupeKey || null,

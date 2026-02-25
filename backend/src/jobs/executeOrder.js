@@ -164,6 +164,21 @@ function resolveSignalOrderType(signal) {
   return 'MARKET';
 }
 
+function hasLimitOrderHints(signal) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const sources = [rawPayload, payload];
+  const keys = ['limitPrice', 'limit_price', 'limitStyle', 'limit_style', 'slippageBps', 'slippage_bps'];
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      if (source[key] !== null && source[key] !== undefined && source[key] !== '') return true;
+    }
+  }
+  return false;
+}
+
 function pickFirstPositiveNumericValue(sources = [], keys = []) {
   for (const source of sources) {
     if (!source || typeof source !== 'object') continue;
@@ -555,6 +570,9 @@ export async function executePreparedSignal(signalId) {
       const mexcClient = createMexcSpotClient({ apiKey, apiSecret });
       const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
       const runtimeOrderType = normalizeOrderType(runtimeBot.runtimeOrderType, null);
+      if (orderType === 'MARKET' && hasLimitOrderHints(signal)) {
+        orderType = 'LIMIT';
+      }
       const orderTypeCoercedForLimitOnly = runtimeBot.arnLimitOnly && orderType === 'MARKET';
       if (orderTypeCoercedForLimitOnly) {
         orderType = isLimitOrderType(runtimeOrderType) ? runtimeOrderType : 'LIMIT';
