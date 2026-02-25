@@ -20,9 +20,12 @@ export function normalizePayload(raw = {}) {
   if (side === 'buy' || side === 'long') side = 'buy';
   else if (side === 'sell' || side === 'short') side = 'sell';
   else side = null;
-  const type = (source.type || source.orderType || (source.price ? 'limit' : 'market'))?.toLowerCase();
+  const rawType = source.type || source.orderType || source.order_type;
+  const rawPrice = source.price ?? source.limitPrice ?? source.limit_price;
+  const hasPrice = rawPrice !== undefined && rawPrice !== null && rawPrice !== '';
+  const type = (rawType || (hasPrice ? 'limit' : 'market'))?.toLowerCase();
   const amount = Number(source.amount ?? source.qty ?? source.quantity ?? source.size ?? NaN);
-  const price = source.price !== undefined ? Number(source.price) : undefined;
+  const price = hasPrice ? Number(rawPrice) : undefined;
   const clientOrderId = source.clientOrderId || source.client_id || source.order_id || source.id || null;
   const exchange = source.exchange || source.venue || null;
   const environment = source.environment || source.env || null;

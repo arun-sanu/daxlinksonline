@@ -46,6 +46,16 @@ function normalizeSide(side) {
   return null;
 }
 
+function normalizeLimitOrderType(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (normalized === 'LIMIT') return 'LIMIT';
+  if (normalized === 'LIMIT_MAKER') return 'LIMIT_MAKER';
+  return null;
+}
+
 function toFixedString(value, maxDecimals = 12) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
@@ -58,6 +68,7 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
   const symbolInfo = symbols.find((row) => String(row?.symbol || '').toUpperCase() === String(symbol || '').toUpperCase()) || symbols[0] || null;
   const filters = Array.isArray(symbolInfo?.filters) ? symbolInfo.filters : [];
   const lotSize = filters.find((f) => f.filterType === 'LOT_SIZE') || {};
+  const priceFilter = filters.find((f) => f.filterType === 'PRICE_FILTER') || {};
   const minNotionalFilter = filters.find((f) => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL') || {};
   // Some MEXC symbols omit MIN_NOTIONAL/NOTIONAL but still enforce a quote-side minimum
   // (e.g. "The minimum transaction volume cannot be less than：1USDC").
@@ -80,7 +91,9 @@ export function extractSymbolFilters(exchangeInfoPayload, symbol) {
     symbol: symbolInfo?.symbol || String(symbol || '').toUpperCase(),
     baseAsset: symbolInfo?.baseAsset || null,
     quoteAsset: symbolInfo?.quoteAsset || null,
+    orderTypes: Array.isArray(symbolInfo?.orderTypes) ? symbolInfo.orderTypes : [],
     stepSize,
+    tickSize: asNumber(priceFilter.tickSize) || 0,
     minQty: asNumber(lotSize.minQty) || 0,
     minNotional
   };
@@ -212,6 +225,47 @@ export function createMexcSpotClient({
           orderId: payload?.orderId || payload?.id || null,
           status: payload?.status || null,
           executedQty: payload?.executedQty || null
+        })
+      );
+      return payload;
+    },
+
+    async placeLimitOrderBaseQty({ symbol, side, quantity, price, orderType = 'LIMIT', newClientOrderId }) {
+      const normalizedSymbol = String(symbol || '').toUpperCase();
+      const normalizedSide = normalizeSide(side);
+      const normalizedType = normalizeLimitOrderType(orderType);
+      const qty = toFixedString(quantity, 12);
+      const limitPrice = toFixedString(price, 12);
+      if (!normalizedSymbol) throw new Error('symbol is required for MEXC order');
+      if (!normalizedSide) throw new Error('side must be BUY or SELL');
+      if (!normalizedType) throw new Error('orderType must be LIMIT or LIMIT_MAKER');
+      if (!qty || Number(qty) <= 0) throw new Error('quantity must be > 0');
+      if (!limitPrice || Number(limitPrice) <= 0) throw new Error('price must be > 0 for limit order');
+
+      const requestParams = {
+        symbol: normalizedSymbol,
+        side: normalizedSide,
+        type: normalizedType,
+        quantity: qty,
+        price: limitPrice
+      };
+      if (normalizedType === 'LIMIT') {
+        requestParams.timeInForce = 'GTC';
+      }
+      if (newClientOrderId) {
+        requestParams.newClientOrderId = String(newClientOrderId).slice(0, 32);
+      }
+
+      logger.info?.(`[mexc] placing spot ${normalizedType.toLowerCase()} order`, redactRequest(requestParams));
+      const payload = await signedRequest('POST', '/api/v3/order', requestParams);
+      logger.info?.(
+        '[mexc] order response',
+        toSafeJson({
+          symbol: payload?.symbol || normalizedSymbol,
+          orderId: payload?.orderId || payload?.id || null,
+          status: payload?.status || null,
+          executedQty: payload?.executedQty || null,
+          type: normalizedType
         })
       );
       return payload;

@@ -17,6 +17,11 @@ const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-orginal',
   'arn-s-shcs-original'
 ]);
+const ARN_LIMIT_ONLY_BOT_NAME_SLUGS = new Set([
+  'arn-s-shcs-limit-only',
+  'arn-s-shcs-limitonly',
+  'arn-bot-service-limit-only'
+]);
 
 function debugExecution(stage, data = {}) {
   if (!DEBUG_TV_WEBHOOK) return;
@@ -81,12 +86,20 @@ function normalizeSide(value) {
   return null;
 }
 
-function normalizeOrderType(value) {
-  const type = String(value || '').trim().toLowerCase();
-  if (!type) return 'MARKET';
+function normalizeOrderType(value, fallback = 'MARKET') {
+  const type = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!type) return fallback;
   if (type === 'market') return 'MARKET';
   if (type === 'limit') return 'LIMIT';
+  if (type === 'limit_maker' || type === 'post_only' || type === 'postonly' || type === 'maker') return 'LIMIT_MAKER';
   return type.toUpperCase();
+}
+
+function isLimitOrderType(value) {
+  return value === 'LIMIT' || value === 'LIMIT_MAKER';
 }
 
 function parseNumeric(value) {
@@ -111,6 +124,95 @@ function isArnOriginalBotName(value = '') {
 
 function isArnPineStrategy(value = '') {
   return String(value || '').trim().toUpperCase() === 'ARN_PINE_FAITHFUL';
+}
+
+function isArnLimitOnlyStrategy(value = '') {
+  return String(value || '').trim().toUpperCase() === 'ARN_LIMIT_ONLY';
+}
+
+function isArnLimitOnlyBotName(value = '') {
+  const slug = normalizeTextSlug(value);
+  if (!slug) return false;
+  if (ARN_LIMIT_ONLY_BOT_NAME_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs') && slug.includes('limit');
+}
+
+function resolveSignalOrderType(signal) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const mappedOrder =
+    rawPayload?.mappedOrder && typeof rawPayload.mappedOrder === 'object'
+      ? rawPayload.mappedOrder
+      : payload?.mappedOrder && typeof payload.mappedOrder === 'object'
+        ? payload.mappedOrder
+        : {};
+  const orderTypeCandidates = [
+    rawPayload?.orderType,
+    rawPayload?.order_type,
+    payload?.orderType,
+    payload?.order_type,
+    mappedOrder?.orderType,
+    mappedOrder?.order_type,
+    rawPayload?.type,
+    payload?.type,
+    signal?.type
+  ];
+  for (const candidate of orderTypeCandidates) {
+    const normalized = normalizeOrderType(candidate, null);
+    if (normalized) return normalized;
+  }
+  return 'MARKET';
+}
+
+function pickFirstPositiveNumericValue(sources = [], keys = []) {
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const value = parseNumeric(source[key]);
+      if (value !== null && value > 0) return value;
+    }
+  }
+  return null;
+}
+
+function resolveSignalLimitPrice(signal, side, fallbackPrice = null) {
+  const payload = signal?.payload && typeof signal.payload === 'object' ? signal.payload : {};
+  const rawPayload = payload?.raw && typeof payload.raw === 'object' ? payload.raw : {};
+  const mappedOrder =
+    rawPayload?.mappedOrder && typeof rawPayload.mappedOrder === 'object'
+      ? rawPayload.mappedOrder
+      : payload?.mappedOrder && typeof payload.mappedOrder === 'object'
+        ? payload.mappedOrder
+        : {};
+  const sources = [rawPayload, payload, mappedOrder];
+
+  const directPrice = pickFirstPositiveNumericValue(sources, [
+    'limitPrice',
+    'limit_price',
+    'price',
+    'entryPrice',
+    'entry_price'
+  ]);
+  if (directPrice !== null) return directPrice;
+
+  const referencePrice =
+    pickFirstPositiveNumericValue(sources, ['close', 'markPrice', 'marketPrice']) ||
+    parseNumeric(signal?.price) ||
+    parseNumeric(fallbackPrice);
+  if (!referencePrice || referencePrice <= 0) return null;
+
+  const slippageBps =
+    pickFirstPositiveNumericValue(sources, ['slippageBps', 'slippage_bps']) ||
+    0;
+  const slipMultiplier = Math.max(0, slippageBps) / 10000;
+  if (String(side || '').toUpperCase() === 'BUY') {
+    return referencePrice * (1 - slipMultiplier);
+  }
+  if (String(side || '').toUpperCase() === 'SELL') {
+    return referencePrice * (1 + slipMultiplier);
+  }
+  return referencePrice;
 }
 
 function extractSignalPayloadSizingRequest(signal) {
@@ -149,7 +251,9 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botId: null,
       botName: null,
       strategy: null,
-      arnOriginal: false
+      runtimeOrderType: null,
+      arnOriginal: false,
+      arnLimitOnly: false
     };
   }
 
@@ -163,18 +267,29 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botId: null,
       botName: null,
       strategy: null,
-      arnOriginal: false
+      runtimeOrderType: null,
+      arnOriginal: false,
+      arnLimitOnly: false
     };
   }
 
   let matchedBotId = null;
   let matchedStrategy = null;
+  let matchedOrderType = null;
   for (const [botId, entry] of Object.entries(runtimeConfigs)) {
     if (!entry || typeof entry !== 'object') continue;
     const linkedIntegrationId = String(entry?.links?.integrationId || '').trim();
     if (!linkedIntegrationId || linkedIntegrationId !== normalizedIntegrationId) continue;
+    const rules = entry?.rules && typeof entry.rules === 'object' ? entry.rules : {};
+    const codeParameters = rules?.codeParameters && typeof rules.codeParameters === 'object' ? rules.codeParameters : {};
     matchedBotId = botId;
-    matchedStrategy = entry?.rules?.strategy || null;
+    matchedStrategy = rules?.strategy || null;
+    matchedOrderType =
+      rules?.orderType ||
+      rules?.order_type ||
+      codeParameters?.orderType ||
+      codeParameters?.order_type ||
+      null;
     break;
   }
 
@@ -183,7 +298,9 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
       botId: null,
       botName: null,
       strategy: null,
-      arnOriginal: false
+      runtimeOrderType: null,
+      arnOriginal: false,
+      arnLimitOnly: false
     };
   }
 
@@ -193,12 +310,15 @@ async function resolveRuntimeTradeBotForIntegration(workspaceId, integrationId) 
   });
   const botName = bot?.name || null;
   const arnOriginal = isArnPineStrategy(matchedStrategy) || isArnOriginalBotName(botName);
+  const arnLimitOnly = isArnLimitOnlyStrategy(matchedStrategy) || isArnLimitOnlyBotName(botName);
 
   return {
     botId: matchedBotId,
     botName,
     strategy: matchedStrategy,
-    arnOriginal
+    runtimeOrderType: normalizeOrderType(matchedOrderType, null),
+    arnOriginal,
+    arnLimitOnly
   };
 }
 
@@ -386,7 +506,7 @@ export async function executePreparedSignal(signalId) {
 
   const symbol = resolveSignalSymbol(signal);
   const side = normalizeSide(signal.side || signal?.payload?.side || signal?.payload?.raw?.side);
-  const orderType = normalizeOrderType(signal.type || signal?.payload?.type || signal?.payload?.raw?.type || 'market');
+  let orderType = resolveSignalOrderType(signal);
 
   if (!symbol || !side) {
     return markSignalExecutionError({
@@ -404,7 +524,7 @@ export async function executePreparedSignal(signalId) {
         dryRun: true,
         symbol,
         side,
-        type: 'MARKET'
+        type: orderType
       };
       await markAlertStatus(alertId, 'executed', 'Dry-run execution');
       await markExecutionAudit(executionAuditId, {
@@ -433,19 +553,35 @@ export async function executePreparedSignal(signalId) {
 
     if (isMexc) {
       const mexcClient = createMexcSpotClient({ apiKey, apiSecret });
-      if (orderType !== 'MARKET') {
+      const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
+      const runtimeOrderType = normalizeOrderType(runtimeBot.runtimeOrderType, null);
+      const orderTypeCoercedForLimitOnly = runtimeBot.arnLimitOnly && orderType === 'MARKET';
+      if (orderTypeCoercedForLimitOnly) {
+        orderType = isLimitOrderType(runtimeOrderType) ? runtimeOrderType : 'LIMIT';
+      }
+
+      const supportedOrderTypes = new Set(['MARKET', 'LIMIT', 'LIMIT_MAKER']);
+      if (!supportedOrderTypes.has(orderType)) {
         return markSignalExecutionError({
           signalId,
           alertId,
           auditId: executionAuditId,
-          message: 'Only MARKET orders are supported for TradingView -> MEXC path',
+          message: `Unsupported orderType for TradingView -> MEXC path: ${orderType}`,
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+      if (runtimeBot.arnLimitOnly && !isLimitOrderType(orderType)) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN limit-only bot supports only LIMIT or LIMIT_MAKER order types',
           auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
         });
       }
 
       const payloadSizingRequested = hasSignalPayloadSizingHint(signal);
       const payloadSizingRequest = extractSignalPayloadSizingRequest(signal);
-      const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
       const payloadSizingApplied =
         runtimeBot.arnOriginal &&
         payloadSizingRequested &&
@@ -472,6 +608,18 @@ export async function executePreparedSignal(signalId) {
         ? 'pine_payload_arn_original'
         : sizing.sizingSource || 'trade_bot_runtime';
       const resolvedAuditBotId = runtimeBot.botId || integration.id;
+      const limitPrice = isLimitOrderType(orderType)
+        ? resolveSignalLimitPrice(signal, side, sizing.computedPrice)
+        : null;
+      if (isLimitOrderType(orderType) && (!limitPrice || limitPrice <= 0)) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'Missing valid limitPrice for LIMIT/LIMIT_MAKER order',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
 
       await markExecutionAudit(executionAuditId, {
         workspaceId: integration.workspaceId,
@@ -490,16 +638,32 @@ export async function executePreparedSignal(signalId) {
           runtimeBotId: runtimeBot.botId || null,
           runtimeBotName: runtimeBot.botName || null,
           runtimeBotStrategy: runtimeBot.strategy || null,
-          runtimeBotArnOriginal: runtimeBot.arnOriginal === true
+          runtimeBotArnOriginal: runtimeBot.arnOriginal === true,
+          runtimeBotArnLimitOnly: runtimeBot.arnLimitOnly === true,
+          runtimeOrderType: runtimeOrderType || null,
+          orderTypeResolved: orderType,
+          orderTypeCoercedForLimitOnly,
+          limitPrice: limitPrice || null
         }
       });
 
-      result = await mexcClient.placeMarketOrderBaseQty({
-        symbol,
-        side,
-        quantity: sizing.qtyRounded,
-        newClientOrderId: clientOrderId
-      });
+      if (orderType === 'MARKET') {
+        result = await mexcClient.placeMarketOrderBaseQty({
+          symbol,
+          side,
+          quantity: sizing.qtyRounded,
+          newClientOrderId: clientOrderId
+        });
+      } else {
+        result = await mexcClient.placeLimitOrderBaseQty({
+          symbol,
+          side,
+          quantity: sizing.qtyRounded,
+          price: limitPrice,
+          orderType,
+          newClientOrderId: clientOrderId
+        });
+      }
 
       const mexcOrderId = result?.orderId || result?.id || null;
       let mexcStatus = result?.status || 'SENT';
@@ -535,6 +699,8 @@ export async function executePreparedSignal(signalId) {
         ...toJsonSafe(result),
         provider: 'mexc-direct',
         amountMode: 'base',
+        orderType,
+        limitPrice: limitPrice || null,
         sizingSource: effectiveSizingSource,
         payloadSizingRequested,
         payloadSizingApplied,
@@ -604,6 +770,8 @@ export async function executePreparedSignal(signalId) {
           decisionContext: toJsonSafe({
             source: 'tradingview_forwarder',
             signalType: signal.type || null,
+            orderTypeResolved: orderType,
+            orderTypeCoercedForLimitOnly,
             payloadSizingRequested,
             payloadSizingApplied,
             ignoredPayloadSizing,

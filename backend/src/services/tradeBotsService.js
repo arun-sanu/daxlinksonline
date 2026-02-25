@@ -660,6 +660,15 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
       line: null
     },
     {
+      key: 'order_type',
+      label: 'Order Type',
+      type: 'string',
+      defaultValue: 'LIMIT',
+      source: 'template:arn-limit-only',
+      description: 'Entry order type: LIMIT or LIMIT_MAKER (post-only).',
+      line: null
+    },
+    {
       key: 'slippage_bps',
       label: 'Slippage Bps',
       type: 'number',
@@ -749,6 +758,7 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
     ladderSteps: 3,
     ladderStepBps: 3,
     limitStyle: 'MID',
+    orderType: 'LIMIT',
     slippageBps: 5,
     rsiLength: 14,
     bbLength: 20,
@@ -773,6 +783,7 @@ function buildArnLimitOnlyDefaultRules({ symbol = 'BTCUSDC' } = {}) {
       ladder_steps: 3,
       ladder_step_bps: 3,
       limit_style: 'MID',
+      order_type: 'LIMIT',
       slippage_bps: 5,
       rsi_length: 14,
       bb_length: 20,

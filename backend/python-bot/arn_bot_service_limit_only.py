@@ -533,6 +533,23 @@ def place_limit_entry(symbol: str, side: str, quote_qty: float, limit_price: flo
     return exchange.create_order(symbol, 'limit', ccxt_side, base_amount, limit_price)
 
 
+def place_limit_entry_with_type(symbol: str, side: str, quote_qty: float, limit_price: float, order_type: str) -> dict:
+    normalized_type = str(order_type or 'LIMIT').strip().upper()
+    if normalized_type not in {'LIMIT', 'LIMIT_MAKER'}:
+        raise ValueError(f'Unsupported orderType: {order_type}. Use LIMIT or LIMIT_MAKER.')
+
+    if normalized_type == 'LIMIT':
+        return place_limit_entry(symbol, side, quote_qty, limit_price)
+
+    # LIMIT_MAKER: post-only style limit order.
+    base_amount = quote_qty / limit_price
+    base_amount = quantize_amount(symbol, base_amount)
+    if base_amount <= 0:
+        raise ValueError(f'Computed base amount too small after quantization: {base_amount}')
+    ccxt_side = 'buy' if side.upper() == 'BUY' else 'sell'
+    return exchange.create_order(symbol, 'limit', ccxt_side, base_amount, limit_price, {'postOnly': True})
+
+
 def place_take_profit(
     symbol: str,
     entry_side: str,
@@ -698,6 +715,11 @@ def execute_signal(payload: dict) -> dict:
     limit_style_default = str(runtime_rule_pick(runtime_rules, ['limitStyle', 'limit_style'], 'MID') or 'MID').strip().upper()
     limit_style = str(pick_first(payload, ['limitStyle', 'limit_style'], limit_style_default) or limit_style_default).strip().upper()
 
+    order_type_default = str(runtime_rule_pick(runtime_rules, ['orderType', 'order_type'], 'LIMIT') or 'LIMIT').strip().upper()
+    order_type = str(pick_first(payload, ['orderType', 'order_type'], order_type_default) or order_type_default).strip().upper()
+    if order_type not in {'LIMIT', 'LIMIT_MAKER'}:
+        return {'ok': False, 'reason': f'Invalid orderType: {order_type}. Use LIMIT or LIMIT_MAKER.'}
+
     slippage_default = safe_int_or(runtime_rule_pick(runtime_rules, ['slippageBps', 'slippage_bps'], 0), 0)
     slippage_bps = max(0, int(safe_float(pick_first(payload, ['slippageBps', 'slippage_bps'], slippage_default), 'slippageBps')))
 
@@ -752,7 +774,7 @@ def execute_signal(payload: dict) -> dict:
             else:
                 limit_price = limit_price * (1.0 - step_mult)
 
-        last_order = place_limit_entry(symbol, side, quote_qty, limit_price)
+        last_order = place_limit_entry_with_type(symbol, side, quote_qty, limit_price, order_type)
         order_id = last_order.get('id')
 
         filled = wait_for_fill(symbol, order_id, entry_ttl_seconds)
@@ -831,6 +853,7 @@ def execute_signal(payload: dict) -> dict:
             'ladderStepBps': ladder_step_bps,
             'limitStyle': limit_style,
             'slippageBps': slippage_bps,
+            'orderType': order_type,
             'investmentPercentage': investment_percentage,
             'volatilitySpike': volatility_spike,
             'tpPercent': tp_percent,
