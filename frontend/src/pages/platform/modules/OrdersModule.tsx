@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
+import LiveLineChart from '../../../components/LiveLineChart';
 import {
   listDatabases,
   listTradeTransactions,
@@ -107,6 +108,20 @@ type ExchangeOpenOrderRow = {
   updateTime?: string | number | null;
 };
 
+type ExchangeTradeFillRow = {
+  id?: string | number;
+  orderId?: string | number;
+  clientOrderId?: string | null;
+  side?: string | null;
+  isBuyer?: boolean;
+  price?: string | number | null;
+  qty?: string | number | null;
+  quoteQty?: string | number | null;
+  commission?: string | number | null;
+  commissionAsset?: string | null;
+  time?: string | number | null;
+};
+
 type LedgerFillState = 'unfilled' | 'partial' | 'filled';
 
 const FILLED_LEDGER_STATUSES = new Set([
@@ -166,6 +181,12 @@ function ledgerStatusBadgeClass(status?: string | null) {
     return 'border-sky-300/30 bg-sky-500/20 text-sky-100';
   }
   return 'border-slate-300/20 bg-slate-500/20 text-slate-200';
+}
+
+function pnlValueClass(value: number) {
+  if (value > 0) return 'text-emerald-300';
+  if (value < 0) return 'text-rose-300';
+  return 'text-gray-300';
 }
 
 type LedgerSectionTableProps = {
@@ -457,6 +478,10 @@ export default function OrdersModule() {
   const openData = snapshot?.isStillOpen?.source?.data || {};
   const balanceData = snapshot?.currentBalance?.source?.data || {};
   const exposureData = snapshot?.openPosition?.source?.data || {};
+  const executedFills = useMemo(
+    () => (Array.isArray(tradesData?.items) ? (tradesData.items as ExchangeTradeFillRow[]) : []),
+    [tradesData]
+  );
 
   const topBalances = useMemo(
     () => (Array.isArray(balanceData?.topAssets) ? balanceData.topAssets : []),
@@ -471,7 +496,11 @@ export default function OrdersModule() {
     [openData]
   );
   const hasOpenOrderFilter = Boolean(orderId.trim() || origClientOrderId.trim());
-  const visibleOpenOrders = hasOpenOrderFilter ? matchingOpenOrders : openOrdersItems;
+  const filteredOpenOrders = hasOpenOrderFilter ? matchingOpenOrders : openOrdersItems;
+  const usingOpenOrderFilterFallback = hasOpenOrderFilter && filteredOpenOrders.length === 0 && openOrdersItems.length > 0;
+  const visibleOpenOrders = usingOpenOrderFilterFallback ? openOrdersItems : filteredOpenOrders;
+  const openOrdersSourceOk = snapshot?.isStillOpen?.source?.ok !== false;
+  const openOrdersSourceError = snapshot?.isStillOpen?.source?.error || null;
   const holdings = useMemo(
     () => (Array.isArray(exposureData?.holdings) ? exposureData.holdings : []),
     [exposureData]
@@ -497,6 +526,41 @@ export default function OrdersModule() {
     }
     return parts.join(' · ');
   }, [integrationId, orderId, origClientOrderId, selectedIntegration, symbol]);
+  const pnlTimeline = useMemo(() => {
+    const rows = [...(ledger?.items || [])].sort((a, b) => {
+      const aTs = new Date(a.executedAt || a.createdAt || 0).getTime();
+      const bTs = new Date(b.executedAt || b.createdAt || 0).getTime();
+      return aTs - bTs;
+    });
+
+    let cumulative = 0;
+    const timeline = rows.map((row) => {
+      const realizedRaw = Number(row.realizedPnl);
+      const realized = Number.isFinite(realizedRaw) ? realizedRaw : 0;
+      cumulative += realized;
+      const ts = row.executedAt || row.createdAt || new Date().toISOString();
+      return {
+        id: row.id,
+        ts,
+        symbol: row.symbol || '—',
+        side: row.side || '—',
+        status: row.status || '—',
+        realizedPnl: realized,
+        cumulativePnl: cumulative
+      };
+    });
+
+    return timeline;
+  }, [ledger]);
+  const pnlChartData = useMemo(
+    () =>
+      pnlTimeline.map((point) => ({
+        ts: point.ts,
+        value: Number(point.cumulativePnl.toFixed(8))
+      })),
+    [pnlTimeline]
+  );
+  const pnlRowsDesc = useMemo(() => [...pnlTimeline].reverse(), [pnlTimeline]);
   const ledgerSections = useMemo(() => {
     const grouped: Record<LedgerFillState, TradeTransactionLedgerItem[]> = {
       unfilled: [],
@@ -758,12 +822,23 @@ export default function OrdersModule() {
             <p className="text-sm text-gray-300">
               Live open orders from <code>GET /api/v3/openOrders</code> for the selected symbol.
             </p>
-            {hasOpenOrderFilter && (
+            {hasOpenOrderFilter && !usingOpenOrderFilterFallback && (
               <p className="text-xs text-gray-500">
                 Showing matching orders for the supplied order filters.
               </p>
             )}
+            {usingOpenOrderFilterFallback && (
+              <p className="text-xs text-amber-200">
+                No exact order-id match found. Showing all open orders for the selected symbol.
+              </p>
+            )}
             <p className="text-xs text-gray-500">Active filters: {openOrderFilterSummary}</p>
+            <p className="text-xs text-gray-500">
+              Rows shown: {visibleOpenOrders.length} · matching: {matchingOpenOrders.length} · total open for symbol: {openOrdersItems.length}
+            </p>
+            {!openOrdersSourceOk && (
+              <p className="text-xs text-rose-300">Open orders source error: {openOrdersSourceError || 'Request failed'}</p>
+            )}
           </div>
           <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
             <table className="min-w-[1100px] w-full text-sm">
@@ -782,11 +857,18 @@ export default function OrdersModule() {
                 </tr>
               </thead>
               <tbody className="text-gray-200">
+                {loading && (
+                  <tr>
+                    <td className="px-3 py-4 text-gray-500" colSpan={10}>
+                      Loading open orders...
+                    </td>
+                  </tr>
+                )}
                 {!loading && visibleOpenOrders.length === 0 && (
                   <tr>
                     <td className="px-3 py-4 text-gray-500" colSpan={10}>
                       {hasOpenOrderFilter
-                        ? 'No matching open orders for the supplied order filters.'
+                        ? 'No matching open orders for the supplied order filters and no open orders exist for this symbol.'
                         : 'No open orders found for this symbol.'}
                     </td>
                   </tr>
@@ -809,6 +891,57 @@ export default function OrdersModule() {
                     <td className="px-3 py-2">{formatMaybeDecimal(row.cummulativeQuoteQty, 6)}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article className="card-shell space-y-3 xl:col-span-2">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Executed fills (exchange)</p>
+            <p className="text-sm text-gray-300">
+              Direct fills from <code>GET /api/v3/myTrades</code>. Use this when ledger executed table is empty.
+            </p>
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+            <table className="min-w-[1000px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                  <th className="px-3 py-2">Trade Time</th>
+                  <th className="px-3 py-2">Order ID</th>
+                  <th className="px-3 py-2">Client ID</th>
+                  <th className="px-3 py-2">Side</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">Qty</th>
+                  <th className="px-3 py-2">Quote Qty</th>
+                  <th className="px-3 py-2">Fee</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {!loading && executedFills.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-gray-500" colSpan={8}>
+                      No executed fills returned by exchange for this symbol.
+                    </td>
+                  </tr>
+                )}
+                {executedFills.map((fill, index) => {
+                  const side = fill.side || (fill.isBuyer === true ? 'BUY' : fill.isBuyer === false ? 'SELL' : '—');
+                  return (
+                    <tr key={String(fill.id || fill.orderId || fill.clientOrderId || index)} className="border-t border-white/5">
+                      <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(fill.time)}</td>
+                      <td className="px-3 py-2 font-semibold text-white">{fill.orderId ? String(fill.orderId) : '—'}</td>
+                      <td className="px-3 py-2 text-xs text-gray-300">{fill.clientOrderId || '—'}</td>
+                      <td className="px-3 py-2">{side}</td>
+                      <td className="px-3 py-2">{formatMaybeDecimal(fill.price, 6)}</td>
+                      <td className="px-3 py-2">{formatMaybeDecimal(fill.qty, 8)}</td>
+                      <td className="px-3 py-2">{formatMaybeDecimal(fill.quoteQty, 6)}</td>
+                      <td className="px-3 py-2">
+                        {formatMaybeDecimal(fill.commission, 8)} {fill.commissionAsset || ''}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -968,6 +1101,70 @@ export default function OrdersModule() {
             </div>
           </div>
         )}
+
+        <div className="rounded-2xl border border-amber-300/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+          Executed ledger rows can appear empty when orders are inserted as <code>NEW</code> and not yet reconciled back into the
+          trade ledger. Use the <strong>Executed fills (exchange)</strong> table above for exchange-truth fills.
+        </div>
+
+        <article className="space-y-3 rounded-2xl border border-white/8 bg-white/5 p-4">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Profit &amp; loss</p>
+            <p className="text-sm text-gray-300">
+              Realized PnL timeline from trade ledger rows and cumulative curve.
+            </p>
+          </div>
+          <LiveLineChart title="Cumulative Realized PnL" data={pnlChartData} unit="quote" color="#34d399" />
+          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-black/20">
+            <table className="min-w-[760px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                  <th className="px-3 py-2">Executed</th>
+                  <th className="px-3 py-2">Symbol</th>
+                  <th className="px-3 py-2">Side</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Realized PnL</th>
+                  <th className="px-3 py-2">Cumulative PnL</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {!ledgerLoading && pnlRowsDesc.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-gray-500" colSpan={6}>
+                      No PnL rows available for selected ledger filters.
+                    </td>
+                  </tr>
+                )}
+                {ledgerLoading && (
+                  <tr>
+                    <td className="px-3 py-4 text-gray-500" colSpan={6}>
+                      Loading PnL rows...
+                    </td>
+                  </tr>
+                )}
+                {!ledgerLoading &&
+                  pnlRowsDesc.slice(0, 100).map((row) => (
+                    <tr key={`pnl-${row.id}`} className="border-t border-white/5">
+                      <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.ts)}</td>
+                      <td className="px-3 py-2 font-semibold text-white">{row.symbol}</td>
+                      <td className="px-3 py-2">{row.side}</td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.realizedPnl)}`}>
+                        {formatMaybeDecimal(row.realizedPnl, 6)}
+                      </td>
+                      <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.cumulativePnl)}`}>
+                        {formatMaybeDecimal(row.cumulativePnl, 6)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
 
         <div className="space-y-5">
           {ledgerSections.map((section) => (
