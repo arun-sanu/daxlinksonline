@@ -7,6 +7,7 @@ import {
   listTradeTransactions,
   listTradeTransactionsForDatabase,
   type DatabaseInstance,
+  type TradeTransactionLedgerItem,
   type TradeTransactionLedgerResponse
 } from '../../../api/databases';
 
@@ -77,6 +78,154 @@ function formatDate(input?: string | null) {
   const date = new Date(input);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString();
+}
+
+type LedgerFillState = 'unfilled' | 'partial' | 'filled';
+
+const FILLED_LEDGER_STATUSES = new Set([
+  'filled',
+  'executed',
+  'executed_success',
+  'success',
+  'succeeded',
+  'closed',
+  'done'
+]);
+const PARTIAL_LEDGER_STATUSES = new Set(['partially_filled', 'partial_fill']);
+const PENDING_LEDGER_STATUSES = new Set([
+  'new',
+  'open',
+  'pending',
+  'sent',
+  'submitted',
+  'received',
+  'queued',
+  'ready_for_execution'
+]);
+
+function classifyLedgerFillState(row: TradeTransactionLedgerItem): LedgerFillState {
+  const normalizedStatus = String(row.status || '')
+    .trim()
+    .toLowerCase();
+  const quantity = Number(row.quantity);
+
+  if (FILLED_LEDGER_STATUSES.has(normalizedStatus)) {
+    return 'filled';
+  }
+  if (PARTIAL_LEDGER_STATUSES.has(normalizedStatus)) {
+    return 'partial';
+  }
+  if (PENDING_LEDGER_STATUSES.has(normalizedStatus)) {
+    return Number.isFinite(quantity) && quantity > 0 ? 'partial' : 'unfilled';
+  }
+
+  if (Number.isFinite(quantity) && quantity > 0) {
+    return 'partial';
+  }
+  return 'unfilled';
+}
+
+function ledgerStatusBadgeClass(status?: string | null) {
+  const normalized = String(status || '')
+    .trim()
+    .toLowerCase();
+  if (FILLED_LEDGER_STATUSES.has(normalized)) {
+    return 'border-emerald-400/30 bg-emerald-500/20 text-emerald-100';
+  }
+  if (PARTIAL_LEDGER_STATUSES.has(normalized)) {
+    return 'border-amber-300/30 bg-amber-500/20 text-amber-100';
+  }
+  if (PENDING_LEDGER_STATUSES.has(normalized)) {
+    return 'border-sky-300/30 bg-sky-500/20 text-sky-100';
+  }
+  return 'border-slate-300/20 bg-slate-500/20 text-slate-200';
+}
+
+type LedgerSectionTableProps = {
+  title: string;
+  subtitle: string;
+  badgeClassName: string;
+  rows: TradeTransactionLedgerItem[];
+  loading: boolean;
+  emptyState: string;
+};
+
+function LedgerSectionTable({ title, subtitle, badgeClassName, rows, loading, emptyState }: LedgerSectionTableProps) {
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{title}</p>
+          <p className="text-xs text-gray-400">{subtitle}</p>
+        </div>
+        <span className={`inline-flex rounded-lg border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${badgeClassName}`}>
+          {rows.length}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+        <table className="min-w-[1200px] w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+              <th className="px-3 py-2">Executed</th>
+              <th className="px-3 py-2">Symbol</th>
+              <th className="px-3 py-2">Side</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Amount</th>
+              <th className="px-3 py-2">Qty</th>
+              <th className="px-3 py-2">Value</th>
+              <th className="px-3 py-2">Mkt Price</th>
+              <th className="px-3 py-2">Exec Price</th>
+              <th className="px-3 py-2">Buy Value</th>
+              <th className="px-3 py-2">Sell Value</th>
+              <th className="px-3 py-2">Realized PnL</th>
+              <th className="px-3 py-2">Bal Before</th>
+              <th className="px-3 py-2">Bal After</th>
+            </tr>
+          </thead>
+          <tbody className="text-gray-200">
+            {loading && (
+              <tr>
+                <td className="px-3 py-4 text-gray-500" colSpan={14}>
+                  Loading trade transactions...
+                </td>
+              </tr>
+            )}
+            {!loading && rows.length === 0 && (
+              <tr>
+                <td className="px-3 py-4 text-gray-500" colSpan={14}>
+                  {emptyState}
+                </td>
+              </tr>
+            )}
+            {!loading &&
+              rows.map((row) => (
+                <tr key={row.id} className="border-t border-white/5">
+                  <td className="px-3 py-2 text-xs text-gray-400">{row.executedAt ? new Date(row.executedAt).toLocaleString() : '—'}</td>
+                  <td className="px-3 py-2 font-semibold text-white">{row.symbol || '—'}</td>
+                  <td className="px-3 py-2">{row.side || '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
+                      {row.status || '—'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.amount, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.quantity, 8)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.value, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.marketPrice, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.executionPrice, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.buyValue, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.sellValue, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.realizedPnl, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceBefore, 6)}</td>
+                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceAfter, 6)}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 export default function OrdersModule() {
@@ -266,6 +415,44 @@ export default function OrdersModule() {
     () => ledgerDatabases.find((database) => database.id === ledgerDbId) || null,
     [ledgerDatabases, ledgerDbId]
   );
+  const ledgerSections = useMemo(() => {
+    const grouped: Record<LedgerFillState, TradeTransactionLedgerItem[]> = {
+      unfilled: [],
+      partial: [],
+      filled: []
+    };
+
+    for (const row of ledger?.items || []) {
+      grouped[classifyLedgerFillState(row)].push(row);
+    }
+
+    return [
+      {
+        key: 'unfilled',
+        title: 'Unfilled / Pending',
+        subtitle: 'Not filled yet (NEW, SENT, PENDING, or zero executed quantity).',
+        badgeClassName: 'border-sky-300/40 bg-sky-500/20 text-sky-100',
+        emptyState: 'No unfilled or pending rows found.',
+        rows: grouped.unfilled
+      },
+      {
+        key: 'partial',
+        title: 'Partially Filled',
+        subtitle: 'Partially executed quantity with open remainder.',
+        badgeClassName: 'border-amber-300/40 bg-amber-500/20 text-amber-100',
+        emptyState: 'No partially filled rows found.',
+        rows: grouped.partial
+      },
+      {
+        key: 'filled',
+        title: 'Fully Filled / Executed',
+        subtitle: 'Completed fills from exchange execution.',
+        badgeClassName: 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100',
+        emptyState: 'No fully filled rows found.',
+        rows: grouped.filled
+      }
+    ] as const;
+  }, [ledger]);
 
   return (
     <div className="orders-page space-y-6">
@@ -638,63 +825,18 @@ export default function OrdersModule() {
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
-          <table className="min-w-[1200px] w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                <th className="px-3 py-2">Executed</th>
-                <th className="px-3 py-2">Symbol</th>
-                <th className="px-3 py-2">Side</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Amount</th>
-                <th className="px-3 py-2">Qty</th>
-                <th className="px-3 py-2">Value</th>
-                <th className="px-3 py-2">Mkt Price</th>
-                <th className="px-3 py-2">Exec Price</th>
-                <th className="px-3 py-2">Buy Value</th>
-                <th className="px-3 py-2">Sell Value</th>
-                <th className="px-3 py-2">Realized PnL</th>
-                <th className="px-3 py-2">Bal Before</th>
-                <th className="px-3 py-2">Bal After</th>
-              </tr>
-            </thead>
-            <tbody className="text-gray-200">
-              {!ledgerLoading && (!ledger?.items || ledger.items.length === 0) && (
-                <tr>
-                  <td className="px-3 py-4 text-gray-500" colSpan={14}>
-                    No trade transactions found for this filter.
-                  </td>
-                </tr>
-              )}
-              {ledgerLoading && (
-                <tr>
-                  <td className="px-3 py-4 text-gray-500" colSpan={14}>
-                    Loading trade transactions...
-                  </td>
-                </tr>
-              )}
-              {(ledger?.items || []).map((row) => (
-                <tr key={row.id} className="border-t border-white/5">
-                  <td className="px-3 py-2 text-xs text-gray-400">
-                    {row.executedAt ? new Date(row.executedAt).toLocaleString() : '—'}
-                  </td>
-                  <td className="px-3 py-2 font-semibold text-white">{row.symbol || '—'}</td>
-                  <td className="px-3 py-2">{row.side || '—'}</td>
-                  <td className="px-3 py-2">{row.status || '—'}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.amount, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.quantity, 8)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.value, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.marketPrice, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.executionPrice, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.buyValue, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.sellValue, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.realizedPnl, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceBefore, 6)}</td>
-                  <td className="px-3 py-2">{formatMaybeDecimal(row.accountBalanceAfter, 6)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-5">
+          {ledgerSections.map((section) => (
+            <LedgerSectionTable
+              key={section.key}
+              title={section.title}
+              subtitle={section.subtitle}
+              badgeClassName={section.badgeClassName}
+              rows={section.rows}
+              loading={ledgerLoading}
+              emptyState={section.emptyState}
+            />
+          ))}
         </div>
       </article>
 
