@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { fetchMexcSpotSnapshot, type OrderCheckSnapshot } from '../../../api/orders';
 import { listIntegrations } from '../../../api/integrations';
+import { listBots, listInstances } from '../../../api/tradeBots';
 import LiveLineChart from '../../../components/LiveLineChart';
 import {
   listDatabases,
@@ -13,6 +14,54 @@ import {
 } from '../../../api/databases';
 
 type Integration = Awaited<ReturnType<typeof listIntegrations>>[number];
+type PairTabItem = {
+  pair: string;
+  lastSeenAt: string | null;
+};
+
+const ACTIVE_INSTANCE_STATUSES = new Set(['running', 'active']);
+const RECENT_PAIRS_STORAGE_KEY = 'orders.recentPairs.v1';
+const MAX_RECENT_PAIRS = 20;
+
+function normalizePair(value: unknown) {
+  return String(value || '')
+    .trim()
+    .toUpperCase();
+}
+
+function toTimestamp(value?: string | null) {
+  if (!value) return 0;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function readRecentPairs(): PairTabItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_PAIRS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Array<{ pair?: string; lastSeenAt?: string | null }>;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => ({
+        pair: normalizePair(item?.pair),
+        lastSeenAt: item?.lastSeenAt || null
+      }))
+      .filter((item) => Boolean(item.pair))
+      .slice(0, MAX_RECENT_PAIRS);
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentPairs(rows: PairTabItem[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(RECENT_PAIRS_STORAGE_KEY, JSON.stringify(rows.slice(0, MAX_RECENT_PAIRS)));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function statusPill(answer: boolean | null | undefined) {
   if (answer === true) {
@@ -279,7 +328,7 @@ function LedgerSectionTable({ title, subtitle, badgeClassName, rows, loading, em
 }
 
 export default function OrdersModule() {
-  const [symbol, setSymbol] = useState('BTCUSDC');
+  const [symbol, setSymbol] = useState('ETHUSDC');
   const [orderId, setOrderId] = useState('');
   const [origClientOrderId, setOrigClientOrderId] = useState('');
   const [integrationId, setIntegrationId] = useState('');
@@ -298,6 +347,13 @@ export default function OrdersModule() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState('');
   const [ledger, setLedger] = useState<TradeTransactionLedgerResponse | null>(null);
+  const [activePairTabs, setActivePairTabs] = useState<PairTabItem[]>([]);
+  const [previousPairTabsFromPlatform, setPreviousPairTabsFromPlatform] = useState<PairTabItem[]>([]);
+  const [recentPairTabs, setRecentPairTabs] = useState<PairTabItem[]>([]);
+  const [pairTabsLoading, setPairTabsLoading] = useState(false);
+  const [pairTabsError, setPairTabsError] = useState('');
+  const [activePairSnapshots, setActivePairSnapshots] = useState<Record<string, OrderCheckSnapshot>>({});
+  const [activePairSnapshotsLoading, setActivePairSnapshotsLoading] = useState(false);
 
   const loadSnapshot = useCallback(
     async ({
@@ -378,6 +434,93 @@ export default function OrdersModule() {
       setIntegrationId(preferred.id);
     }
   }, [integrationId, integrations]);
+
+  const loadPlatformPairs = useCallback(async () => {
+    setPairTabsLoading(true);
+    setPairTabsError('');
+    try {
+      const botsResult = await listBots();
+      const botItems = Array.isArray(botsResult?.items) ? botsResult.items : [];
+      const instanceResults = await Promise.all(botItems.map((bot) => listInstances(bot.id)));
+      const pairSummary = new Map<
+        string,
+        {
+          activeTs: number;
+          previousTs: number;
+          activeIso: string | null;
+          previousIso: string | null;
+        }
+      >();
+
+      for (const response of instanceResults) {
+        const instances = Array.isArray(response?.items) ? response.items : [];
+        for (const instance of instances as Array<any>) {
+          const pair = normalizePair(instance?.symbol);
+          if (!pair) continue;
+          const status = String(instance?.status || '').toLowerCase();
+          const seenAt =
+            instance?.startedAt ||
+            instance?.updatedAt ||
+            instance?.createdAt ||
+            instance?.stoppedAt ||
+            null;
+          const seenTs = toTimestamp(seenAt);
+          const summary = pairSummary.get(pair) || {
+            activeTs: 0,
+            previousTs: 0,
+            activeIso: null,
+            previousIso: null
+          };
+          if (ACTIVE_INSTANCE_STATUSES.has(status)) {
+            if (seenTs >= summary.activeTs) {
+              summary.activeTs = seenTs;
+              summary.activeIso = seenAt;
+            }
+          } else if (seenTs >= summary.previousTs) {
+            summary.previousTs = seenTs;
+            summary.previousIso = seenAt;
+          }
+          pairSummary.set(pair, summary);
+        }
+      }
+
+      const activeRows: PairTabItem[] = [];
+      const previousRows: PairTabItem[] = [];
+      for (const [pair, summary] of pairSummary.entries()) {
+        if (summary.activeTs > 0) {
+          activeRows.push({ pair, lastSeenAt: summary.activeIso });
+        } else {
+          previousRows.push({ pair, lastSeenAt: summary.previousIso });
+        }
+      }
+
+      activeRows.sort((left, right) => {
+        const tsDelta = toTimestamp(right.lastSeenAt) - toTimestamp(left.lastSeenAt);
+        return tsDelta !== 0 ? tsDelta : left.pair.localeCompare(right.pair);
+      });
+      previousRows.sort((left, right) => {
+        const tsDelta = toTimestamp(right.lastSeenAt) - toTimestamp(left.lastSeenAt);
+        return tsDelta !== 0 ? tsDelta : left.pair.localeCompare(right.pair);
+      });
+
+      setActivePairTabs(activeRows);
+      setPreviousPairTabsFromPlatform(previousRows);
+    } catch (err: any) {
+      setPairTabsError(err?.message || 'Failed to load active trading pairs.');
+      setActivePairTabs([]);
+      setPreviousPairTabsFromPlatform([]);
+    } finally {
+      setPairTabsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setRecentPairTabs(readRecentPairs());
+  }, []);
+
+  useEffect(() => {
+    void loadPlatformPairs();
+  }, [loadPlatformPairs]);
 
   const loadLedger = useCallback(
     async ({
@@ -462,6 +605,75 @@ export default function OrdersModule() {
     }, 400);
     return () => window.clearTimeout(timeoutId);
   }, [integrationId, loadSnapshot, orderId, origClientOrderId, symbol]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const activePairs = activePairTabs
+      .map((item) => normalizePair(item.pair))
+      .filter((pair) => Boolean(pair));
+    if (!integrationId || activePairs.length === 0) {
+      setActivePairSnapshots({});
+      setActivePairSnapshotsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      setActivePairSnapshotsLoading(true);
+      const results = await Promise.all(
+        activePairs.map(async (pair) => {
+          try {
+            const data = await fetchMexcSpotSnapshot({
+              symbol: pair,
+              integrationId
+            });
+            return { pair, data };
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (cancelled) return;
+      const mapped: Record<string, OrderCheckSnapshot> = {};
+      for (const result of results) {
+        if (!result) continue;
+        mapped[result.pair] = result.data;
+      }
+      setActivePairSnapshots(mapped);
+      setActivePairSnapshotsLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePairTabs, integrationId]);
+
+  useEffect(() => {
+    const pair = normalizePair(symbol);
+    const checkedAt = snapshot?.checkedAt || null;
+    if (!pair || !checkedAt) return;
+    setRecentPairTabs((previous) => {
+      const merged = new Map<string, PairTabItem>();
+      for (const row of previous) {
+        if (!row.pair) continue;
+        merged.set(row.pair, row);
+      }
+      const existing = merged.get(pair);
+      if (!existing || toTimestamp(checkedAt) >= toTimestamp(existing.lastSeenAt)) {
+        merged.set(pair, { pair, lastSeenAt: checkedAt });
+      }
+      const next = Array.from(merged.values())
+        .sort((left, right) => {
+          const tsDelta = toTimestamp(right.lastSeenAt) - toTimestamp(left.lastSeenAt);
+          return tsDelta !== 0 ? tsDelta : left.pair.localeCompare(right.pair);
+        })
+        .slice(0, MAX_RECENT_PAIRS);
+      writeRecentPairs(next);
+      return next;
+    });
+  }, [snapshot?.checkedAt, symbol]);
+
   const handleRefreshSnapshot = useCallback(() => {
     refreshSnapshot();
   }, [refreshSnapshot]);
@@ -474,17 +686,27 @@ export default function OrdersModule() {
       limit: ledgerLimit
     });
   }, [ledgerDbId, ledgerSymbol, ledgerLimit, loadLedger]);
+  const handleSelectPairTab = useCallback((pair: string) => {
+    const normalized = normalizePair(pair);
+    if (!normalized) return;
+    setSymbol(normalized);
+    setOrderId('');
+    setOrigClientOrderId('');
+  }, []);
+  const handleRefreshPairTabs = useCallback(() => {
+    void loadPlatformPairs();
+  }, [loadPlatformPairs]);
 
+  const requestedPair = useMemo(() => normalizePair(symbol), [symbol]);
   const orderData = snapshot?.didTradeHappen?.source?.order?.data || {};
   const tradesData = snapshot?.didTradeHappen?.source?.myTrades?.data || {};
   const openData = snapshot?.isStillOpen?.source?.data || {};
   const balanceData = snapshot?.currentBalance?.source?.data || {};
   const exposureData = snapshot?.openPosition?.source?.data || {};
-  const executedFills = useMemo(
+  const selectedExecutedFills = useMemo(
     () => (Array.isArray(tradesData?.items) ? (tradesData.items as ExchangeTradeFillRow[]) : []),
     [tradesData]
   );
-
   const topBalances = useMemo(
     () => (Array.isArray(balanceData?.topAssets) ? balanceData.topAssets : []),
     [balanceData]
@@ -503,50 +725,172 @@ export default function OrdersModule() {
   const visibleOpenOrders = usingOpenOrderFilterFallback ? openOrdersItems : filteredOpenOrders;
   const openOrdersSourceOk = snapshot?.isStillOpen?.source?.ok !== false;
   const openOrdersSourceError = snapshot?.isStillOpen?.source?.error || null;
-  const requestedPair = useMemo(
-    () =>
-      String(symbol || '')
-        .trim()
-        .toUpperCase(),
-    [symbol]
+  const activePairs = useMemo(
+    () => activePairTabs.map((item) => normalizePair(item.pair)).filter((pair) => Boolean(pair)),
+    [activePairTabs]
   );
+  const activePairSet = useMemo(() => new Set(activePairs), [activePairs]);
+  const previousPairTabs = useMemo(() => {
+    const merged = new Map<string, PairTabItem>();
+    for (const row of previousPairTabsFromPlatform) {
+      const pair = normalizePair(row.pair);
+      if (!pair || activePairSet.has(pair)) continue;
+      merged.set(pair, {
+        pair,
+        lastSeenAt: row.lastSeenAt || null
+      });
+    }
+    for (const row of recentPairTabs) {
+      const pair = normalizePair(row.pair);
+      if (!pair || activePairSet.has(pair)) continue;
+      const existing = merged.get(pair);
+      if (!existing || toTimestamp(row.lastSeenAt) >= toTimestamp(existing.lastSeenAt)) {
+        merged.set(pair, {
+          pair,
+          lastSeenAt: row.lastSeenAt || null
+        });
+      }
+    }
+    return Array.from(merged.values())
+      .sort((left, right) => {
+        const tsDelta = toTimestamp(right.lastSeenAt) - toTimestamp(left.lastSeenAt);
+        return tsDelta !== 0 ? tsDelta : left.pair.localeCompare(right.pair);
+      })
+      .slice(0, MAX_RECENT_PAIRS);
+  }, [activePairSet, previousPairTabsFromPlatform, recentPairTabs]);
+  const visiblePairs = useMemo(() => {
+    const pairs = new Set<string>(activePairs);
+    if (requestedPair) {
+      pairs.add(requestedPair);
+    }
+    if (pairs.size === 0 && requestedPair) {
+      pairs.add(requestedPair);
+    }
+    return Array.from(pairs).sort((leftPair, rightPair) => leftPair.localeCompare(rightPair));
+  }, [activePairs, requestedPair]);
+  const visiblePairSet = useMemo(() => new Set(visiblePairs), [visiblePairs]);
   const emptyOpenOrdersMessage = hasOpenOrderFilter
     ? 'No matching open orders for the supplied order filters.'
     : 'No open orders found for this pair.';
+  const activeSnapshotOpenOrders = useMemo(() => {
+    const rows: ExchangeOpenOrderRow[] = [];
+    for (const [pair, pairSnapshot] of Object.entries(activePairSnapshots)) {
+      const payload = pairSnapshot?.isStillOpen?.source?.data || {};
+      const items = Array.isArray(payload?.items) ? (payload.items as ExchangeOpenOrderRow[]) : [];
+      for (const row of items) {
+        rows.push({
+          ...row,
+          symbol: normalizePair(row.symbol || pair)
+        });
+      }
+    }
+    return rows;
+  }, [activePairSnapshots]);
+  const activeSnapshotExecutedFills = useMemo(() => {
+    const rows: ExchangeTradeFillRow[] = [];
+    for (const [pair, pairSnapshot] of Object.entries(activePairSnapshots)) {
+      const payload = pairSnapshot?.didTradeHappen?.source?.myTrades?.data || {};
+      const items = Array.isArray(payload?.items) ? (payload.items as ExchangeTradeFillRow[]) : [];
+      for (const row of items) {
+        rows.push({
+          ...row,
+          symbol: normalizePair(row.symbol || pair)
+        });
+      }
+    }
+    return rows;
+  }, [activePairSnapshots]);
+  const mergedOpenOrderRows = useMemo(() => {
+    const deduped = new Map<string, ExchangeOpenOrderRow>();
+    const pushRows = (rows: ExchangeOpenOrderRow[]) => {
+      for (const row of rows) {
+        const pair = normalizePair(row.symbol || requestedPair);
+        if (!pair || !visiblePairSet.has(pair)) continue;
+        const key = [
+          pair,
+          String(row.orderId || ''),
+          String(row.clientOrderId || row.origClientOrderId || ''),
+          String(row.updateTime || row.time || '')
+        ].join('|');
+        deduped.set(key, {
+          ...row,
+          symbol: pair
+        });
+      }
+    };
+    if (!hasOpenOrderFilter) {
+      pushRows(activeSnapshotOpenOrders);
+    }
+    pushRows(
+      visibleOpenOrders.map((row) => ({
+        ...row,
+        symbol: normalizePair(row.symbol || requestedPair)
+      }))
+    );
+    return Array.from(deduped.values());
+  }, [activeSnapshotOpenOrders, hasOpenOrderFilter, requestedPair, visibleOpenOrders, visiblePairSet]);
+  const mergedExecutedFills = useMemo(() => {
+    const deduped = new Map<string, ExchangeTradeFillRow>();
+    const pushRows = (rows: ExchangeTradeFillRow[]) => {
+      for (const row of rows) {
+        const pair = normalizePair(row.symbol || requestedPair);
+        if (!pair || !visiblePairSet.has(pair)) continue;
+        const key = [
+          pair,
+          String(row.id || ''),
+          String(row.orderId || ''),
+          String(row.clientOrderId || ''),
+          String(row.time || ''),
+          String(row.price || ''),
+          String(row.qty || '')
+        ].join('|');
+        deduped.set(key, {
+          ...row,
+          symbol: pair
+        });
+      }
+    };
+    pushRows(activeSnapshotExecutedFills);
+    pushRows(
+      selectedExecutedFills.map((row) => ({
+        ...row,
+        symbol: normalizePair(row.symbol || requestedPair)
+      }))
+    );
+    return Array.from(deduped.values());
+  }, [activeSnapshotExecutedFills, requestedPair, selectedExecutedFills, visiblePairSet]);
   const openOrdersByPair = useMemo(() => {
     const groups = new Map<string, ExchangeOpenOrderRow[]>();
-    if (requestedPair) {
-      groups.set(requestedPair, []);
+    for (const pair of visiblePairs) {
+      groups.set(pair, []);
     }
-    for (const row of visibleOpenOrders) {
-      const key = String(row.symbol || requestedPair || 'UNKNOWN')
-        .trim()
-        .toUpperCase();
-      const existing = groups.get(key) || [];
+    for (const row of mergedOpenOrderRows) {
+      const pair = normalizePair(row.symbol || requestedPair || 'UNKNOWN');
+      if (!visiblePairSet.has(pair)) continue;
+      const existing = groups.get(pair) || [];
       existing.push(row);
-      groups.set(key, existing);
+      groups.set(pair, existing);
     }
-    return Array.from(groups.entries())
-      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
-      .map(([pair, rows]) => ({ pair, rows }));
-  }, [requestedPair, visibleOpenOrders]);
+    return visiblePairs.map((pair) => ({ pair, rows: groups.get(pair) || [] }));
+  }, [mergedOpenOrderRows, requestedPair, visiblePairSet, visiblePairs]);
   const executedFillsByPair = useMemo(() => {
     const groups = new Map<string, ExchangeTradeFillRow[]>();
-    if (requestedPair) {
-      groups.set(requestedPair, []);
+    for (const pair of visiblePairs) {
+      groups.set(pair, []);
     }
-    for (const row of executedFills) {
-      const key = String(row.symbol || requestedPair || 'UNKNOWN')
-        .trim()
-        .toUpperCase();
-      const existing = groups.get(key) || [];
+    for (const row of mergedExecutedFills) {
+      const pair = normalizePair(row.symbol || requestedPair || 'UNKNOWN');
+      if (!visiblePairSet.has(pair)) continue;
+      const existing = groups.get(pair) || [];
       existing.push(row);
-      groups.set(key, existing);
+      groups.set(pair, existing);
     }
-    return Array.from(groups.entries())
-      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
-      .map(([pair, rows]) => ({ pair, rows }));
-  }, [executedFills, requestedPair]);
+    return visiblePairs.map((pair) => ({ pair, rows: groups.get(pair) || [] }));
+  }, [mergedExecutedFills, requestedPair, visiblePairSet, visiblePairs]);
+  const totalOpenRowsShown = useMemo(
+    () => openOrdersByPair.reduce((total, group) => total + group.rows.length, 0),
+    [openOrdersByPair]
+  );
   const holdings = useMemo(
     () => (Array.isArray(exposureData?.holdings) ? exposureData.holdings : []),
     [exposureData]
@@ -629,14 +973,15 @@ export default function OrdersModule() {
   const pnlByPair = useMemo(() => {
     const groups = new Map<string, typeof pnlTimeline>();
     const pairCumulative = new Map<string, number>();
-    if (requestedPair) {
-      groups.set(requestedPair, []);
-      pairCumulative.set(requestedPair, 0);
+    for (const pair of visiblePairs) {
+      groups.set(pair, []);
+      pairCumulative.set(pair, 0);
     }
     for (const row of pnlTimeline) {
       const key = String(row.symbol || requestedPair || 'UNKNOWN')
         .trim()
         .toUpperCase();
+      if (!visiblePairSet.has(key)) continue;
       const previousCumulative = pairCumulative.get(key) || 0;
       const nextCumulative = previousCumulative + row.realizedPnl;
       pairCumulative.set(key, nextCumulative);
@@ -647,23 +992,15 @@ export default function OrdersModule() {
       });
       groups.set(key, existing);
     }
-    return Array.from(groups.entries())
-      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
-      .map(([pair, rows]) => ({ pair, rows: [...rows].reverse() }));
-  }, [pnlTimeline, requestedPair]);
+    return visiblePairs.map((pair) => ({ pair, rows: [...(groups.get(pair) || [])].reverse() }));
+  }, [pnlTimeline, requestedPair, visiblePairSet, visiblePairs]);
   const availablePairs = useMemo(() => {
-    const pairs = new Set<string>();
-    for (const group of openOrdersByPair) {
-      if (group.pair) pairs.add(group.pair);
-    }
-    for (const group of executedFillsByPair) {
-      if (group.pair) pairs.add(group.pair);
-    }
-    for (const group of pnlByPair) {
-      if (group.pair) pairs.add(group.pair);
+    const pairs = new Set<string>(visiblePairs);
+    for (const row of previousPairTabs) {
+      if (row.pair) pairs.add(row.pair);
     }
     return Array.from(pairs).sort((leftPair, rightPair) => leftPair.localeCompare(rightPair));
-  }, [executedFillsByPair, openOrdersByPair, pnlByPair]);
+  }, [previousPairTabs, visiblePairs]);
   const ledgerSections = useMemo(() => {
     const grouped: Record<LedgerFillState, TradeTransactionLedgerItem[]> = {
       unfilled: [],
@@ -790,13 +1127,81 @@ export default function OrdersModule() {
       </article>
 
       <article className="card-shell space-y-4">
+        <div className="rounded-2xl border border-white/8 bg-white/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Trading pair tabs</p>
+              <p className="text-xs text-gray-400">Active pairs stay visible as separate tables. Click any previous pair to inspect it.</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRefreshPairTabs}
+              disabled={pairTabsLoading}
+              className="btn btn-secondary btn-small btn-rect disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pairTabsLoading ? 'Refreshing pairs...' : 'Refresh pairs'}
+            </button>
+          </div>
+          {pairTabsError && <p className="mt-2 text-xs text-amber-200">{pairTabsError}</p>}
+          <div className="mt-3 space-y-3">
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-200">Active pairs</p>
+              <div className="flex flex-wrap gap-2">
+                {activePairs.length === 0 && <p className="text-xs text-gray-500">No active trading pairs found.</p>}
+                {activePairTabs.map((item) => {
+                  const active = requestedPair === item.pair;
+                  return (
+                    <button
+                      key={`active-tab-${item.pair}`}
+                      type="button"
+                      onClick={() => handleSelectPairTab(item.pair)}
+                      className={`rounded-lg border px-2.5 py-1 text-left text-[11px] leading-tight transition ${
+                        active
+                          ? 'border-emerald-300/60 bg-emerald-500/25 text-emerald-50'
+                          : 'border-emerald-300/25 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
+                      }`}
+                    >
+                      <span className="block font-semibold">{item.pair}</span>
+                      <span className="block text-[10px] text-emerald-100/80">{formatExchangeTime(item.lastSeenAt)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-300">Previous pairs</p>
+              <div className="flex flex-wrap gap-2">
+                {previousPairTabs.length === 0 && <p className="text-xs text-gray-500">No previous pairs recorded.</p>}
+                {previousPairTabs.map((item) => {
+                  const active = requestedPair === item.pair;
+                  return (
+                    <button
+                      key={`previous-tab-${item.pair}`}
+                      type="button"
+                      onClick={() => handleSelectPairTab(item.pair)}
+                      className={`rounded-lg border px-2.5 py-1 text-left text-[11px] leading-tight transition ${
+                        active
+                          ? 'border-sky-300/60 bg-sky-500/25 text-sky-50'
+                          : 'border-white/15 bg-white/5 text-gray-200 hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="block font-semibold">{item.pair}</span>
+                      <span className="block text-[10px] text-gray-400">{formatExchangeTime(item.lastSeenAt)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-1 text-xs uppercase tracking-[0.14em] text-gray-400">
-            Symbol
+            Selected pair
             <input
               value={symbol}
               onChange={(event) => setSymbol(event.target.value.toUpperCase())}
-              placeholder="BTCUSDC"
+              placeholder="ETHUSDC"
               className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-100 outline-none transition focus:border-primary-300/60"
             />
           </label>
@@ -850,6 +1255,7 @@ export default function OrdersModule() {
             Integration: {selectedIntegration?.label || snapshot?.integration?.label || 'MEXC'} (
             {selectedIntegration?.status || snapshot?.integration?.status || 'unknown'})
           </p>
+          {activePairSnapshotsLoading && <p className="text-xs text-emerald-200">Refreshing active pair tables...</p>}
         </div>
         {selectedIntegration && (
           <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3 text-xs text-gray-300">
@@ -887,7 +1293,7 @@ export default function OrdersModule() {
             {formatMaybeDecimal(pairVerification.minQty, 8)} · Step size: {formatMaybeDecimal(pairVerification.stepSize, 8)}
           </p>
           <p className="mt-1">
-            Available pairs in current exchange/ledger data:{' '}
+            Pair tabs (active + previous):{' '}
             <span className="font-semibold text-white">{availablePairs.length ? availablePairs.join(', ') : '—'}</span>
           </p>
           {!pairVerification.verified && pairVerification.error && (
@@ -956,7 +1362,7 @@ export default function OrdersModule() {
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Open orders table</p>
             <p className="text-sm text-gray-300">
-              Live open orders from <code>GET /api/v3/openOrders</code> for the selected symbol.
+              Live open orders from <code>GET /api/v3/openOrders</code> grouped by active pair (plus selected previous pair).
             </p>
             {hasOpenOrderFilter && !usingOpenOrderFilterFallback && (
               <p className="text-xs text-gray-500">
@@ -970,7 +1376,8 @@ export default function OrdersModule() {
             )}
             <p className="text-xs text-gray-500">Active filters: {openOrderFilterSummary}</p>
             <p className="text-xs text-gray-500">
-              Rows shown: {visibleOpenOrders.length} · matching: {matchingOpenOrders.length} · total open for symbol: {openOrdersItems.length}
+              Rows shown: {totalOpenRowsShown} · selected-pair matching: {matchingOpenOrders.length} · selected-pair total open:{' '}
+              {openOrdersItems.length}
             </p>
             {!openOrdersSourceOk && (
               <p className="text-xs text-rose-300">Open orders source error: {openOrdersSourceError || 'Request failed'}</p>
@@ -1008,9 +1415,20 @@ export default function OrdersModule() {
               <section key={`open-orders-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-white/5 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
-                  <span className="inline-flex rounded-lg border border-sky-300/35 bg-sky-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100">
-                    {rows.length} open
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-lg border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                        activePairSet.has(pair)
+                          ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-100'
+                          : 'border-slate-300/30 bg-slate-500/20 text-slate-100'
+                      }`}
+                    >
+                      {activePairSet.has(pair) ? 'Active pair' : 'Selected previous'}
+                    </span>
+                    <span className="inline-flex rounded-lg border border-sky-300/35 bg-sky-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100">
+                      {rows.length} open
+                    </span>
+                  </div>
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/20">
                   <table className="min-w-[1100px] w-full text-sm">
@@ -1065,7 +1483,7 @@ export default function OrdersModule() {
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Executed fills (exchange)</p>
             <p className="text-sm text-gray-300">
-              Direct fills from <code>GET /api/v3/myTrades</code>. Use this when ledger executed table is empty.
+              Direct fills from <code>GET /api/v3/myTrades</code> grouped by active pair (plus selected previous pair).
             </p>
           </div>
           {loading && (
@@ -1098,9 +1516,20 @@ export default function OrdersModule() {
               <section key={`executed-fills-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-white/5 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
-                  <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
-                    {rows.length} fills
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-lg border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                        activePairSet.has(pair)
+                          ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-100'
+                          : 'border-slate-300/30 bg-slate-500/20 text-slate-100'
+                      }`}
+                    >
+                      {activePairSet.has(pair) ? 'Active pair' : 'Selected previous'}
+                    </span>
+                    <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
+                      {rows.length} fills
+                    </span>
+                  </div>
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/20">
                   <table className="min-w-[1000px] w-full text-sm">
@@ -1344,9 +1773,20 @@ export default function OrdersModule() {
               <section key={`pnl-pair-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
-                  <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
-                    {rows.length} rows
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-lg border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                        activePairSet.has(pair)
+                          ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-100'
+                          : 'border-slate-300/30 bg-slate-500/20 text-slate-100'
+                      }`}
+                    >
+                      {activePairSet.has(pair) ? 'Active pair' : 'Selected previous'}
+                    </span>
+                    <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
+                      {rows.length} rows
+                    </span>
+                  </div>
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/30">
                   <table className="min-w-[760px] w-full text-sm">
