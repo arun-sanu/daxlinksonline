@@ -22,6 +22,17 @@ const payloadSchema = z.object({
 
 const HMAC_FIELDS = new Set(['hmac', 'signature', 'sign']);
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
+const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
+  'arn-s-shcs-orginal',
+  'arn-s-shcs-original'
+]);
+const ARN_LIMIT_ONLY_BOT_NAME_SLUGS = new Set([
+  'arn-s-shcs-limit-only',
+  'arn-s-shcs-limitonly',
+  'arn-bot-service-limit-only'
+]);
+const ARN_LIMIT_ONLY_ALLOWED_SYMBOLS = new Set(['ETHUSDC']);
+const ARN_ORIGINAL_ALLOWED_SYMBOLS = new Set(['BTCUSDC']);
 
 function maybeRedactSnippet(value) {
   return String(value || '')
@@ -123,11 +134,42 @@ function resolveRequestedOrderType(payload = {}) {
   return null;
 }
 
+function normalizeTextSlug(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isArnOriginalBotName(value = '') {
+  const slug = normalizeTextSlug(value);
+  if (!slug) return false;
+  if (ARN_ORIGINAL_BOT_NAME_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs') && (slug.includes('orginal') || slug.includes('original'));
+}
+
+function isArnLimitOnlyBotName(value = '') {
+  const slug = normalizeTextSlug(value);
+  if (!slug) return false;
+  if (ARN_LIMIT_ONLY_BOT_NAME_SLUGS.has(slug)) return true;
+  return slug.includes('arn') && slug.includes('shcs') && slug.includes('limit');
+}
+
+function isArnOriginalStrategy(value = '') {
+  return String(value || '').trim().toUpperCase() === 'ARN_PINE_FAITHFUL';
+}
+
+function isArnLimitOnlyStrategy(value = '') {
+  return String(value || '').trim().toUpperCase() === 'ARN_LIMIT_ONLY';
+}
+
 async function resolveRuntimeOrderPolicyForIntegration(workspaceId, integrationId) {
   const normalizedWorkspaceId = String(workspaceId || '').trim();
   const normalizedIntegrationId = String(integrationId || '').trim();
   if (!normalizedWorkspaceId || !normalizedIntegrationId) {
     return {
+      arnOriginal: false,
       arnLimitOnly: false,
       runtimeOrderType: null
     };
@@ -140,6 +182,7 @@ async function resolveRuntimeOrderPolicyForIntegration(workspaceId, integrationI
   const runtimeConfigs = workspace?.workflowConfig?.tradeBots?.runtimeConfigs;
   if (!runtimeConfigs || typeof runtimeConfigs !== 'object' || Array.isArray(runtimeConfigs)) {
     return {
+      arnOriginal: false,
       arnLimitOnly: false,
       runtimeOrderType: null
     };
@@ -164,6 +207,7 @@ async function resolveRuntimeOrderPolicyForIntegration(workspaceId, integrationI
 
   if (!matchedBotId) {
     return {
+      arnOriginal: false,
       arnLimitOnly: false,
       runtimeOrderType: null
     };
@@ -180,10 +224,10 @@ async function resolveRuntimeOrderPolicyForIntegration(workspaceId, integrationI
     botName = '';
   }
 
-  const arnLimitOnly =
-    matchedStrategy === 'ARN_LIMIT_ONLY' ||
-    (botName.includes('arn') && botName.includes('shcs') && botName.includes('limit'));
+  const arnOriginal = isArnOriginalStrategy(matchedStrategy) || isArnOriginalBotName(botName);
+  const arnLimitOnly = isArnLimitOnlyStrategy(matchedStrategy) || isArnLimitOnlyBotName(botName);
   return {
+    arnOriginal,
     arnLimitOnly,
     runtimeOrderType: matchedOrderType
   };
@@ -439,6 +483,7 @@ export function createTradingviewWebhookHandler(
     findUser = findUserByPrefix,
     forwarder = forward,
     resolveExecutionTarget = resolveSingleExecutionTarget,
+    resolveRuntimeOrderPolicy = resolveRuntimeOrderPolicyForIntegration,
     getHmacPolicy = getWebhookHmacPolicy,
     createAudit = createExecutionAudit,
     updateAudit = updateExecutionAudit,
@@ -702,8 +747,22 @@ export function createTradingviewWebhookHandler(
       const signal = normalizedSignal.signal;
       const executionTarget = await resolveExecutionTarget(user.id);
       const runtimeOrderPolicy = executionTarget?.workspaceId && executionTarget?.integrationId
-        ? await resolveRuntimeOrderPolicyForIntegration(executionTarget.workspaceId, executionTarget.integrationId)
-        : { arnLimitOnly: false, runtimeOrderType: null };
+        ? await resolveRuntimeOrderPolicy(executionTarget.workspaceId, executionTarget.integrationId)
+        : { arnOriginal: false, arnLimitOnly: false, runtimeOrderType: null };
+      if (runtimeOrderPolicy.arnLimitOnly && !ARN_LIMIT_ONLY_ALLOWED_SYMBOLS.has(signal.symbol)) {
+        return rejectInbound({
+          statusCode: 422,
+          reason: 'ARN limit-only bot currently supports ETHUSDC only.',
+          reasonKey: 'payload_symbol_not_supported'
+        });
+      }
+      if (runtimeOrderPolicy.arnOriginal && !ARN_ORIGINAL_ALLOWED_SYMBOLS.has(signal.symbol)) {
+        return rejectInbound({
+          statusCode: 422,
+          reason: 'ARN original bot currently supports BTCUSDC only.',
+          reasonKey: 'payload_symbol_not_supported'
+        });
+      }
       const normalizedPayloadForSizing = normalizedSignal.normalizedPayload || candidatePayload;
       const signalQty = resolveSignalQuantity(normalizedPayloadForSizing);
       const allowMissingQtyForLimitOnly = runtimeOrderPolicy.arnLimitOnly;
@@ -716,6 +775,13 @@ export function createTradingviewWebhookHandler(
       }
       const requestedOrderType = resolveRequestedOrderType(normalizedSignal.normalizedPayload || candidatePayload);
       let resolvedOrderType = requestedOrderType || 'MARKET';
+      if (runtimeOrderPolicy.arnOriginal && resolvedOrderType !== 'MARKET') {
+        return rejectInbound({
+          statusCode: 422,
+          reason: 'Invalid orderType for ARN original bot. Use MARKET.',
+          reasonKey: 'payload_order_type_invalid'
+        });
+      }
       if (runtimeOrderPolicy.arnLimitOnly && resolvedOrderType === 'MARKET') {
         resolvedOrderType = runtimeOrderPolicy.runtimeOrderType || 'LIMIT';
       }

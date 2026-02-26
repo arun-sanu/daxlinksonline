@@ -45,7 +45,8 @@ const noopExecutionDeps = {
   getHmacPolicy: async () => ({ enforceGlobal: true, disableTradingview: false }),
   createAudit: async () => ({ id: 'audit-1' }),
   updateAudit: async () => ({}),
-  findDuplicateAudit: async () => null
+  findDuplicateAudit: async () => null,
+  resolveRuntimeOrderPolicy: async () => ({ arnOriginal: false, arnLimitOnly: false, runtimeOrderType: null })
 };
 
 function canonicalize(obj) {
@@ -246,4 +247,153 @@ test('tradingview webhook handler rejects JSON payload when qty is missing', asy
   assert.equal(res.statusCode, 422);
   assert.equal(res.payload?.error, 'qty missing in signal payload');
   assert.equal(forwardedPayload, null);
+});
+
+test('tradingview webhook rejects non-ETHUSDC symbols for ARN limit-only bot', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const ts = Date.now();
+  const req = createReq({
+    body: { ts, symbol: 'BTCUSDC', side: 'BUY', qty: 0.01, type: 'LIMIT' },
+    rawBody: Buffer.from(JSON.stringify({ ts, symbol: 'BTCUSDC', side: 'BUY', qty: 0.01, type: 'LIMIT' }), 'utf8')
+  });
+
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      ...noopExecutionDeps,
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      resolveExecutionTarget: async () => ({
+        workspaceId: 'ws-1',
+        integrationId: 'ig-1',
+        botId: 'bot-1'
+      }),
+      resolveRuntimeOrderPolicy: async () => ({
+        arnOriginal: false,
+        arnLimitOnly: true,
+        runtimeOrderType: 'LIMIT'
+      })
+    }
+  );
+
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.payload?.error, 'ARN limit-only bot currently supports ETHUSDC only.');
+  assert.equal(forwardedPayload, null);
+});
+
+test('tradingview webhook rejects non-BTCUSDC symbols for ARN original bot', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const ts = Date.now();
+  const req = createReq({
+    body: { ts, symbol: 'ETHUSDC', side: 'BUY', qty: 0.01, type: 'MARKET' },
+    rawBody: Buffer.from(JSON.stringify({ ts, symbol: 'ETHUSDC', side: 'BUY', qty: 0.01, type: 'MARKET' }), 'utf8')
+  });
+
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      ...noopExecutionDeps,
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      resolveExecutionTarget: async () => ({
+        workspaceId: 'ws-1',
+        integrationId: 'ig-1',
+        botId: 'bot-1'
+      }),
+      resolveRuntimeOrderPolicy: async () => ({
+        arnOriginal: true,
+        arnLimitOnly: false,
+        runtimeOrderType: null
+      })
+    }
+  );
+
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.payload?.error, 'ARN original bot currently supports BTCUSDC only.');
+  assert.equal(forwardedPayload, null);
+});
+
+test('tradingview webhook rejects LIMIT for ARN original bot (market only)', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const ts = Date.now();
+  const req = createReq({
+    body: { ts, symbol: 'BTCUSDC', side: 'BUY', qty: 0.01, type: 'LIMIT' },
+    rawBody: Buffer.from(JSON.stringify({ ts, symbol: 'BTCUSDC', side: 'BUY', qty: 0.01, type: 'LIMIT' }), 'utf8')
+  });
+
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      ...noopExecutionDeps,
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      resolveExecutionTarget: async () => ({
+        workspaceId: 'ws-1',
+        integrationId: 'ig-1',
+        botId: 'bot-1'
+      }),
+      resolveRuntimeOrderPolicy: async () => ({
+        arnOriginal: true,
+        arnLimitOnly: false,
+        runtimeOrderType: null
+      })
+    }
+  );
+
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.payload?.error, 'Invalid orderType for ARN original bot. Use MARKET.');
+  assert.equal(forwardedPayload, null);
+});
+
+test('tradingview webhook coerces MARKET to LIMIT_MAKER for ARN limit-only bot when type missing', async () => {
+  const user = { id: 'user-1', webhookSecret: 'secret', webhookHmacKey: null };
+  const ts = Date.now();
+  const req = createReq({
+    body: { ts, symbol: 'ETHUSDC', side: 'BUY', qty: 0.01 },
+    rawBody: Buffer.from(JSON.stringify({ ts, symbol: 'ETHUSDC', side: 'BUY', qty: 0.01 }), 'utf8')
+  });
+
+  let forwardedPayload = null;
+  const handler = createTradingviewWebhookHandler(
+    { requireQuerySecret: true },
+    {
+      ...noopExecutionDeps,
+      findUser: async () => user,
+      forwarder: async (_userId, payload) => {
+        forwardedPayload = payload;
+      },
+      resolveExecutionTarget: async () => ({
+        workspaceId: 'ws-1',
+        integrationId: 'ig-1',
+        botId: 'bot-1'
+      }),
+      resolveRuntimeOrderPolicy: async () => ({
+        arnOriginal: false,
+        arnLimitOnly: true,
+        runtimeOrderType: 'LIMIT_MAKER'
+      })
+    }
+  );
+
+  const res = createRes();
+  await handler(req, res, () => {});
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload?.ok, true);
+  assert.equal(forwardedPayload?.orderType, 'LIMIT_MAKER');
+  assert.equal(forwardedPayload?.type, 'limit_maker');
 });

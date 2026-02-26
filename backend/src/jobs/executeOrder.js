@@ -23,6 +23,8 @@ const ARN_LIMIT_ONLY_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-limitonly',
   'arn-bot-service-limit-only'
 ]);
+const ARN_LIMIT_ONLY_ALLOWED_SYMBOLS = new Set(['ETHUSDC']);
+const ARN_ORIGINAL_ALLOWED_SYMBOLS = new Set(['BTCUSDC']);
 
 function debugExecution(stage, data = {}) {
   if (!DEBUG_TV_WEBHOOK) return;
@@ -676,8 +678,38 @@ export async function executePreparedSignal(signalId) {
       const mexcClient = createMexcSpotClient({ apiKey, apiSecret });
       const runtimeBot = await resolveRuntimeTradeBotForIntegration(integration.workspaceId, integration.id);
       const runtimeOrderType = normalizeOrderType(runtimeBot.runtimeOrderType, null);
-      const enforceLimitOnlyOrderTypes = runtimeBot.arnLimitOnly || hasArnLimitOnlySignalHints(signal);
-      if (orderType === 'MARKET' && hasLimitOrderHints(signal)) {
+      if (runtimeBot.arnLimitOnly && !ARN_LIMIT_ONLY_ALLOWED_SYMBOLS.has(symbol)) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN limit-only bot currently supports ETHUSDC only.',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+      if (runtimeBot.arnOriginal && !ARN_ORIGINAL_ALLOWED_SYMBOLS.has(symbol)) {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN original bot currently supports BTCUSDC only.',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+
+      const enforceLimitOnlyOrderTypes =
+        !runtimeBot.arnOriginal &&
+        (runtimeBot.arnLimitOnly || hasArnLimitOnlySignalHints(signal));
+      if (runtimeBot.arnOriginal && orderType !== 'MARKET') {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN original bot supports only MARKET order type',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+      if (!runtimeBot.arnOriginal && orderType === 'MARKET' && hasLimitOrderHints(signal)) {
         orderType = 'LIMIT';
       }
       const orderTypeCoercedForLimitOnly = enforceLimitOnlyOrderTypes && orderType === 'MARKET';
@@ -701,6 +733,15 @@ export async function executePreparedSignal(signalId) {
           alertId,
           auditId: executionAuditId,
           message: 'ARN limit-only bot supports only LIMIT or LIMIT_MAKER order types',
+          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
+        });
+      }
+      if (runtimeBot.arnOriginal && orderType !== 'MARKET') {
+        return markSignalExecutionError({
+          signalId,
+          alertId,
+          auditId: executionAuditId,
+          message: 'ARN original bot supports only MARKET order type',
           auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
         });
       }
