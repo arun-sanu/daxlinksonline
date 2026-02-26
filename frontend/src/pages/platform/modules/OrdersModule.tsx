@@ -94,6 +94,7 @@ function formatExchangeTime(input: unknown) {
 }
 
 type ExchangeOpenOrderRow = {
+  symbol?: string | null;
   orderId?: string | number;
   clientOrderId?: string | null;
   origClientOrderId?: string | null;
@@ -110,6 +111,7 @@ type ExchangeOpenOrderRow = {
 
 type ExchangeTradeFillRow = {
   id?: string | number;
+  symbol?: string | null;
   orderId?: string | number;
   clientOrderId?: string | null;
   side?: string | null;
@@ -501,6 +503,50 @@ export default function OrdersModule() {
   const visibleOpenOrders = usingOpenOrderFilterFallback ? openOrdersItems : filteredOpenOrders;
   const openOrdersSourceOk = snapshot?.isStillOpen?.source?.ok !== false;
   const openOrdersSourceError = snapshot?.isStillOpen?.source?.error || null;
+  const requestedPair = useMemo(
+    () =>
+      String(symbol || '')
+        .trim()
+        .toUpperCase(),
+    [symbol]
+  );
+  const emptyOpenOrdersMessage = hasOpenOrderFilter
+    ? 'No matching open orders for the supplied order filters.'
+    : 'No open orders found for this pair.';
+  const openOrdersByPair = useMemo(() => {
+    const groups = new Map<string, ExchangeOpenOrderRow[]>();
+    if (requestedPair) {
+      groups.set(requestedPair, []);
+    }
+    for (const row of visibleOpenOrders) {
+      const key = String(row.symbol || requestedPair || 'UNKNOWN')
+        .trim()
+        .toUpperCase();
+      const existing = groups.get(key) || [];
+      existing.push(row);
+      groups.set(key, existing);
+    }
+    return Array.from(groups.entries())
+      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
+      .map(([pair, rows]) => ({ pair, rows }));
+  }, [requestedPair, visibleOpenOrders]);
+  const executedFillsByPair = useMemo(() => {
+    const groups = new Map<string, ExchangeTradeFillRow[]>();
+    if (requestedPair) {
+      groups.set(requestedPair, []);
+    }
+    for (const row of executedFills) {
+      const key = String(row.symbol || requestedPair || 'UNKNOWN')
+        .trim()
+        .toUpperCase();
+      const existing = groups.get(key) || [];
+      existing.push(row);
+      groups.set(key, existing);
+    }
+    return Array.from(groups.entries())
+      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
+      .map(([pair, rows]) => ({ pair, rows }));
+  }, [executedFills, requestedPair]);
   const holdings = useMemo(
     () => (Array.isArray(exposureData?.holdings) ? exposureData.holdings : []),
     [exposureData]
@@ -526,6 +572,26 @@ export default function OrdersModule() {
     }
     return parts.join(' · ');
   }, [integrationId, orderId, origClientOrderId, selectedIntegration, symbol]);
+  const pairVerification = useMemo(() => {
+    const filtersPayload = snapshot?.market?.filters as { ok?: boolean; data?: any; error?: string } | undefined;
+    const filtersOk = Boolean(filtersPayload?.ok);
+    const filtersData = filtersOk && filtersPayload?.data ? filtersPayload.data : null;
+    const exchangePair = String(filtersData?.symbol || '')
+      .trim()
+      .toUpperCase();
+    const verified = Boolean(requestedPair && exchangePair && requestedPair === exchangePair);
+    return {
+      requestedPair,
+      verified,
+      exchangePair: exchangePair || null,
+      baseAsset: filtersData?.baseAsset || null,
+      quoteAsset: filtersData?.quoteAsset || null,
+      minNotional: filtersData?.minNotional ?? null,
+      minQty: filtersData?.minQty ?? null,
+      stepSize: filtersData?.stepSize ?? null,
+      error: filtersPayload?.error || null
+    };
+  }, [requestedPair, snapshot]);
   const pnlTimeline = useMemo(() => {
     const rows = [...(ledger?.items || [])].sort((a, b) => {
       const aTs = new Date(a.executedAt || a.createdAt || 0).getTime();
@@ -560,7 +626,44 @@ export default function OrdersModule() {
       })),
     [pnlTimeline]
   );
-  const pnlRowsDesc = useMemo(() => [...pnlTimeline].reverse(), [pnlTimeline]);
+  const pnlByPair = useMemo(() => {
+    const groups = new Map<string, typeof pnlTimeline>();
+    const pairCumulative = new Map<string, number>();
+    if (requestedPair) {
+      groups.set(requestedPair, []);
+      pairCumulative.set(requestedPair, 0);
+    }
+    for (const row of pnlTimeline) {
+      const key = String(row.symbol || requestedPair || 'UNKNOWN')
+        .trim()
+        .toUpperCase();
+      const previousCumulative = pairCumulative.get(key) || 0;
+      const nextCumulative = previousCumulative + row.realizedPnl;
+      pairCumulative.set(key, nextCumulative);
+      const existing = groups.get(key) || [];
+      existing.push({
+        ...row,
+        cumulativePnl: nextCumulative
+      });
+      groups.set(key, existing);
+    }
+    return Array.from(groups.entries())
+      .sort(([leftPair], [rightPair]) => leftPair.localeCompare(rightPair))
+      .map(([pair, rows]) => ({ pair, rows: [...rows].reverse() }));
+  }, [pnlTimeline, requestedPair]);
+  const availablePairs = useMemo(() => {
+    const pairs = new Set<string>();
+    for (const group of openOrdersByPair) {
+      if (group.pair) pairs.add(group.pair);
+    }
+    for (const group of executedFillsByPair) {
+      if (group.pair) pairs.add(group.pair);
+    }
+    for (const group of pnlByPair) {
+      if (group.pair) pairs.add(group.pair);
+    }
+    return Array.from(pairs).sort((leftPair, rightPair) => leftPair.localeCompare(rightPair));
+  }, [executedFillsByPair, openOrdersByPair, pnlByPair]);
   const ledgerSections = useMemo(() => {
     const grouped: Record<LedgerFillState, TradeTransactionLedgerItem[]> = {
       unfilled: [],
@@ -759,6 +862,39 @@ export default function OrdersModule() {
           </div>
         )}
         <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3 text-xs text-gray-300">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p>
+              Pair verification: requested <span className="font-semibold text-white">{pairVerification.requestedPair || '—'}</span>
+            </p>
+            <span
+              className={`inline-flex rounded-lg border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                pairVerification.verified
+                  ? 'border-emerald-400/35 bg-emerald-500/20 text-emerald-100'
+                  : 'border-rose-400/35 bg-rose-500/20 text-rose-100'
+              }`}
+            >
+              {pairVerification.verified ? 'Verified on exchange' : 'Not verified'}
+            </span>
+          </div>
+          <p className="mt-1">
+            Exchange pair: <span className="font-semibold text-white">{pairVerification.exchangePair || '—'}</span>
+            {pairVerification.baseAsset && pairVerification.quoteAsset
+              ? ` · ${pairVerification.baseAsset}/${pairVerification.quoteAsset}`
+              : ''}
+          </p>
+          <p className="mt-1">
+            Min notional: {formatMaybeDecimal(pairVerification.minNotional, 6)} · Min qty:{' '}
+            {formatMaybeDecimal(pairVerification.minQty, 8)} · Step size: {formatMaybeDecimal(pairVerification.stepSize, 8)}
+          </p>
+          <p className="mt-1">
+            Available pairs in current exchange/ledger data:{' '}
+            <span className="font-semibold text-white">{availablePairs.length ? availablePairs.join(', ') : '—'}</span>
+          </p>
+          {!pairVerification.verified && pairVerification.error && (
+            <p className="mt-1 text-rose-300">Verification error: {pairVerification.error}</p>
+          )}
+        </div>
+        <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3 text-xs text-gray-300">
           Uses MEXC Spot endpoints: <code className="text-sky-200">GET /api/v3/order</code>,{' '}
           <code className="text-sky-200">GET /api/v3/myTrades</code>,{' '}
           <code className="text-sky-200">GET /api/v3/openOrders</code>,{' '}
@@ -840,60 +976,89 @@ export default function OrdersModule() {
               <p className="text-xs text-rose-300">Open orders source error: {openOrdersSourceError || 'Request failed'}</p>
             )}
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
-            <table className="min-w-[1100px] w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                  <th className="px-3 py-2">Updated</th>
-                  <th className="px-3 py-2">Order ID</th>
-                  <th className="px-3 py-2">Client ID</th>
-                  <th className="px-3 py-2">Side</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Price</th>
-                  <th className="px-3 py-2">Orig Qty</th>
-                  <th className="px-3 py-2">Exec Qty</th>
-                  <th className="px-3 py-2">Quote Filled</th>
-                </tr>
-              </thead>
-              <tbody className="text-gray-200">
-                {loading && (
+          {loading && (
+            <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    <th className="px-3 py-2">Updated</th>
+                    <th className="px-3 py-2">Order ID</th>
+                    <th className="px-3 py-2">Client ID</th>
+                    <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Price</th>
+                    <th className="px-3 py-2">Orig Qty</th>
+                    <th className="px-3 py-2">Exec Qty</th>
+                    <th className="px-3 py-2">Quote Filled</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-200">
                   <tr>
                     <td className="px-3 py-4 text-gray-500" colSpan={10}>
                       Loading open orders...
                     </td>
                   </tr>
-                )}
-                {!loading && visibleOpenOrders.length === 0 && (
-                  <tr>
-                    <td className="px-3 py-4 text-gray-500" colSpan={10}>
-                      {hasOpenOrderFilter
-                        ? 'No matching open orders for the supplied order filters and no open orders exist for this symbol.'
-                        : 'No open orders found for this symbol.'}
-                    </td>
-                  </tr>
-                )}
-                {visibleOpenOrders.map((row, index) => (
-                  <tr key={String(row.orderId || row.clientOrderId || index)} className="border-t border-white/5">
-                    <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.updateTime || row.time)}</td>
-                    <td className="px-3 py-2 font-semibold text-white">{row.orderId ? String(row.orderId) : '—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-300">{row.clientOrderId || row.origClientOrderId || '—'}</td>
-                    <td className="px-3 py-2">{row.side || '—'}</td>
-                    <td className="px-3 py-2">{row.type || '—'}</td>
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
-                        {row.status || '—'}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{formatMaybeDecimal(row.price, 6)}</td>
-                    <td className="px-3 py-2">{formatMaybeDecimal(row.origQty, 8)}</td>
-                    <td className="px-3 py-2">{formatMaybeDecimal(row.executedQty, 8)}</td>
-                    <td className="px-3 py-2">{formatMaybeDecimal(row.cummulativeQuoteQty, 6)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!loading &&
+            openOrdersByPair.map(({ pair, rows }) => (
+              <section key={`open-orders-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-white/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
+                  <span className="inline-flex rounded-lg border border-sky-300/35 bg-sky-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-sky-100">
+                    {rows.length} open
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/20">
+                  <table className="min-w-[1100px] w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        <th className="px-3 py-2">Updated</th>
+                        <th className="px-3 py-2">Order ID</th>
+                        <th className="px-3 py-2">Client ID</th>
+                        <th className="px-3 py-2">Side</th>
+                        <th className="px-3 py-2">Type</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Price</th>
+                        <th className="px-3 py-2">Orig Qty</th>
+                        <th className="px-3 py-2">Exec Qty</th>
+                        <th className="px-3 py-2">Quote Filled</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-200">
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="px-3 py-4 text-gray-500" colSpan={10}>
+                            {emptyOpenOrdersMessage}
+                          </td>
+                        </tr>
+                      )}
+                      {rows.map((row, index) => (
+                        <tr key={String(row.orderId || row.clientOrderId || `${pair}-${index}`)} className="border-t border-white/5">
+                          <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.updateTime || row.time)}</td>
+                          <td className="px-3 py-2 font-semibold text-white">{row.orderId ? String(row.orderId) : '—'}</td>
+                          <td className="px-3 py-2 text-xs text-gray-300">{row.clientOrderId || row.origClientOrderId || '—'}</td>
+                          <td className="px-3 py-2">{row.side || '—'}</td>
+                          <td className="px-3 py-2">{row.type || '—'}</td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
+                              {row.status || '—'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">{formatMaybeDecimal(row.price, 6)}</td>
+                          <td className="px-3 py-2">{formatMaybeDecimal(row.origQty, 8)}</td>
+                          <td className="px-3 py-2">{formatMaybeDecimal(row.executedQty, 8)}</td>
+                          <td className="px-3 py-2">{formatMaybeDecimal(row.cummulativeQuoteQty, 6)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
         </article>
 
         <article className="card-shell space-y-3 xl:col-span-2">
@@ -903,48 +1068,84 @@ export default function OrdersModule() {
               Direct fills from <code>GET /api/v3/myTrades</code>. Use this when ledger executed table is empty.
             </p>
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
-            <table className="min-w-[1000px] w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                  <th className="px-3 py-2">Trade Time</th>
-                  <th className="px-3 py-2">Order ID</th>
-                  <th className="px-3 py-2">Client ID</th>
-                  <th className="px-3 py-2">Side</th>
-                  <th className="px-3 py-2">Price</th>
-                  <th className="px-3 py-2">Qty</th>
-                  <th className="px-3 py-2">Quote Qty</th>
-                  <th className="px-3 py-2">Fee</th>
-                </tr>
-              </thead>
-              <tbody className="text-gray-200">
-                {!loading && executedFills.length === 0 && (
+          {loading && (
+            <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+              <table className="min-w-[1000px] w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    <th className="px-3 py-2">Trade Time</th>
+                    <th className="px-3 py-2">Order ID</th>
+                    <th className="px-3 py-2">Client ID</th>
+                    <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Price</th>
+                    <th className="px-3 py-2">Qty</th>
+                    <th className="px-3 py-2">Quote Qty</th>
+                    <th className="px-3 py-2">Fee</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-200">
                   <tr>
                     <td className="px-3 py-4 text-gray-500" colSpan={8}>
-                      No executed fills returned by exchange for this symbol.
+                      Loading executed fills...
                     </td>
                   </tr>
-                )}
-                {executedFills.map((fill, index) => {
-                  const side = fill.side || (fill.isBuyer === true ? 'BUY' : fill.isBuyer === false ? 'SELL' : '—');
-                  return (
-                    <tr key={String(fill.id || fill.orderId || fill.clientOrderId || index)} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(fill.time)}</td>
-                      <td className="px-3 py-2 font-semibold text-white">{fill.orderId ? String(fill.orderId) : '—'}</td>
-                      <td className="px-3 py-2 text-xs text-gray-300">{fill.clientOrderId || '—'}</td>
-                      <td className="px-3 py-2">{side}</td>
-                      <td className="px-3 py-2">{formatMaybeDecimal(fill.price, 6)}</td>
-                      <td className="px-3 py-2">{formatMaybeDecimal(fill.qty, 8)}</td>
-                      <td className="px-3 py-2">{formatMaybeDecimal(fill.quoteQty, 6)}</td>
-                      <td className="px-3 py-2">
-                        {formatMaybeDecimal(fill.commission, 8)} {fill.commissionAsset || ''}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!loading &&
+            executedFillsByPair.map(({ pair, rows }) => (
+              <section key={`executed-fills-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-white/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
+                  <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
+                    {rows.length} fills
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/20">
+                  <table className="min-w-[1000px] w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        <th className="px-3 py-2">Trade Time</th>
+                        <th className="px-3 py-2">Order ID</th>
+                        <th className="px-3 py-2">Client ID</th>
+                        <th className="px-3 py-2">Side</th>
+                        <th className="px-3 py-2">Price</th>
+                        <th className="px-3 py-2">Qty</th>
+                        <th className="px-3 py-2">Quote Qty</th>
+                        <th className="px-3 py-2">Fee</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-200">
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="px-3 py-4 text-gray-500" colSpan={8}>
+                            No executed fills returned by exchange for this pair.
+                          </td>
+                        </tr>
+                      )}
+                      {rows.map((fill, index) => {
+                        const side = fill.side || (fill.isBuyer === true ? 'BUY' : fill.isBuyer === false ? 'SELL' : '—');
+                        return (
+                          <tr key={String(fill.id || fill.orderId || fill.clientOrderId || `${pair}-${index}`)} className="border-t border-white/5">
+                            <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(fill.time)}</td>
+                            <td className="px-3 py-2 font-semibold text-white">{fill.orderId ? String(fill.orderId) : '—'}</td>
+                            <td className="px-3 py-2 text-xs text-gray-300">{fill.clientOrderId || '—'}</td>
+                            <td className="px-3 py-2">{side}</td>
+                            <td className="px-3 py-2">{formatMaybeDecimal(fill.price, 6)}</td>
+                            <td className="px-3 py-2">{formatMaybeDecimal(fill.qty, 8)}</td>
+                            <td className="px-3 py-2">{formatMaybeDecimal(fill.quoteQty, 6)}</td>
+                            <td className="px-3 py-2">
+                              {formatMaybeDecimal(fill.commission, 8)} {fill.commissionAsset || ''}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
         </article>
 
         <article className="card-shell space-y-3">
@@ -1115,55 +1316,81 @@ export default function OrdersModule() {
             </p>
           </div>
           <LiveLineChart title="Cumulative Realized PnL" data={pnlChartData} unit="quote" color="#34d399" />
-          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-black/20">
-            <table className="min-w-[760px] w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
-                  <th className="px-3 py-2">Executed</th>
-                  <th className="px-3 py-2">Symbol</th>
-                  <th className="px-3 py-2">Side</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Realized PnL</th>
-                  <th className="px-3 py-2">Cumulative PnL</th>
-                </tr>
-              </thead>
-              <tbody className="text-gray-200">
-                {!ledgerLoading && pnlRowsDesc.length === 0 && (
-                  <tr>
-                    <td className="px-3 py-4 text-gray-500" colSpan={6}>
-                      No PnL rows available for selected ledger filters.
-                    </td>
+          {ledgerLoading && (
+            <div className="overflow-x-auto rounded-2xl border border-white/8 bg-black/20">
+              <table className="min-w-[760px] w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                    <th className="px-3 py-2">Executed</th>
+                    <th className="px-3 py-2">Symbol</th>
+                    <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Realized PnL</th>
+                    <th className="px-3 py-2">Cumulative PnL</th>
                   </tr>
-                )}
-                {ledgerLoading && (
+                </thead>
+                <tbody className="text-gray-200">
                   <tr>
                     <td className="px-3 py-4 text-gray-500" colSpan={6}>
                       Loading PnL rows...
                     </td>
                   </tr>
-                )}
-                {!ledgerLoading &&
-                  pnlRowsDesc.slice(0, 100).map((row) => (
-                    <tr key={`pnl-${row.id}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.ts)}</td>
-                      <td className="px-3 py-2 font-semibold text-white">{row.symbol}</td>
-                      <td className="px-3 py-2">{row.side}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
-                          {row.status}
-                        </span>
-                      </td>
-                      <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.realizedPnl)}`}>
-                        {formatMaybeDecimal(row.realizedPnl, 6)}
-                      </td>
-                      <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.cumulativePnl)}`}>
-                        {formatMaybeDecimal(row.cumulativePnl, 6)}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!ledgerLoading &&
+            pnlByPair.map(({ pair, rows }) => (
+              <section key={`pnl-pair-${pair}`} className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{pair}</p>
+                  <span className="inline-flex rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
+                    {rows.length} rows
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-white/8 bg-black/30">
+                  <table className="min-w-[760px] w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                        <th className="px-3 py-2">Executed</th>
+                        <th className="px-3 py-2">Symbol</th>
+                        <th className="px-3 py-2">Side</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2">Realized PnL</th>
+                        <th className="px-3 py-2">Cumulative PnL</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-200">
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="px-3 py-4 text-gray-500" colSpan={6}>
+                            No PnL rows available for this pair.
+                          </td>
+                        </tr>
+                      )}
+                      {rows.slice(0, 100).map((row, index) => (
+                        <tr key={`pnl-${pair}-${row.id || index}`} className="border-t border-white/5">
+                          <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.ts)}</td>
+                          <td className="px-3 py-2 font-semibold text-white">{row.symbol}</td>
+                          <td className="px-3 py-2">{row.side}</td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
+                              {row.status}
+                            </span>
+                          </td>
+                          <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.realizedPnl)}`}>
+                            {formatMaybeDecimal(row.realizedPnl, 6)}
+                          </td>
+                          <td className={`px-3 py-2 font-semibold ${pnlValueClass(row.cumulativePnl)}`}>
+                            {formatMaybeDecimal(row.cumulativePnl, 6)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
         </article>
 
         <div className="space-y-5">
