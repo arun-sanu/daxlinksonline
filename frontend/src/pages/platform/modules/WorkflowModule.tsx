@@ -923,7 +923,8 @@ export default function WorkflowModule() {
   const [rules, setRules] = useState<RoutingRule[]>([]);
   const [connectedBotLinks, setConnectedBotLinks] = useState<ConnectedBotWorkflowLink[]>([]);
   const [connectedBotCatalog, setConnectedBotCatalog] = useState<ConnectedBotCatalogItem[]>([]);
-  const [isLoading, setLoading] = useState(true);
+  const [isInitialLoading, setInitialLoading] = useState(true);
+  const [isRefreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [detailInfo, setDetailInfo] = useState<{ kind: 'execution' | 'event'; data: any } | null>(null);
@@ -949,6 +950,7 @@ export default function WorkflowModule() {
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const hasLoadedOnceRef = useRef(false);
   const [fitScale, setFitScale] = useState(1);
 
   useEffect(() => {
@@ -1212,11 +1214,20 @@ export default function WorkflowModule() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      setLoading(true);
+      const shouldShowInitialLoader = !hasLoadedOnceRef.current;
+      if (shouldShowInitialLoader) {
+        setInitialLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setError(null);
       if (!workspaceReady) {
         setError('Workspace ID missing or placeholder. Log in again to load workflow data.');
-        setLoading(false);
+        if (shouldShowInitialLoader) {
+          setInitialLoading(false);
+        } else {
+          setRefreshing(false);
+        }
         return;
       }
       try {
@@ -1252,6 +1263,7 @@ export default function WorkflowModule() {
         setEdges(edgesBuilt);
         setRules(rulesResp);
         setEvents(eventsResp);
+        hasLoadedOnceRef.current = true;
         console.log('[WM] Rules loaded:', rulesResp);
         console.log('[WM] Events loaded:', eventsResp);
         const execs = await fetchExecutionHistory(workspaceId);
@@ -1261,7 +1273,10 @@ export default function WorkflowModule() {
           setError(err?.message || 'Failed to load workflow data');
         }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setInitialLoading(false);
+          setRefreshing(false);
+        }
       }
     })();
     return () => {
@@ -1594,11 +1609,6 @@ export default function WorkflowModule() {
           {toast.message}
         </div>
       )}
-      {(!nodes || isLoading) && (
-        <div className="w-full py-12 text-center text-gray-300">
-          <p className="text-sm">Loading workflow graph…</p>
-        </div>
-      )}
       <div className="relative w-full overflow-hidden">
         {error && (
           <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
@@ -1620,6 +1630,11 @@ export default function WorkflowModule() {
             >
               {workflowStatus}
             </span>
+            {isRefreshing && (
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary-300/35 bg-primary-500/12 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-primary-100">
+                Syncing
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -1655,7 +1670,7 @@ export default function WorkflowModule() {
             <button
               className="rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-gray-100 hover:border-white/40"
               onClick={() => setReloadNonce((value) => value + 1)}
-              disabled={isLoading}
+              disabled={isInitialLoading || isRefreshing}
             >
               Refresh
             </button>
@@ -1809,7 +1824,7 @@ export default function WorkflowModule() {
           backgroundPosition: 'center center'
         }}
       >
-        {isLoading && (
+        {isInitialLoading && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm text-sm text-gray-200">
             Loading workflow…
           </div>

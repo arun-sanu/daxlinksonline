@@ -75,7 +75,7 @@ export default function PlatformModulePage() {
       </header>
 
       <section className="space-y-6">
-        <Detail key={`${moduleId}:${tabId || ''}:${subTabId || ''}`} />
+        <Detail />
       </section>
     </div>
   );
