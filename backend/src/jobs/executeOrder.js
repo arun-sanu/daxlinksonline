@@ -13,7 +13,7 @@ import { recordTradeTransaction } from '../services/tradeTransactionsService.js'
 
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
-const ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT = 48.98;
+const ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT = 90.0;
 const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-orginal',
   'arn-s-shcs-original'
