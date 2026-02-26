@@ -276,27 +276,52 @@ export default function OrdersModule() {
   const [ledgerError, setLedgerError] = useState('');
   const [ledger, setLedger] = useState<TradeTransactionLedgerResponse | null>(null);
 
-  const refreshSnapshot = useCallback(async () => {
-    if (!symbol.trim()) {
-      setError('Please enter a symbol like BTCUSDC.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const data = await fetchMexcSpotSnapshot({
-        symbol,
-        orderId: orderId || undefined,
-        origClientOrderId: origClientOrderId || undefined,
-        integrationId: integrationId || undefined
-      });
-      setSnapshot(data);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to fetch MEXC order diagnostics.');
-    } finally {
-      setLoading(false);
-    }
-  }, [integrationId, orderId, origClientOrderId, symbol]);
+  const loadSnapshot = useCallback(
+    async ({
+      symbolValue,
+      orderIdValue,
+      origClientOrderIdValue,
+      integrationIdValue
+    }: {
+      symbolValue: string;
+      orderIdValue?: string;
+      origClientOrderIdValue?: string;
+      integrationIdValue?: string;
+    }) => {
+      const normalizedSymbol = String(symbolValue || '')
+        .trim()
+        .toUpperCase();
+      if (!normalizedSymbol) {
+        setError('Please enter a symbol like BTCUSDC.');
+        return;
+      }
+      setLoading(true);
+      setError('');
+      try {
+        const data = await fetchMexcSpotSnapshot({
+          symbol: normalizedSymbol,
+          orderId: orderIdValue || undefined,
+          origClientOrderId: origClientOrderIdValue || undefined,
+          integrationId: integrationIdValue || undefined
+        });
+        setSnapshot(data);
+      } catch (err: any) {
+        setError(err?.message || 'Failed to fetch MEXC order diagnostics.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const refreshSnapshot = useCallback(() => {
+    return loadSnapshot({
+      symbolValue: symbol,
+      orderIdValue: orderId,
+      origClientOrderIdValue: origClientOrderId,
+      integrationIdValue: integrationId
+    });
+  }, [integrationId, loadSnapshot, orderId, origClientOrderId, symbol]);
 
   useEffect(() => {
     let mounted = true;
@@ -403,10 +428,17 @@ export default function OrdersModule() {
   }, [ledgerDbId, loadLedger]);
 
   useEffect(() => {
-    refreshSnapshot();
-    // Load once with default symbol; subsequent checks are user-triggered.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!symbol.trim()) return;
+    const timeoutId = window.setTimeout(() => {
+      void loadSnapshot({
+        symbolValue: symbol,
+        orderIdValue: orderId,
+        origClientOrderIdValue: origClientOrderId,
+        integrationIdValue: integrationId
+      });
+    }, 400);
+    return () => window.clearTimeout(timeoutId);
+  }, [integrationId, loadSnapshot, orderId, origClientOrderId, symbol]);
   const handleRefreshSnapshot = useCallback(() => {
     refreshSnapshot();
   }, [refreshSnapshot]);
@@ -452,6 +484,19 @@ export default function OrdersModule() {
     () => ledgerDatabases.find((database) => database.id === ledgerDbId) || null,
     [ledgerDatabases, ledgerDbId]
   );
+  const openOrderFilterSummary = useMemo(() => {
+    const parts = [
+      `symbol=${String(symbol || '').trim().toUpperCase() || '—'}`,
+      `integration=${selectedIntegration?.label || selectedIntegration?.exchange || (integrationId ? integrationId : 'auto')}`
+    ];
+    if (orderId.trim()) {
+      parts.push(`orderId=${orderId.trim()}`);
+    }
+    if (origClientOrderId.trim()) {
+      parts.push(`clientOrderId=${origClientOrderId.trim()}`);
+    }
+    return parts.join(' · ');
+  }, [integrationId, orderId, origClientOrderId, selectedIntegration, symbol]);
   const ledgerSections = useMemo(() => {
     const grouped: Record<LedgerFillState, TradeTransactionLedgerItem[]> = {
       unfilled: [],
@@ -718,6 +763,7 @@ export default function OrdersModule() {
                 Showing matching orders for the supplied order filters.
               </p>
             )}
+            <p className="text-xs text-gray-500">Active filters: {openOrderFilterSummary}</p>
           </div>
           <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
             <table className="min-w-[1100px] w-full text-sm">
