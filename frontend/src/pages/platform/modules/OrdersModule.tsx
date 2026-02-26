@@ -80,6 +80,33 @@ function formatDate(input?: string | null) {
   return date.toLocaleString();
 }
 
+function formatExchangeTime(input: unknown) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return '—';
+  const asNumber = Number(raw);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return new Date(asNumber).toLocaleString();
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString();
+}
+
+type ExchangeOpenOrderRow = {
+  orderId?: string | number;
+  clientOrderId?: string | null;
+  origClientOrderId?: string | null;
+  side?: string | null;
+  type?: string | null;
+  status?: string | null;
+  price?: string | number | null;
+  origQty?: string | number | null;
+  executedQty?: string | number | null;
+  cummulativeQuoteQty?: string | number | null;
+  time?: string | number | null;
+  updateTime?: string | number | null;
+};
+
 type LedgerFillState = 'unfilled' | 'partial' | 'filled';
 
 const FILLED_LEDGER_STATUSES = new Set([
@@ -403,6 +430,16 @@ export default function OrdersModule() {
     () => (Array.isArray(balanceData?.topAssets) ? balanceData.topAssets : []),
     [balanceData]
   );
+  const openOrdersItems = useMemo(
+    () => (Array.isArray(openData?.items) ? (openData.items as ExchangeOpenOrderRow[]) : []),
+    [openData]
+  );
+  const matchingOpenOrders = useMemo(
+    () => (Array.isArray(openData?.matchingOrders) ? (openData.matchingOrders as ExchangeOpenOrderRow[]) : []),
+    [openData]
+  );
+  const hasOpenOrderFilter = Boolean(orderId.trim() || origClientOrderId.trim());
+  const visibleOpenOrders = hasOpenOrderFilter ? matchingOpenOrders : openOrdersItems;
   const holdings = useMemo(
     () => (Array.isArray(exposureData?.holdings) ? exposureData.holdings : []),
     [exposureData]
@@ -668,6 +705,67 @@ export default function OrdersModule() {
           <p className="text-xs text-gray-500">
             Rule: if order appears in <code>openOrders</code>, it is still open.
           </p>
+        </article>
+
+        <article className="card-shell space-y-3 xl:col-span-2">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Open orders table</p>
+            <p className="text-sm text-gray-300">
+              Live open orders from <code>GET /api/v3/openOrders</code> for the selected symbol.
+            </p>
+            {hasOpenOrderFilter && (
+              <p className="text-xs text-gray-500">
+                Showing matching orders for the supplied order filters.
+              </p>
+            )}
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/5">
+            <table className="min-w-[1100px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-gray-500">
+                  <th className="px-3 py-2">Updated</th>
+                  <th className="px-3 py-2">Order ID</th>
+                  <th className="px-3 py-2">Client ID</th>
+                  <th className="px-3 py-2">Side</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">Orig Qty</th>
+                  <th className="px-3 py-2">Exec Qty</th>
+                  <th className="px-3 py-2">Quote Filled</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-200">
+                {!loading && visibleOpenOrders.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-gray-500" colSpan={10}>
+                      {hasOpenOrderFilter
+                        ? 'No matching open orders for the supplied order filters.'
+                        : 'No open orders found for this symbol.'}
+                    </td>
+                  </tr>
+                )}
+                {visibleOpenOrders.map((row, index) => (
+                  <tr key={String(row.orderId || row.clientOrderId || index)} className="border-t border-white/5">
+                    <td className="px-3 py-2 text-xs text-gray-400">{formatExchangeTime(row.updateTime || row.time)}</td>
+                    <td className="px-3 py-2 font-semibold text-white">{row.orderId ? String(row.orderId) : '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-300">{row.clientOrderId || row.origClientOrderId || '—'}</td>
+                    <td className="px-3 py-2">{row.side || '—'}</td>
+                    <td className="px-3 py-2">{row.type || '—'}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${ledgerStatusBadgeClass(row.status)}`}>
+                        {row.status || '—'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">{formatMaybeDecimal(row.price, 6)}</td>
+                    <td className="px-3 py-2">{formatMaybeDecimal(row.origQty, 8)}</td>
+                    <td className="px-3 py-2">{formatMaybeDecimal(row.executedQty, 8)}</td>
+                    <td className="px-3 py-2">{formatMaybeDecimal(row.cummulativeQuoteQty, 6)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </article>
 
         <article className="card-shell space-y-3">
