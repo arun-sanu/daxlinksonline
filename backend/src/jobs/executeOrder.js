@@ -291,8 +291,9 @@ function resolveSignalLimitPrice(signal, side, fallbackPrice = null) {
   return referencePrice;
 }
 
-async function resolveArnLimitOnlyBalanceSizing({ client, symbol, investmentPct }) {
+async function resolveArnLimitOnlyBalanceSizing({ client, symbol, side, investmentPct }) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  const normalizedSide = normalizeSide(side);
   const clampedPct = clampPercentage(investmentPct, ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT);
   const [account, ticker, filters] = await Promise.all([
     client.getAccount(),
@@ -314,11 +315,20 @@ async function resolveArnLimitOnlyBalanceSizing({ client, symbol, investmentPct 
   const freeQuote = extractFreeBalance(account, quoteAsset);
   const freeBase = baseAsset ? extractFreeBalance(account, baseAsset) : 0;
   const equityQuote = freeQuote + (freeBase * price);
-  const requestedAmount = equityQuote * (clampedPct / 100);
+  // Spot side-aware sizing:
+  // BUY can spend only free quote; SELL can size only from free base value.
+  const sideQuoteCapacity = normalizedSide === 'BUY'
+    ? freeQuote
+    : normalizedSide === 'SELL'
+      ? freeBase * price
+      : equityQuote;
+  const requestedAmount = sideQuoteCapacity * (clampedPct / 100);
 
   return {
     requestedAmount,
     equityQuote,
+    sideQuoteCapacity,
+    sideUsed: normalizedSide,
     investmentPct: clampedPct,
     freeQuote,
     freeBase,
@@ -798,6 +808,7 @@ export async function executePreparedSignal(signalId) {
         arnBalanceSizing = await resolveArnLimitOnlyBalanceSizing({
           client: mexcClient,
           symbol,
+          side,
           investmentPct: runtimeBot.runtimeInvestmentPct
         });
         requestedQtyForPayloadSizing = null;
@@ -873,6 +884,8 @@ export async function executePreparedSignal(signalId) {
           runtimeInvestmentPct: runtimeBot.runtimeInvestmentPct ?? null,
           arnInvestmentPct: arnBalanceSizing?.investmentPct ?? null,
           arnAccountEquityQuote: arnBalanceSizing?.equityQuote ?? null,
+          arnSideQuoteCapacity: arnBalanceSizing?.sideQuoteCapacity ?? null,
+          arnSizingSideUsed: arnBalanceSizing?.sideUsed ?? null,
           arnRequestedQuoteAmount: arnBalanceSizing?.requestedAmount ?? null,
           orderTypeResolved: orderType,
           orderTypeCoercedForLimitOnly,
