@@ -14,7 +14,8 @@ import { recordTradeTransaction } from '../services/tradeTransactionsService.js'
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
 const ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT = 90.0;
-const MEXC_UNLOCK_RETRY_STALE_MS = Math.max(0, Number(process.env.MEXC_UNLOCK_RETRY_STALE_MS || 300000));
+// Set default to 0 so unlock retry can cancel any open orders when underfunded.
+const MEXC_UNLOCK_RETRY_STALE_MS = Math.max(0, Number(process.env.MEXC_UNLOCK_RETRY_STALE_MS || 0));
 const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-orginal',
   'arn-s-shcs-original'
