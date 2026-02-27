@@ -14,6 +14,7 @@ import { recordTradeTransaction } from '../services/tradeTransactionsService.js'
 const isDryRun = process.env.WORKFLOW_EXECUTION_MODE === 'dryrun';
 const DEBUG_TV_WEBHOOK = String(process.env.DEBUG_TV_WEBHOOK || 'false').toLowerCase() === 'true';
 const ARN_LIMIT_ONLY_INVESTMENT_PCT_DEFAULT = 90.0;
+const MEXC_UNLOCK_RETRY_STALE_MS = Math.max(0, Number(process.env.MEXC_UNLOCK_RETRY_STALE_MS || 300000));
 const ARN_ORIGINAL_BOT_NAME_SLUGS = new Set([
   'arn-s-shcs-orginal',
   'arn-s-shcs-original'
@@ -153,6 +154,58 @@ function extractFreeBalance(accountPayload, asset) {
   const row = balances.find((entry) => String(entry?.asset || '').toUpperCase() === wantedAsset);
   const free = parseNumeric(row?.free);
   return free && free > 0 ? free : 0;
+}
+
+function extractLockedBalance(accountPayload, asset) {
+  const wantedAsset = String(asset || '')
+    .trim()
+    .toUpperCase();
+  if (!wantedAsset) return 0;
+  const balances = Array.isArray(accountPayload?.balances) ? accountPayload.balances : [];
+  const row = balances.find((entry) => String(entry?.asset || '').toUpperCase() === wantedAsset);
+  const locked = parseNumeric(row?.locked);
+  return locked && locked > 0 ? locked : 0;
+}
+
+function isUnderfundedSizingRejectReason(reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  return normalized === 'insufficient_quote_for_requested_qty' ||
+    normalized === 'insufficient_base_for_requested_qty';
+}
+
+function resolveOrderTimestampMs(order = {}) {
+  const candidates = [
+    order?.updateTime,
+    order?.time,
+    order?.transactTime,
+    order?.createTime,
+    order?.cTime
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseNumeric(candidate);
+    if (parsed && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function appendUnlockRetryDebug(error, unlockRetryDebug = null) {
+  if (!unlockRetryDebug || !error || typeof error !== 'object') return;
+  const sizingDebug =
+    error?.sizingDebug && typeof error.sizingDebug === 'object'
+      ? error.sizingDebug
+      : {};
+  error.sizingDebug = {
+    ...sizingDebug,
+    unlockRetryAttempted: true,
+    unlockRetryRecovered: unlockRetryDebug.recovered === true,
+    unlockRetryReason: unlockRetryDebug.reason || null,
+    unlockRetryOpenOrders: unlockRetryDebug.openOrdersCount ?? null,
+    unlockRetryStaleOrders: unlockRetryDebug.staleOrdersCount ?? null,
+    unlockRetryCanceledOrders: unlockRetryDebug.canceledOrdersCount ?? null,
+    unlockRetryFailedCancels: unlockRetryDebug.failedCancelCount ?? null,
+    unlockRetryLockedQuote: unlockRetryDebug.lockedQuote ?? null,
+    unlockRetryLockedBase: unlockRetryDebug.lockedBase ?? null
+  };
 }
 
 function normalizeTextSlug(value = '') {
@@ -336,6 +389,141 @@ async function resolveArnLimitOnlyBalanceSizing({ client, symbol, side, investme
     baseAsset,
     price
   };
+}
+
+function buildArnLimitOnlyZeroQuoteSizingError({ symbol, side, arnBalanceSizing = null }) {
+  const error = new SizingConfigError('ARN limit-only computed quote amount is zero. Check exchange balances.');
+  const normalizedSide = normalizeSide(side);
+  error.sizingDebug = {
+    symbol: String(symbol || '').trim().toUpperCase() || null,
+    side: normalizedSide,
+    sizingMode: 'PINE_PAYLOAD',
+    rejectedReason: normalizedSide === 'SELL'
+      ? 'insufficient_base_for_requested_qty'
+      : 'insufficient_quote_for_requested_qty',
+    requestedAmount: arnBalanceSizing?.requestedAmount ?? 0,
+    freeQuote: arnBalanceSizing?.freeQuote ?? null,
+    freeBase: arnBalanceSizing?.freeBase ?? null,
+    priceUsed: arnBalanceSizing?.price ?? null,
+    arnInvestmentPct: arnBalanceSizing?.investmentPct ?? null,
+    arnSideQuoteCapacity: arnBalanceSizing?.sideQuoteCapacity ?? null,
+    arnSizingSideUsed: arnBalanceSizing?.sideUsed ?? null
+  };
+  return error;
+}
+
+async function tryUnlockMexcBalanceByCancelingStaleOrders({
+  client,
+  symbol,
+  side,
+  sizingError
+}) {
+  const reason = sizingError?.sizingDebug?.rejectedReason;
+  if (!isUnderfundedSizingRejectReason(reason)) {
+    return { attempted: false, recovered: false, reason: 'reject_reason_not_unlockable' };
+  }
+  if (typeof client?.getOpenOrders !== 'function' || typeof client?.cancelOrder !== 'function') {
+    return { attempted: false, recovered: false, reason: 'open_order_cancel_not_supported' };
+  }
+
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  const normalizedSide = normalizeSide(side);
+  if (!normalizedSymbol || !normalizedSide) {
+    return { attempted: false, recovered: false, reason: 'missing_symbol_or_side' };
+  }
+
+  try {
+    const [account, filters, openOrdersRaw] = await Promise.all([
+      client.getAccount(),
+      client.getSymbolFilters(normalizedSymbol).catch(() => null),
+      client.getOpenOrders(normalizedSymbol).catch(() => [])
+    ]);
+    const quoteAsset = String(
+      filters?.quoteAsset || inferQuoteAssetFromSymbol(normalizedSymbol) || 'USDC'
+    ).toUpperCase();
+    const baseAsset = String(
+      filters?.baseAsset || inferBaseAssetFromSymbol(normalizedSymbol, quoteAsset) || ''
+    ).toUpperCase() || null;
+    const lockedQuote = extractLockedBalance(account, quoteAsset);
+    const lockedBase = baseAsset ? extractLockedBalance(account, baseAsset) : 0;
+    const lockedForSide = normalizedSide === 'BUY' ? lockedQuote : lockedBase;
+    const openOrders = Array.isArray(openOrdersRaw) ? openOrdersRaw : [];
+    if (lockedForSide <= 0) {
+      return {
+        attempted: true,
+        recovered: false,
+        reason: 'no_locked_balance_for_side',
+        lockedQuote,
+        lockedBase,
+        openOrdersCount: openOrders.length,
+        staleOrdersCount: 0,
+        canceledOrdersCount: 0,
+        failedCancelCount: 0
+      };
+    }
+
+    const now = Date.now();
+    const cutoff = MEXC_UNLOCK_RETRY_STALE_MS > 0 ? now - MEXC_UNLOCK_RETRY_STALE_MS : now;
+    const staleOrders = openOrders.filter((order) => {
+      if (MEXC_UNLOCK_RETRY_STALE_MS <= 0) return true;
+      const ts = resolveOrderTimestampMs(order);
+      if (!ts || ts <= 0) return false;
+      return ts <= cutoff;
+    });
+    if (staleOrders.length === 0) {
+      return {
+        attempted: true,
+        recovered: false,
+        reason: 'no_stale_open_orders',
+        lockedQuote,
+        lockedBase,
+        openOrdersCount: openOrders.length,
+        staleOrdersCount: 0,
+        canceledOrdersCount: 0,
+        failedCancelCount: 0
+      };
+    }
+
+    let canceledOrdersCount = 0;
+    let failedCancelCount = 0;
+    for (const order of staleOrders) {
+      const orderId = order?.orderId || order?.id || null;
+      const origClientOrderId = order?.origClientOrderId || order?.clientOrderId || null;
+      if (!orderId && !origClientOrderId) {
+        failedCancelCount += 1;
+        continue;
+      }
+      try {
+        await client.cancelOrder({
+          symbol: normalizedSymbol,
+          orderId,
+          origClientOrderId
+        });
+        canceledOrdersCount += 1;
+      } catch {
+        failedCancelCount += 1;
+      }
+    }
+
+    return {
+      attempted: true,
+      recovered: canceledOrdersCount > 0,
+      reason: canceledOrdersCount > 0 ? 'canceled_stale_orders' : 'cancel_failed',
+      lockedQuote,
+      lockedBase,
+      openOrdersCount: openOrders.length,
+      staleOrdersCount: staleOrders.length,
+      canceledOrdersCount,
+      failedCancelCount
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      recovered: false,
+      reason: 'unlock_check_failed',
+      error: error?.message || String(error)
+    };
+  }
 }
 
 function extractSignalPayloadSizingRequest(signal) {
@@ -797,50 +985,84 @@ export async function executePreparedSignal(signalId) {
       const hasRequestedPayloadSizing =
         (payloadSizingRequest.requestedQty && payloadSizingRequest.requestedQty > 0) ||
         (payloadSizingRequest.requestedAmount && payloadSizingRequest.requestedAmount > 0);
-      let payloadSizingApplied = runtimeBot.arnOriginal && payloadSizingRequested && hasRequestedPayloadSizing;
+      let payloadSizingApplied = false;
       const preResolvedLimitPrice = isLimitOrderType(orderType)
         ? resolveSignalLimitPrice(signal, side, null)
         : null;
-      let requestedQtyForPayloadSizing = payloadSizingRequest.requestedQty;
-      let requestedAmountForPayloadSizing = payloadSizingRequest.requestedAmount;
+      let requestedQtyForPayloadSizing = null;
+      let requestedAmountForPayloadSizing = null;
       let arnBalanceSizing = null;
-      if (runtimeBot.arnLimitOnly) {
-        arnBalanceSizing = await resolveArnLimitOnlyBalanceSizing({
-          client: mexcClient,
-          symbol,
-          side,
-          investmentPct: runtimeBot.runtimeInvestmentPct
-        });
-        requestedQtyForPayloadSizing = null;
-        requestedAmountForPayloadSizing = arnBalanceSizing.requestedAmount;
-        payloadSizingApplied = true;
-      }
-      if (runtimeBot.arnLimitOnly && (!requestedAmountForPayloadSizing || requestedAmountForPayloadSizing <= 0)) {
-        return markSignalExecutionError({
-          signalId,
-          alertId,
-          auditId: executionAuditId,
-          message: 'ARN limit-only computed quote amount is zero. Check exchange balances.',
-          auditStatus: EXECUTION_AUDIT_STATUS.REJECTED
-        });
-      }
-      const ignoredPayloadSizing = payloadSizingRequested && !payloadSizingApplied;
+      let unlockRetryDebug = null;
 
-      const sizing = payloadSizingApplied
-        ? await computeMexcBaseQuantityFromSignalPayload({
-            symbol,
-            side,
+      const resolveSizingInputsForAttempt = async () => {
+        payloadSizingApplied = runtimeBot.arnOriginal && payloadSizingRequested && hasRequestedPayloadSizing;
+        requestedQtyForPayloadSizing = payloadSizingRequest.requestedQty;
+        requestedAmountForPayloadSizing = payloadSizingRequest.requestedAmount;
+        arnBalanceSizing = null;
+
+        if (runtimeBot.arnLimitOnly) {
+          arnBalanceSizing = await resolveArnLimitOnlyBalanceSizing({
             client: mexcClient,
-            requestedQty: requestedQtyForPayloadSizing,
-            requestedAmount: requestedAmountForPayloadSizing
-          })
-        : await computeMexcBaseQuantityForSignal({
-            workspaceId: integration.workspaceId,
-            integrationId: integration.id,
             symbol,
             side,
-            client: mexcClient
+            investmentPct: runtimeBot.runtimeInvestmentPct
           });
+          requestedQtyForPayloadSizing = null;
+          requestedAmountForPayloadSizing = arnBalanceSizing.requestedAmount;
+          payloadSizingApplied = true;
+          if (!requestedAmountForPayloadSizing || requestedAmountForPayloadSizing <= 0) {
+            throw buildArnLimitOnlyZeroQuoteSizingError({
+              symbol,
+              side,
+              arnBalanceSizing
+            });
+          }
+        }
+      };
+
+      let sizing = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await resolveSizingInputsForAttempt();
+          sizing = payloadSizingApplied
+            ? await computeMexcBaseQuantityFromSignalPayload({
+                symbol,
+                side,
+                client: mexcClient,
+                requestedQty: requestedQtyForPayloadSizing,
+                requestedAmount: requestedAmountForPayloadSizing
+              })
+            : await computeMexcBaseQuantityForSignal({
+                workspaceId: integration.workspaceId,
+                integrationId: integration.id,
+                symbol,
+                side,
+                client: mexcClient
+              });
+          break;
+        } catch (error) {
+          if (!(error instanceof SizingConfigError) || !runtimeBot.arnLimitOnly || attempt > 0) {
+            appendUnlockRetryDebug(error, unlockRetryDebug);
+            throw error;
+          }
+          const unlock = await tryUnlockMexcBalanceByCancelingStaleOrders({
+            client: mexcClient,
+            symbol,
+            side,
+            sizingError: error
+          });
+          if (!unlock?.attempted || !unlock?.recovered) {
+            appendUnlockRetryDebug(error, unlock);
+            throw error;
+          }
+          unlockRetryDebug = unlock;
+        }
+      }
+      if (!sizing) {
+        throw new Error('Failed to resolve sizing after unlock retry.');
+      }
+
+      const ignoredPayloadSizing = payloadSizingRequested && !payloadSizingApplied;
       const effectiveSizingSource = payloadSizingApplied
         ? (runtimeBot.arnLimitOnly ? 'balance_pct_arn_limit_only' : 'pine_payload_arn_original')
         : sizing.sizingSource || 'trade_bot_runtime';
@@ -887,6 +1109,15 @@ export async function executePreparedSignal(signalId) {
           arnSideQuoteCapacity: arnBalanceSizing?.sideQuoteCapacity ?? null,
           arnSizingSideUsed: arnBalanceSizing?.sideUsed ?? null,
           arnRequestedQuoteAmount: arnBalanceSizing?.requestedAmount ?? null,
+          unlockRetryAttempted: unlockRetryDebug?.attempted === true,
+          unlockRetryRecovered: unlockRetryDebug?.recovered === true,
+          unlockRetryReason: unlockRetryDebug?.reason || null,
+          unlockRetryOpenOrders: unlockRetryDebug?.openOrdersCount ?? null,
+          unlockRetryStaleOrders: unlockRetryDebug?.staleOrdersCount ?? null,
+          unlockRetryCanceledOrders: unlockRetryDebug?.canceledOrdersCount ?? null,
+          unlockRetryFailedCancels: unlockRetryDebug?.failedCancelCount ?? null,
+          unlockRetryLockedQuote: unlockRetryDebug?.lockedQuote ?? null,
+          unlockRetryLockedBase: unlockRetryDebug?.lockedBase ?? null,
           orderTypeResolved: orderType,
           orderTypeCoercedForLimitOnly,
           limitPrice: limitPrice || null

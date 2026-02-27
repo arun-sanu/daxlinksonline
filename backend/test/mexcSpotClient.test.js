@@ -217,3 +217,76 @@ test('placeLimitOrderBaseQty submits LIMIT_MAKER without GTC and normalizes SELL
   assert.equal(orderRequest.query.price, '2048.25');
   assert.equal(Object.prototype.hasOwnProperty.call(orderRequest.query, 'timeInForce'), false);
 });
+
+test('getOpenOrders fetches symbol open orders', async () => {
+  const seen = [];
+  const fetchMock = async (url, options = {}) => {
+    const parsed = new URL(url);
+    seen.push({
+      method: options.method || 'GET',
+      path: parsed.pathname,
+      query: searchParamsToObject(parsed.searchParams)
+    });
+
+    if (parsed.pathname === '/api/v3/openOrders') {
+      return createJsonResponse([
+        { orderId: '11', symbol: 'ETHUSDC', side: 'BUY', status: 'NEW' }
+      ]);
+    }
+    return createJsonResponse({ msg: 'not found' }, 404);
+  };
+
+  let orders = [];
+  await withFetchMock(fetchMock, async () => {
+    const client = createMexcSpotClient({
+      apiKey: 'k',
+      apiSecret: 's',
+      baseUrl: 'https://example.test'
+    });
+    orders = await client.getOpenOrders('ETHUSDC');
+  });
+
+  assert.equal(Array.isArray(orders), true);
+  assert.equal(orders.length, 1);
+  const request = seen.find((entry) => entry.path === '/api/v3/openOrders');
+  assert.ok(request, 'expected openOrders request');
+  assert.equal(request.method, 'GET');
+  assert.equal(request.query.symbol, 'ETHUSDC');
+  assert.ok(request.query.signature, 'signature should be present');
+});
+
+test('cancelOrder sends DELETE for order cancellation', async () => {
+  const seen = [];
+  const fetchMock = async (url, options = {}) => {
+    const parsed = new URL(url);
+    seen.push({
+      method: options.method || 'GET',
+      path: parsed.pathname,
+      query: searchParamsToObject(parsed.searchParams)
+    });
+
+    if (parsed.pathname === '/api/v3/order') {
+      return createJsonResponse({ orderId: '11', status: 'CANCELED' });
+    }
+    return createJsonResponse({ msg: 'not found' }, 404);
+  };
+
+  await withFetchMock(fetchMock, async () => {
+    const client = createMexcSpotClient({
+      apiKey: 'k',
+      apiSecret: 's',
+      baseUrl: 'https://example.test'
+    });
+    await client.cancelOrder({
+      symbol: 'ETHUSDC',
+      orderId: '11'
+    });
+  });
+
+  const request = seen.find((entry) => entry.path === '/api/v3/order');
+  assert.ok(request, 'expected cancel order request');
+  assert.equal(request.method, 'DELETE');
+  assert.equal(request.query.symbol, 'ETHUSDC');
+  assert.equal(request.query.orderId, '11');
+  assert.ok(request.query.signature, 'signature should be present');
+});

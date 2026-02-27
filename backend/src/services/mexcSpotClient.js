@@ -387,6 +387,26 @@ export function createMexcSpotClient({
       if (orderId) params.orderId = orderId;
       if (origClientOrderId) params.origClientOrderId = origClientOrderId;
       return signedRequest('GET', '/api/v3/order', params);
+    },
+
+    async getOpenOrders(symbol) {
+      const normalizedSymbol = String(symbol || '').toUpperCase();
+      const params = normalizedSymbol ? { symbol: normalizedSymbol } : {};
+      const payload = await signedRequest('GET', '/api/v3/openOrders', params);
+      return Array.isArray(payload) ? payload : [];
+    },
+
+    async cancelOrder({ symbol, orderId, origClientOrderId }) {
+      const normalizedSymbol = String(symbol || '').toUpperCase();
+      if (!normalizedSymbol) throw new Error('symbol is required for cancelOrder');
+      if (!orderId && !origClientOrderId) {
+        throw new Error('orderId or origClientOrderId is required for cancelOrder');
+      }
+      const params = { symbol: normalizedSymbol };
+      if (orderId) params.orderId = String(orderId);
+      if (origClientOrderId) params.origClientOrderId = String(origClientOrderId);
+      logger.info?.('[mexc] canceling spot order', redactRequest(params));
+      return signedRequest('DELETE', '/api/v3/order', params);
     }
   };
 }
