@@ -199,12 +199,6 @@ export default function PineConvert() {
 function MonacoEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<any>(null);
-  const onChangeRef = useRef(onChange);
-  const latestValueRef = useRef(value);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
 
   useEffect(() => {
     let disposed = false;
@@ -213,7 +207,7 @@ function MonacoEditor({ value, onChange }: { value: string; onChange: (val: stri
       .then((monaco) => {
         if (disposed || !containerRef.current) return;
         editorRef.current = monaco.editor.create(containerRef.current, {
-          value: latestValueRef.current,
+          value,
           language: 'pine',
           theme: 'vs-dark',
           automaticLayout: true,
@@ -221,7 +215,7 @@ function MonacoEditor({ value, onChange }: { value: string; onChange: (val: stri
         });
         subscription = editorRef.current.onDidChangeModelContent(() => {
           const nextValue = editorRef.current.getValue();
-          onChangeRef.current(nextValue);
+          onChange(nextValue);
         });
       })
       .catch((err) => {
@@ -238,7 +232,6 @@ function MonacoEditor({ value, onChange }: { value: string; onChange: (val: stri
   }, []);
 
   useEffect(() => {
-    latestValueRef.current = value;
     if (editorRef.current && editorRef.current.getValue() !== value) {
       editorRef.current.setValue(value);
     }

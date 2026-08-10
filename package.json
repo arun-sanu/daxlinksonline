@@ -15,6 +15,6 @@
     "prisma": "^6.19.0"
   },
   "dependencies": {
-    "@prisma/client": "^7.0.1"
+    "@prisma/client": "^6.19.0"
   }
 }

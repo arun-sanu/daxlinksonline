@@ -76,6 +76,18 @@ async function main() {
     });
   }
 
+  await prisma.webhook.create({
+    data: {
+      workspaceId: workspace.id,
+      name: 'TradingView Alerts',
+      url: 'https://example.com/hooks/tradingview',
+      method: 'POST',
+      signingSecretRef: createCredentialReference('dummy-secret'),
+      events: ['signal.triggered', 'signal.cleared'],
+      active: true
+    }
+  });
+
   // Ensure trial webhook details for the demo user
   await ensureTrialWebhook(user.id);
 

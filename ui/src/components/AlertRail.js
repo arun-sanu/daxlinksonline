@@ -27,38 +27,19 @@ export default {
       try { localStorage.setItem(seenKey, new Date().toISOString()); } catch {}
       unread.value = 0;
     };
-    const authHeaders = () => {
-      try {
-        const token = window.__appAuthToken__ || window.localStorage?.getItem('daxlinksToken') || window.localStorage?.getItem('authToken');
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      } catch {
-        return {};
-      }
-    };
     const fetchInbox = async () => {
       try {
-        const base = (typeof window !== 'undefined' && window.__DAXLINKS_CONFIG__?.apiBaseUrl) || '';
-        const normalizedBase = base.replace(/\/$/, '');
-        const inboxUrl = normalizedBase ? `${normalizedBase}/users/alerts?limit=50` : '/api/v1/users/alerts?limit=50';
-        const res = await fetch(inboxUrl, { credentials: 'include', headers: authHeaders() });
-        if (!res.ok) throw new Error('Failed to load alerts');
+        const res = await fetch('/api/v1/notify/inbox?limit=50', { credentials: 'include' });
         const json = await res.json();
-        const items = Array.isArray(json?.items) ? json.items : [];
-        notifications.value = items.map((n) => {
-          const ts = n.receivedAt || n.createdAt || n.ts || Date.now();
-          return {
-            id: n.id || `${ts}-${n.userId || ''}`,
-            title: n.strategyName || n.symbol || n.status || 'Alert',
-            body: n.errorMessage || n.side || '',
-            ts: new Date(ts).toLocaleString()
-          };
-        });
-        const lastSeenIso = (() => { try { return localStorage.getItem(seenKey) || ''; } catch { return ''; } })();
-        const lastSeen = lastSeenIso ? new Date(lastSeenIso).getTime() : 0;
-        const newest = items.reduce((acc, it) => Math.max(acc, new Date(it.receivedAt || it.createdAt || it.ts || Date.now()).getTime()), 0);
-        unread.value = items.filter(it => new Date(it.receivedAt || it.createdAt || it.ts || Date.now()).getTime() > lastSeen).length;
-        // Initialize seen time if none exists to avoid perpetual badge on first load
-        if (!lastSeenIso && newest) { try { localStorage.setItem(seenKey, new Date().toISOString()); } catch {} }
+        if (json?.ok) {
+          notifications.value = (json.items || []).map(n => ({ id: n.id, title: n.title, body: n.body, ts: new Date(n.ts).toLocaleString() }));
+          const lastSeenIso = (() => { try { return localStorage.getItem(seenKey) || ''; } catch { return ''; } })();
+          const lastSeen = lastSeenIso ? new Date(lastSeenIso).getTime() : 0;
+          const newest = (json.items || []).reduce((acc, it) => Math.max(acc, new Date(it.ts).getTime()), 0);
+          unread.value = (json.items || []).filter(it => new Date(it.ts).getTime() > lastSeen).length;
+          // Initialize seen time if none exists to avoid perpetual badge on first load
+          if (!lastSeenIso && newest) { try { localStorage.setItem(seenKey, new Date().toISOString()); } catch {} }
+        }
       } catch {}
     };
     onMounted(fetchInbox);

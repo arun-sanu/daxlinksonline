@@ -19,14 +19,10 @@ import { devicesRouter } from './devices.js';
 import { notifyPrefsRouter } from './notifyPrefs.js';
 import { notifyDebugRouter } from './notifyDebug.js';
 // Trade Bots Phase 0 routes
-import { notifyInboxRouter } from './notifyInbox.js';
-import { router as workflowRouter } from './v1/workflow.js';
 import { router as tradeBotsRouter } from './v1/tradeBots.js';
-import { router as usersRouter } from './v1/users.js';
-import { router as metricsRouter } from './v1/metrics.js';
-import { router as ordersRouter } from './v1/orders.js';
-import { router as internalBotRouter } from './v1/internalBot.js';
-import { sizingRouter } from './sizing.js';
+import { router as ingressTradeBotsRouter } from './v1/ingressTradeBots.js';
+import { router as brokerRouter } from './v1/broker.js';
+import { notifyInboxRouter } from './notifyInbox.js';
 
 export const router = Router();
 
@@ -49,14 +45,10 @@ router.use('/v1/devices', devicesRouter);
 router.use('/v1/notify/preferences', notifyPrefsRouter);
 router.use('/v1/notify', notifyInboxRouter);
 router.use('/debug', notifyDebugRouter);
-router.use('/v1/workflow', workflowRouter);
-router.use('/v1/trade-bots', tradeBotsRouter);
-router.use('/v1/users', usersRouter);
-router.use('/v1/metrics', metricsRouter);
-router.use('/v1/orders', ordersRouter);
-router.use('/v1/internal/bot', internalBotRouter);
-router.use('/sizing', sizingRouter);
 // Phase 0 mounts for Trade Bots
+router.use('/v1/trade-bots', tradeBotsRouter);
+router.use('/v1', ingressTradeBotsRouter);
+router.use('/v1/broker', brokerRouter);
 
 router.get('/v1/metadata', (_req, res) => {
   res.json({

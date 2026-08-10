@@ -3,8 +3,6 @@ import { z } from 'zod';
 
 import { prisma } from '../utils/prisma.js';
 import { signAuthToken } from '../middleware/auth.js';
-import { provisionDefaultWorkspaceForUser } from '../services/workspaceService.js';
-import { ensureUserShortCode } from '../services/authService.js';
 
 const allowedPortalRoles = new Set(['superadmin', 'admin', 'developer', 'engineer', 'designer']);
 
@@ -41,21 +39,17 @@ export async function handlePortalLogin(req, res, next) {
       throw err;
     }
     const token = signAuthToken(user.id);
-    const shortCode = await ensureUserShortCode(user);
-    const workspace = await provisionDefaultWorkspaceForUser(user);
     res.json({
       token,
       user: {
         id: user.id,
-        shortCode,
         email: user.email,
         name: user.name,
         role: user.role,
         isSuperAdmin: Boolean(user.isSuperAdmin),
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
-      },
-      workspace
+      }
     });
   } catch (error) {
     if (error instanceof z.ZodError) error.status = 400;

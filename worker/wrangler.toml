@@ -1,19 +1,13 @@
 name = "daxlinks-webhook"
-main = "worker/webhook.js"
+main = "webhook.js"
 compatibility_date = "2025-11-08"
 
+# Cloudflare account for daxlinksonline.link
+account_id = "beda455cdcb069b4d415c7eb817ecb46"
+
 [vars]
-ORIGIN_URL = "https://api.daxlinksonline.com" # Set to your backend origin (protocol + host)
+ORIGIN_URL = "https://api.daxlinksonline.link"
 
-# Uncomment and fill these values or set them via environment secrets during CI deployment
-# account_id = "<your-cloudflare-account-id>"
-# zone_id = "<your-cloudflare-zone-id>"
-
-[triggers]
-# Optional scheduled triggers (cron) can be added here
-# crons = ["0 * * * *"]
-
-[routes]
-# Route pattern for TradingView host-based webhook ingress. Use a wildcard for subdomains.
-# Example: "*.daxlinksonline.link/webhook"
-# You can also add routes in the Cloudflare dashboard instead of here.
+# Optional: manage routes here or add them via the Cloudflare dashboard
+# routes = ["*.daxlinksonline.link/webhook"]
+# routes = ["*.daxlinksonline.link/webhook"]

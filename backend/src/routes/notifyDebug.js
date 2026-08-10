@@ -1,8 +1,6 @@
 import { Router } from "express";
 import { publish } from "../services/publisher.js";
 import { requireAuth } from "../middleware/auth.js";
-import { getQueueDebugSnapshot } from "../jobs/queue.js";
-import { prisma } from '../utils/prisma.js';
 
 /**
  * Debug utilities for notifications
@@ -30,41 +28,3 @@ notifyDebugRouter.get("/telegram-test", async (req, res) => {
   res.json({ ok: true });
 });
 
-notifyDebugRouter.get('/queue', async (_req, res, next) => {
-  try {
-    const snapshot = await getQueueDebugSnapshot();
-    res.json(snapshot);
-  } catch (error) {
-    next(error);
-  }
-});
-
-notifyDebugRouter.get('/audit/:id/sizing', async (req, res, next) => {
-  try {
-    const audit = await prisma.executionAudit.findFirst({
-      where: {
-        id: String(req.params.id || ''),
-        userId: req.user.id
-      },
-      select: {
-        status: true,
-        symbol: true,
-        side: true,
-        qtyRounded: true,
-        sizingDebug: true
-      }
-    });
-    if (!audit) {
-      return res.status(404).json({ error: 'Execution audit not found' });
-    }
-    res.json({
-      status: audit.status || null,
-      symbol: audit.symbol || null,
-      side: audit.side || null,
-      qtyRounded: audit.qtyRounded ?? null,
-      sizingDebug: audit.sizingDebug || null
-    });
-  } catch (error) {
-    next(error);
-  }
-});

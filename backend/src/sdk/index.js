@@ -44,19 +44,13 @@ function buildPendaxOptions(options, exchangeId) {
   }
 
   const displayName = options.exchangeLabel || resolved.toUpperCase();
-  const apiKey = typeof options.apiKey === 'string' ? options.apiKey.trim() : options.apiKey;
-  const apiSecret = typeof options.apiSecret === 'string' ? options.apiSecret.trim() : options.apiSecret;
-
   const pendaxOptions = {
     exchange: resolved,
     exchangeLabel: displayName,
-    apiKey,
-    apiSecret,
-    // Some Pendax exchange adapters still expect legacy `key`/`secret` props
+    apiKey: typeof options.apiKey === 'string' ? options.apiKey.trim() : options.apiKey,
+    apiSecret: typeof options.apiSecret === 'string' ? options.apiSecret.trim() : options.apiSecret,
     authenticate: true
   };
-  pendaxOptions.key = apiKey;
-  pendaxOptions.secret = apiSecret;
 
   if (options.passphrase) {
     pendaxOptions.passphrase = typeof options.passphrase === 'string' ? options.passphrase.trim() : options.passphrase;

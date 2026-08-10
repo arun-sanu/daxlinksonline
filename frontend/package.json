@@ -6,31 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint src --ext .ts,.tsx"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "lucide-react": "^0.574.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-grid-layout": "^1.5.2",
-    "react-resizable": "^3.0.5",
-    "react-router-dom": "^6.28.0",
-    "recharts": "^2.15.4"
+    "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@typescript-eslint/eslint-plugin": "^8.48.0",
-    "@typescript-eslint/parser": "^8.48.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^7.0.1",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^5.4.8"
   }
 }
+

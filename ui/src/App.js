@@ -122,8 +122,7 @@ export default {
       return [
         { label: 'Overview', name: 'overview' },
         { label: 'Account', name: 'account' },
-        { label: 'Platform', name: 'platform' },
-        { label: 'Monitoring', name: 'monitoring' }
+        { label: 'Platform', name: 'platform' }
       ];
     });
 
@@ -141,7 +140,7 @@ export default {
 
     const authStorageKey = 'daxlinksToken';
 
-    const setAuthState = (token, user, webhook, workspace) => {
+    const setAuthState = (token, user, webhook) => {
       store.auth.token = token;
       store.auth.user = user;
       if (webhook) {
@@ -152,24 +151,6 @@ export default {
       store.auth.status = 'authenticated';
       store.auth.error = null;
       apiClient.setAuthToken(token);
-      if (workspace?.id) {
-        apiClient.setWorkspaceId(workspace.id);
-      } else if (token) {
-        apiClient.fetchCurrentUser()
-          .then((profile) => {
-            if (!profile) return;
-            store.auth.user = profile;
-            if (profile.webhook) {
-              store.auth.webhook = profile.webhook;
-            }
-            if (profile?.workspace?.id) {
-              apiClient.setWorkspaceId(profile.workspace.id);
-            }
-          })
-          .catch((error) => {
-            console.warn('[Auth] Unable to fetch workspace', error);
-          });
-      }
       if (typeof window !== 'undefined') {
         window.__appAuthToken__ = token;
         window.__lastUser__ = user;
@@ -186,7 +167,6 @@ export default {
       store.auth.error = null;
       apiClient.clearAuthToken?.();
       apiClient.setAuthToken(null);
-      apiClient.clearWorkspaceId?.();
       if (typeof window !== 'undefined') {
         window.localStorage?.removeItem(authStorageKey);
         window.__appAuthToken__ = null;
@@ -207,9 +187,6 @@ export default {
         // profile may include webhook
         store.auth.user = profile;
         store.auth.status = 'authenticated';
-        if (profile?.workspace?.id) {
-          apiClient.setWorkspaceId(profile.workspace.id);
-        }
         if (typeof window !== 'undefined') {
           window.__appAuthToken__ = storedToken;
           window.__lastUser__ = profile;
@@ -397,7 +374,7 @@ export default {
           email: form.email,
           password: form.password
         });
-        setAuthState(result.token, result.user, result.webhook, result.workspace);
+        setAuthState(result.token, result.user, result.webhook);
         resetAuthForms();
         await refreshDashboard();
         console.log('[Auth] Registration successful');
@@ -421,7 +398,7 @@ export default {
           username: form.username,
           password: form.password
         });
-        setAuthState(result.token, result.user, null, result.workspace);
+        setAuthState(result.token, result.user);
         resetAuthForms();
         await refreshDashboard();
         console.log('[Auth] Login successful');
@@ -475,7 +452,7 @@ export default {
         if (typeof api.resetPassword === 'function') {
           const result = await api.resetPassword({ token: resetToken, password: resetPasswordValue });
           if (result?.token && result?.user) {
-            setAuthState(result.token, result.user, null, result.workspace);
+            setAuthState(result.token, result.user);
             await refreshDashboard();
           }
         }
@@ -498,7 +475,7 @@ export default {
           return;
         }
         if (result?.user && result?.token) {
-          setAuthState(result.token, result.user, null, result.workspace);
+          setAuthState(result.token, result.user);
           resetAuthForms();
         await refreshDashboard();
           console.log('[Auth] Google sign-in successful');

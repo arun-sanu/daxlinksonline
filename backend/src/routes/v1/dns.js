@@ -1,48 +1,27 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
 import { isSubdomainAvailable, registerCustomDns, listMyDns, deleteDnsForUser } from '../../services/dnsService.js';
 
 export const router = Router();
 
-const registerLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
 router.get('/available/:name', async (req, res, next) => {
   try {
     const { name } = z.object({ name: z.string() }).parse(req.params);
-    const result = await isSubdomainAvailable(name);
-    res.json({ name: result.name || name, available: result.available, reason: result.reason || null });
+    const ok = await isSubdomainAvailable(name);
+    res.json({ name, available: ok });
   } catch (error) {
     next(error);
   }
 });
 
-router.post('/register', requireAuth, registerLimiter, async (req, res, next) => {
+router.post('/register', requireAuth, async (req, res, next) => {
   try {
-    const { name, subdomain, ip } = z
-      .object({
-        name: z.string().min(1).optional(),
-        subdomain: z.string().min(1).optional(),
-        ip: z.string()
-      })
-      .superRefine((data, ctx) => {
-        if (!data.name && !data.subdomain) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'Subdomain required',
-            path: ['subdomain']
-          });
-        }
-      })
-      .parse(req.body || {});
-    const requested = name || subdomain;
-    const result = await registerCustomDns({ userId: req.user.id, subdomain: requested, ip });
+    const { subdomain, ip } = z.object({
+      subdomain: z.string(),
+      ip: z.string()
+    }).parse(req.body || {});
+    const result = await registerCustomDns({ userId: req.user.id, subdomain, ip });
     res.status(201).json(result);
   } catch (error) {
     next(error);

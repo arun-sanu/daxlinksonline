@@ -2,53 +2,6 @@ import { getConfig } from './config.js';
 
 const config = getConfig();
 let authToken = null;
-let workspaceId = null;
-
-function loadWorkspaceId() {
-  try {
-    const stored = typeof window !== 'undefined' ? window.localStorage?.getItem('workspaceId') : null;
-    if (stored) {
-      workspaceId = stored;
-      return workspaceId;
-    }
-    const runtime = typeof window !== 'undefined' ? (window.__DAXLINKS_CONFIG__ || {}).workspaceId : null;
-    if (runtime) {
-      workspaceId = String(runtime);
-      return workspaceId;
-    }
-  } catch {}
-  return workspaceId;
-}
-
-export function setWorkspaceId(id) {
-  workspaceId = id || null;
-  try {
-    if (typeof window !== 'undefined') {
-      window.localStorage?.setItem('workspaceId', workspaceId || '');
-      if (!window.__DAXLINKS_CONFIG__) window.__DAXLINKS_CONFIG__ = {};
-      window.__DAXLINKS_CONFIG__.workspaceId = workspaceId || null;
-    }
-  } catch {}
-}
-
-export function clearWorkspaceId() {
-  workspaceId = null;
-  try {
-    if (typeof window !== 'undefined') {
-      window.localStorage?.removeItem('workspaceId');
-      if (!window.__DAXLINKS_CONFIG__) window.__DAXLINKS_CONFIG__ = {};
-      window.__DAXLINKS_CONFIG__.workspaceId = null;
-    }
-  } catch {}
-}
-
-function ensureWorkspaceId() {
-  const resolved = workspaceId || loadWorkspaceId();
-  if (!resolved) {
-    throw new Error('workspaceId is not configured. Set window.__DAXLINKS_CONFIG__.workspaceId or localStorage workspaceId');
-  }
-  return resolved;
-}
 
 export function setAuthToken(token) {
   authToken = token || null;
@@ -88,6 +41,13 @@ function getAuthBaseUrl() {
   } catch (error) {
     throw new Error(`Failed to resolve auth endpoint: ${error?.message || error}`);
   }
+}
+
+function ensureWorkspaceId() {
+  if (!config.workspaceId) {
+    throw new Error('workspaceId is not configured. Set window.__DAXLINKS_CONFIG__.workspaceId');
+  }
+  return config.workspaceId;
 }
 
 async function request(path, options = {}) {

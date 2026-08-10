@@ -102,7 +102,6 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles/notifications.css?v=20251106x" />
-    <link rel="stylesheet" href="./styles/monitoring.css?v=20251106x" />
     <style>
       :root {
         --base-bg: #0D0E13;
@@ -322,65 +321,6 @@
         padding: 0.55rem 0.9rem;
         font-size: 0.75rem;
         letter-spacing: 0.12em;
-      }
-
-      .btn-rect {
-        border-radius: 12px;
-      }
-
-      .btn-danger {
-        background: rgba(248, 113, 113, 0.95);
-        border: 1px solid rgba(248, 113, 113, 0.95);
-        color: #ffffff;
-        box-shadow: 0 20px 40px rgba(248, 113, 113, 0.25);
-      }
-
-      .btn-danger:hover {
-        background: rgba(239, 68, 68, 0.98);
-        border-color: rgba(239, 68, 68, 0.98);
-        color: #ffffff;
-        transform: translateY(-1px);
-        box-shadow: 0 24px 52px rgba(248, 113, 113, 0.35);
-      }
-
-      .toggle {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        cursor: pointer;
-      }
-      .toggle input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-      }
-      .toggle-slider {
-        width: 48px;
-        height: 28px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.12);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        transition: background 150ms ease, border-color 150ms ease;
-        position: relative;
-      }
-      .toggle-slider::before {
-        content: "";
-        position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 20px;
-        height: 20px;
-        border-radius: 999px;
-        background: #ffffff;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-        transition: transform 150ms ease;
-      }
-      .toggle input:checked + .toggle-slider {
-        background: linear-gradient(135deg, #22c55e, #16a34a);
-        border-color: rgba(34, 197, 94, 0.6);
-      }
-      .toggle input:checked + .toggle-slider::before {
-        transform: translateX(20px);
       }
 
       /* Tilt container for subtle 3D card motion */

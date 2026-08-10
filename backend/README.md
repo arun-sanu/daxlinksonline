@@ -39,7 +39,6 @@ If you have an external mail server (for example Namecheap), configure SMTP cred
 
       Ensure `DATABASE_URL` points to a PostgreSQL instance. Also set the following environment variables (see `.env.example`):
 
-   - `CORS_ORIGINS` — comma-separated list of dashboard origins (e.g. `http://localhost:5173`). When `WEBHOOK_BASE_DOMAIN` is set the API automatically allows `https://<WEBHOOK_BASE_DOMAIN>` so the production marketing site can call privileged endpoints without extra configuration.
    - `WEBHOOK_BASE_DOMAIN` — the base domain used for host-based webhook ingress (e.g. `daxlinksonline.link`).
    - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` — required if you want the app to create/verify Cloudflare A records for user subdomains.
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `EMAIL_FROM` — configure these to use your Namecheap mail server for transactional emails.
@@ -119,9 +118,7 @@ UI:
 | GET | `/api/v1/dashboard/:workspaceId/bootstrap` | Aggregate dashboard data for the UI |
 | POST | `/api/v1/workspaces` | Create a workspace entry |
 | GET | `/api/v1/integrations/:workspaceId` | List integrations |
-| GET | `/api/v1/integrations/:workspaceId/stream` | Realtime integration updates via SSE |
 | POST | `/api/v1/integrations/:workspaceId` | Create an integration (stores masked credentials) |
-| POST | `/api/v1/integrations/:workspaceId/:integrationId/credentials` | Add another API credential to an existing integration |
 | POST | `/api/v1/integrations/:workspaceId/:integrationId/test` | Validates exchange credentials via SDK |
 | GET | `/api/v1/webhooks/:workspaceId` | List webhooks |
 | POST | `/api/v1/webhooks/:workspaceId` | Create webhook configuration |

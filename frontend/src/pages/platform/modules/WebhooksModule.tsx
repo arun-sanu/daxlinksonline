@@ -1,976 +1,189 @@
 import { Link } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Webhook, WebhookDelivery, WebhookProfile } from '../../../api/types';
-import { withApiBase } from '../../../api/client';
-import {
-  assignWebhook,
-  fetchWebhookDeliveries,
-  fetchWebhookProfile,
-  getMyWebhook,
-  listWebhooks,
-  testWebhook,
-  toggleWebhook,
-  updateDnsOrder,
-  webhookAuthHeaders
-} from '../../../api/webhooks';
+import { useState } from 'react';
 
-type Toast = { message: string; tone: 'success' | 'error' };
+const webhookConfig = {
+  subdomain: 'ops-9ad734',
+  baseDomain: 'daxlinksonline.link',
+  secret: 'c8f14d88b0f9d7aa16f90b8f23bd2a54'
+};
 
-function formatTs(input?: string | null) {
-  if (!input) return '—';
-  try {
-    return new Date(input).toLocaleString();
-  } catch {
-    return input;
-  }
-}
-
-function formatDeliveryRow(delivery: WebhookDelivery) {
-  return {
-    status: delivery.status || 'pending',
-    event: delivery.event || 'signal',
-    code: delivery.responseCode ?? null,
-    error: delivery.lastError || '',
-    ts: formatTs(delivery.createdAt)
-  };
-}
-
-export default function WebhooksModule() {
-  type MyWebhook = Awaited<ReturnType<typeof getMyWebhook>>;
-
-  const [myWebhook, setMyWebhook] = useState<MyWebhook | null>(null);
-  const [profile, setProfile] = useState<WebhookProfile | null>(null);
-  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
-  const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [loadingWebhooks, setLoadingWebhooks] = useState(true);
-  const [loadingDeliveries, setLoadingDeliveries] = useState(true);
-  const [assigning, setAssigning] = useState(false);
-  const [toggling, setToggling] = useState<string | null>(null);
-  const [toast, setToast] = useState<Toast | null>(null);
-  const [error, setError] = useState('');
-  const [secretVisible, setSecretVisible] = useState(false);
-  const [hmacVisible, setHmacVisible] = useState(false);
-  const [showRevealConfirm, setShowRevealConfirm] = useState(false);
-  const [revealTarget, setRevealTarget] = useState<'secret' | 'hmac' | null>(null);
-  const [testForm, setTestForm] = useState({
-    symbol: 'TEST',
-    side: 'buy',
-    amount: 100,
-    timestamp: Date.now(),
-    hmac: ''
-  });
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const [selectedDnsUrl, setSelectedDnsUrl] = useState<string | null>(null);
-  const [dnsSort, setDnsSort] = useState<'custom' | 'subdomain' | 'host' | 'url'>('custom');
-  const [dnsOrder, setDnsOrder] = useState<string[]>([]);
-  const [dnsOrderDirty, setDnsOrderDirty] = useState(false);
-  const [flagsLoading, setFlagsLoading] = useState(false);
-  const [flagsError, setFlagsError] = useState('');
-  const [flagsReadOnly, setFlagsReadOnly] = useState(false);
-  const [flagsSavingKey, setFlagsSavingKey] = useState<string | null>(null);
-  const [flags, setFlags] = useState({
-    globalHmac: false,
-    disableTradingView: false
-  });
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setLoadingProfile(true);
-      setError('');
-      let hasMyWebhook = false;
-      try {
-        const payload = await getMyWebhook();
-        if (mounted) {
-          setMyWebhook(payload);
-          if (payload?.dnsOrder && Array.isArray(payload.dnsOrder)) {
-            setDnsOrder(payload.dnsOrder);
-            setDnsOrderDirty(false);
-          }
-          hasMyWebhook = true;
-        }
-      } catch (e: any) {
-        if (mounted) setMyWebhook(null);
-      }
-      try {
-        const p = await fetchWebhookProfile();
-        if (mounted) setProfile(p);
-      } catch (e: any) {
-        if (mounted && !hasMyWebhook) {
-          setError(e?.message || 'Failed to load webhook profile');
-        }
-      } finally {
-        if (mounted) setLoadingProfile(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setLoadingWebhooks(true);
-      try {
-        const rows = await listWebhooks();
-        if (mounted) setWebhooks(rows || []);
-      } catch (e: any) {
-        if (mounted) setError(e?.message || 'Failed to load webhooks');
-      } finally {
-        if (mounted) setLoadingWebhooks(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoadingDeliveries(true);
-      try {
-        const rows = await fetchWebhookDeliveries(10);
-        if (mounted) setDeliveries(rows || []);
-      } catch (e: any) {
-        if (mounted) setError(e?.message || 'Failed to load deliveries');
-      } finally {
-        if (mounted) setLoadingDeliveries(false);
-      }
-    }
-    load();
-    const id = setInterval(load, 15000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 2400);
-    return () => clearTimeout(timer);
-  }, [toast]);
-
-  const dnsRecords = myWebhook?.dnsRecords || [];
-  const selectedDnsUrlValid = dnsRecords.some((rec) => rec.url === selectedDnsUrl) ? selectedDnsUrl : null;
-  const activeDnsUrl = selectedDnsUrlValid || null;
-
-  useEffect(() => {
-    if (!selectedDnsUrlValid && selectedDnsUrl) {
-      setSelectedDnsUrl(null);
-    }
-  }, [selectedDnsUrlValid, selectedDnsUrl]);
-
-  useEffect(() => {
-    if (!dnsRecords.length) {
-      setDnsOrder([]);
-      return;
-    }
-    setDnsOrder((prev) => {
-      const next = prev.filter((subdomain) => dnsRecords.some((rec) => rec.subdomain === subdomain));
-      dnsRecords.forEach((rec) => {
-        if (!next.includes(rec.subdomain)) next.push(rec.subdomain);
-      });
-      return next;
-    });
-  }, [dnsRecords]);
-
-  const sortedDnsRecords = useMemo(() => {
-    if (!dnsRecords.length) return [];
-    if (dnsSort === 'custom') {
-      if (!dnsOrder.length) return dnsRecords;
-      const map = new Map(dnsRecords.map((rec) => [rec.subdomain, rec]));
-      const ordered = dnsOrder.map((subdomain) => map.get(subdomain)).filter(Boolean) as typeof dnsRecords;
-      const rest = dnsRecords.filter((rec) => !dnsOrder.includes(rec.subdomain));
-      return [...ordered, ...rest];
-    }
-    const key = dnsSort;
-    return [...dnsRecords].sort((a, b) => String((a as any)[key] || '').localeCompare(String((b as any)[key] || '')));
-  }, [dnsRecords, dnsOrder, dnsSort]);
-
-  function moveDnsRecord(subdomain: string, direction: 'up' | 'down') {
-    setDnsOrder((prev) => {
-      const idx = prev.indexOf(subdomain);
-      if (idx === -1) return prev;
-      const next = [...prev];
-      const swapWith = direction === 'up' ? idx - 1 : idx + 1;
-      if (swapWith < 0 || swapWith >= next.length) return prev;
-      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
-      return next;
-    });
-    setDnsOrderDirty(true);
-  }
-
-  useEffect(() => {
-    if (!dnsOrderDirty || dnsSort !== 'custom' || !dnsOrder.length) return;
-    const handle = setTimeout(() => {
-      updateDnsOrder(dnsOrder)
-        .then(() => setDnsOrderDirty(false))
-        .catch(() => {
-          // keep dirty so user can retry via another move
-        });
-    }, 500);
-    return () => clearTimeout(handle);
-  }, [dnsOrder, dnsOrderDirty, dnsSort]);
-
-  const fetchFlags = useCallback(async () => {
-    setFlagsLoading(true);
-    setFlagsError('');
-    try {
-      const res = await fetch(withApiBase('/api/v1/admin/flags'), {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...webhookAuthHeaders() }
-      });
-      if (res.status === 403) {
-        setFlagsReadOnly(true);
-        return;
-      }
-      if (!res.ok) {
-        throw new Error(`Request failed (${res.status})`);
-      }
-      const rows = await res.json();
-      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.items) ? rows.items : [];
-      const byKey = new Map(list.map((row: any) => [row.key, row]));
-      setFlags({
-        globalHmac: Boolean(byKey.get('webhook_hmac_global')?.enabled),
-        disableTradingView: Boolean(byKey.get('webhook_hmac_disable_tradingview')?.enabled)
-      });
-      setFlagsReadOnly(false);
-    } catch (e: any) {
-      setFlagsError(e?.message || 'Failed to load flags');
-    } finally {
-      setFlagsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchFlags();
-  }, [fetchFlags]);
-
-  async function updateFlag(
-    key: 'webhook_hmac_global' | 'webhook_hmac_disable_tradingview',
-    enabled: boolean,
-    previousValue: boolean
-  ) {
-    setFlagsSavingKey(key);
-    setFlagsError('');
-    try {
-      const res = await fetch(withApiBase(`/api/v1/admin/flags/${encodeURIComponent(key)}`), {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...webhookAuthHeaders() },
-        body: JSON.stringify({ enabled })
-      });
-      if (res.status === 403) {
-        setFlagsReadOnly(true);
-        setFlags((prev) => ({
-          ...prev,
-          globalHmac: key === 'webhook_hmac_global' ? previousValue : prev.globalHmac,
-          disableTradingView: key === 'webhook_hmac_disable_tradingview' ? previousValue : prev.disableTradingView
-        }));
-        return;
-      }
-      if (!res.ok) {
-        throw new Error(`Request failed (${res.status})`);
-      }
-      await res.json();
-      setFlagsReadOnly(false);
-      setToast({ message: 'Webhook security updated', tone: 'success' });
-    } catch (e: any) {
-      setFlags((prev) => ({
-        ...prev,
-        globalHmac: key === 'webhook_hmac_global' ? previousValue : prev.globalHmac,
-        disableTradingView: key === 'webhook_hmac_disable_tradingview' ? previousValue : prev.disableTradingView
-      }));
-      setFlagsError(e?.message || 'Update failed');
-      setToast({ message: e?.message || 'Update failed', tone: 'error' });
-    } finally {
-      setFlagsSavingKey(null);
-    }
-  }
-
-  const secretValue = myWebhook?.secret || profile?.secret || webhooks[0]?.signingSecretRef || '';
-  const hmacValue = myWebhook?.hmacKey || '';
-  const enforceHmac = myWebhook?.enforceHmac || false;
-  const baseDomain = myWebhook?.baseDomain || 'daxlinksonline.link';
-  const hasAssignedWebhook = Boolean(myWebhook?.url || profile?.url);
-
-  const ingressUrl = useMemo(() => {
-    if (activeDnsUrl) {
-      const base = activeDnsUrl.replace(/\/+$/, '');
-      const secretSuffix = secretValue ? `?secret=${encodeURIComponent(secretValue)}` : '';
-      return `${base}/webhook/tradingview${secretSuffix}`;
-    }
-    if (myWebhook?.url) return myWebhook.url;
-    if (profile?.url) return profile.url;
-    if (webhooks[0]?.url) return webhooks[0].url;
-    return 'https://<sub>.daxlinksonline.link/webhook/tradingview';
-  }, [activeDnsUrl, myWebhook, profile, webhooks, secretValue]);
-  const hasSelectedDns = Boolean(activeDnsUrl);
-  const maskedSecret = secretVisible ? secretValue || '—' : '••••••••••••';
-  const maskedHmac = hmacVisible ? hmacValue || '—' : '••••••••••••';
-
-  const tradingViewPayload = useMemo(
-    () =>
-      `{
+const tradingViewPayload = `{
   "symbol": "NSE:INFY",
   "side": "buy",
   "amount": 25,
-  "timestamp": ${Date.now()},
-  "secret": "${secretValue || '<set-your-secret>'}",
-  "hmac": "${hmacValue ? '<computed-hmac>' : '<optional-hmac>'}"
-}`,
-    [secretValue, hmacValue]
-  );
+  "price": 1563.50,
+  "secret": "${webhookConfig.secret}"
+}`;
 
-  async function handleToggle(hook: Webhook) {
-    const next = !hook.active;
-    setToggling(hook.id);
-    setWebhooks((prev) => prev.map((w) => (w.id === hook.id ? { ...w, active: next } : w)));
-    try {
-      const updated = await toggleWebhook(hook.id, next);
-      if (updated) {
-        setWebhooks((prev) => prev.map((w) => (w.id === hook.id ? { ...w, ...updated } : w)));
-      }
-      setToast({ message: `${next ? 'Enabled' : 'Paused'} ${hook.name}`, tone: 'success' });
-    } catch (e: any) {
-      setWebhooks((prev) => prev.map((w) => (w.id === hook.id ? { ...w, active: !next } : w)));
-      setToast({ message: e?.message || 'Toggle failed', tone: 'error' });
-    } finally {
-      setToggling(null);
-    }
-  }
+const mockLogs = [
+  { level: 'info', message: 'Forward job queued for NSE:INFY', ts: '08:41:12' },
+  { level: 'warning', message: 'Guardrail delayed webhook due to rate limit hit (retry scheduled)', ts: '08:39:04' },
+  { level: 'error', message: 'TradingView secret mismatch rejected alert', ts: '08:20:31' }
+];
 
-  async function handleCopy(text: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setToast({ message: `${label} copied`, tone: 'success' });
-    } catch {
-      setToast({ message: 'Copy failed', tone: 'error' });
-    }
-  }
+const channels = [
+  { label: 'Default TradingView', slug: 'webhook', status: 'Active', description: 'Primary NSE/BSE alerts' },
+  { label: 'Options Desk', slug: 'options', status: 'Paused', description: 'Custom BankNifty Pine strategy' }
+];
 
-  function handleRevealSecret() {
-    if (secretVisible) {
-      setSecretVisible(false);
-      return;
-    }
-    setRevealTarget('secret');
-    setShowRevealConfirm(true);
-  }
-
-  function handleRevealHmac() {
-    if (hmacVisible) {
-      setHmacVisible(false);
-      return;
-    }
-    setRevealTarget('hmac');
-    setShowRevealConfirm(true);
-  }
-
-  async function refreshIngress() {
-    setLoadingProfile(true);
-    setError('');
-    try {
-      const payload = await getMyWebhook();
-      setMyWebhook(payload);
-      if (payload?.dnsOrder && Array.isArray(payload.dnsOrder)) {
-        setDnsOrder(payload.dnsOrder);
-        setDnsOrderDirty(false);
-      }
-    } catch (e: any) {
-      setMyWebhook(null);
-      if (e?.message) setError(e.message);
-    } finally {
-      try {
-        const p = await fetchWebhookProfile();
-        setProfile(p);
-      } catch {
-        // ignore; older profile may not exist
-      } finally {
-        setLoadingProfile(false);
-      }
-    }
-  }
-
-  async function handleAssignWebhook() {
-    if (hasAssignedWebhook) {
-      const confirmed = window.confirm(
-        'Rotate webhook? This will generate a new secret and HMAC key. Old TradingView URLs will stop working.'
-      );
-      if (!confirmed) return;
-    }
-    setAssigning(true);
-    setError('');
-    setSecretVisible(false);
-    setHmacVisible(false);
-    try {
-      await assignWebhook(
-        hasAssignedWebhook
-          ? {
-              rotateSecret: true,
-              rotateHmacKey: true
-            }
-          : undefined
-      );
-      await refreshIngress();
-      setToast({ message: hasAssignedWebhook ? 'Webhook rotated' : 'Webhook assigned', tone: 'success' });
-    } catch (e: any) {
-      setToast({ message: e?.message || 'Assign failed', tone: 'error' });
-    } finally {
-      setAssigning(false);
-    }
-  }
-
-  async function handleTestWebhook() {
-    setTesting(true);
-    setTestResult(null);
-    setError('');
-    const payload = {
-      symbol: testForm.symbol,
-      side: testForm.side,
-      amount: Number(testForm.amount),
-      timestamp: Number(testForm.timestamp),
-      ...(testForm.hmac ? { hmac: testForm.hmac } : {})
-    };
-    try {
-      const res = await testWebhook(payload);
-      setTestResult(JSON.stringify(res, null, 2));
-      setToast({ message: 'Test sent', tone: 'success' });
-    } catch (e: any) {
-      setTestResult(e?.message || 'Test failed');
-      setToast({ message: e?.message || 'Test failed', tone: 'error' });
-    } finally {
-      setTesting(false);
-    }
-  }
+export default function WebhooksModule() {
+  const [activeTab, setActiveTab] = useState<'setup' | 'logs'>('setup');
+  const webhookUrl = `https://${webhookConfig.subdomain}.${webhookConfig.baseDomain}/webhook`;
 
   return (
-    <div className="space-y-8">
-      {toast && (
-        <div
-          className={`fixed right-4 top-4 z-40 rounded-xl border px-4 py-3 text-sm shadow-lg ${
-            toast.tone === 'success' ? 'bg-emerald-600/80 border-emerald-300/60 text-emerald-50' : 'bg-red-600/80 border-red-300/60 text-red-50'
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
-
+    <div className="space-y-6">
       <header className="space-y-2">
         <p className="section-label">Webhooks</p>
-        <h2 className="text-3xl font-semibold text-main">TradingView → DaxLinks ingress</h2>
+        <h2 className="text-3xl font-semibold text-main">TradingView → Pendax bridge</h2>
         <p className="text-sm muted-text">
-          Wire your TradingView alerts into your dedicated webhook URL, then route outbound notifications to your configured endpoints.
+          Point TradingView (or any alert emitter) to your DaxLinks subdomain. The backend validates secrets, enforces IP allowlists,
+          drops the alert onto BullMQ, then forwards it through the Pendax forwarder job.
         </p>
       </header>
 
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] muted-text">Ingress URL</p>
-            <p className="text-sm text-gray-400">Authenticated users get a unique subdomain under {baseDomain}.</p>
+      <article className="card-shell space-y-4">
+        <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Bridge animation</p>
+        <div className="iso-bridge">
+          <div className="iso-node iso-node--tv">
+            <span>TradingView</span>
           </div>
-          <div className="flex gap-2">
+          <div className="iso-link" aria-hidden="true"></div>
+          <div className="iso-node iso-node--dax">
+            <span>Pendax</span>
+          </div>
+          <div className="iso-packets" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
           </div>
         </div>
-        {loadingProfile ? (
-          <p className="text-sm muted-text">Loading webhook profile…</p>
-        ) : hasAssignedWebhook ? (
-          <>
-            <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr]">
-              <div className="space-y-2">
-                <div className="hero-input hero-input--long">
-                  <input value={hasSelectedDns ? ingressUrl : ''} readOnly aria-label="Webhook URL" placeholder="Select a DNS URL" />
-                </div>
-                <button
-                  className="btn btn-secondary btn-xs btn-minimal"
-                  onClick={() => handleCopy(ingressUrl, 'URL')}
-                  disabled={!hasSelectedDns}
-                >
-                  🔗 Copy URL
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={hasSelectedDns ? maskedSecret : ''} readOnly aria-label="Webhook secret" placeholder="Select a DNS URL" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealSecret} disabled={!hasSelectedDns || !secretValue}>
-                    {secretVisible ? '🙈 Hide secret' : '👁️ Reveal secret'}
-                  </button>
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(secretValue, 'Secret')} disabled={!hasSelectedDns || !secretValue}>
-                    🔐 Copy secret
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="hero-input">
-                  <input value={hasSelectedDns ? maskedHmac : ''} readOnly aria-label="Webhook HMAC key" placeholder="Select a DNS URL" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={handleRevealHmac} disabled={!hasSelectedDns || !hmacValue}>
-                    {hmacVisible ? '🙈 Hide HMAC' : '👁️ Reveal HMAC'}
-                  </button>
-                  <button className="btn btn-secondary btn-xs btn-minimal" onClick={() => handleCopy(hmacValue, 'HMAC key')} disabled={!hasSelectedDns || !hmacValue}>
-                    🧾 Copy HMAC
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
-              <span>Enforce HMAC: {enforceHmac ? 'Enabled' : 'Optional'}</span>
-              <span>Base domain: {baseDomain}</span>
-            </div>
-            {dnsRecords.length > 0 && (
-              <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Saved DNS records</p>
-                    <span className="text-[11px] text-gray-500">{activeDnsUrl ? 'Click to switch URL' : 'Select a DNS URL'}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                    <span>Sort</span>
-                    <select
-                      className="dns-sort-select rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-[11px]"
-                      value={dnsSort}
-                      onChange={(e) => setDnsSort(e.target.value as typeof dnsSort)}
-                    >
-                      <option value="custom">Custom</option>
-                      <option value="subdomain">Subdomain</option>
-                      <option value="host">Host</option>
-                      <option value="url">URL</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                      {sortedDnsRecords.map((rec, idx) => {
-                        const isActive = activeDnsUrl === rec.url;
-                        return (
-                          <div
-                            key={rec.url}
-                            className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
-                              isActive
-                                ? 'border-primary-300 bg-primary-500/10 text-main shadow-[0_0_22px_rgba(107,107,247,0.18)]'
-                                : 'border-white/10 bg-black/20 text-gray-200 hover:border-primary-200/40'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDnsUrl(rec.url)}
-                              className="flex-1 text-left"
-                            >
-                              <span className="font-semibold text-main">
-                                {rec.subdomain} <span className="text-gray-400">→ {rec.host}</span>
-                              </span>
-                              <span className="block text-[11px] text-gray-500 break-all">{rec.url}</span>
-                            </button>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] text-gray-500">#{idx + 1}</span>
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-xs btn-minimal btn-arrow"
-                            onClick={() => moveDnsRecord(rec.subdomain, 'up')}
-                            disabled={dnsSort !== 'custom' || idx === 0}
-                            title="Move up"
-                          >
-                            ↑
-                          </button>
-                          <button
-                                type="button"
-                                className="btn btn-secondary btn-xs btn-minimal btn-arrow"
-                            onClick={() => moveDnsRecord(rec.subdomain, 'down')}
-                            disabled={dnsSort !== 'custom' || idx === sortedDnsRecords.length - 1}
-                            title="Move down"
-                          >
-                            ↓
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                </div>
-              </div>
-            )}
-            {hasAssignedWebhook && (
-              <div className="flex justify-end">
-                <button className="btn btn-primary btn-xs" onClick={handleAssignWebhook} disabled={assigning}>
-                  {assigning ? 'Updating…' : 'Rotate Webhook'}
-                </button>
-              </div>
-            )}
-            <p className="text-xs text-gray-500">
-              POST alerts to this URL and include the secret in the payload for validation{enforceHmac ? ' plus an HMAC signature.' : '.'}
-            </p>
-          </>
-        ) : (
-          <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-            <p>No webhook is provisioned yet.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn btn-primary btn-xs"
-                onClick={handleAssignWebhook}
-                disabled={assigning}
-              >
-                {assigning ? 'Assigning…' : 'Assign webhook'}
-              </button>
-              <Link to="/support" className="btn btn-secondary btn-xs">
-                Open support
-              </Link>
-            </div>
-          </div>
-        )}
-        {error && <p className="text-xs text-amber-300">{error}</p>}
-      </section>
+        <p className="text-xs text-gray-400">Alerts stream from TradingView into DaxLinks, traverse BullMQ, then fan out to exchanges.</p>
+      </article>
 
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] muted-text">Webhook security</p>
-            <p className="text-sm text-gray-400">Global controls for enforcing HMAC signatures.</p>
+      <article className="card-shell space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Connection details</p>
+            <p className="text-sm text-gray-400">Configure TradingView to hit the DaxLinks ingress endpoint.</p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            {flagsLoading && <span>Loading…</span>}
-            <button className="btn btn-secondary btn-xs" type="button" onClick={fetchFlags} disabled={flagsLoading}>
-              Refresh
+          <div className="flex gap-2 text-xs uppercase tracking-[0.3em]">
+            <button
+              type="button"
+              className={`rounded-full border px-3 py-1 ${activeTab === 'setup' ? 'border-primary-400/60 text-primary-100' : 'border-white/10 text-gray-400'}`}
+              onClick={() => setActiveTab('setup')}
+            >
+              Setup
+            </button>
+            <button
+              type="button"
+              className={`rounded-full border px-3 py-1 ${activeTab === 'logs' ? 'border-primary-400/60 text-primary-100' : 'border-white/10 text-gray-400'}`}
+              onClick={() => setActiveTab('logs')}
+            >
+              Logs
             </button>
           </div>
         </div>
-        <div className="space-y-3">
-          {[
-            {
-              key: 'webhook_hmac_global' as const,
-              label: 'Require HMAC globally',
-              description: 'Enforce HMAC signatures for all webhook payloads.',
-              value: flags.globalHmac
-            },
-            {
-              key: 'webhook_hmac_disable_tradingview' as const,
-              label: 'Disable HMAC for TradingView',
-              description: 'Allow TradingView alerts without HMAC verification.',
-              value: flags.disableTradingView
-            }
-          ].map((item) => {
-            const isBusy = flagsSavingKey === item.key;
-            const isDisabled = flagsReadOnly || flagsLoading || isBusy;
-            return (
-              <div
-                key={item.key}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-main">{item.label}</p>
-                  <p className="text-xs text-gray-400">{item.description}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isBusy && <span className="text-[11px] text-gray-400">Saving…</span>}
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={item.value}
-                    disabled={isDisabled}
-                    onClick={() => {
-                      const previousValue = item.value;
-                      const next = !previousValue;
-                      setFlags((prev) => ({
-                        ...prev,
-                        globalHmac: item.key === 'webhook_hmac_global' ? next : prev.globalHmac,
-                        disableTradingView: item.key === 'webhook_hmac_disable_tradingview' ? next : prev.disableTradingView
-                      }));
-                      updateFlag(item.key, next, previousValue);
-                    }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full border transition ${
-                      item.value ? 'border-emerald-300/50 bg-emerald-500/20' : 'border-white/20 bg-white/5'
-                    } ${isDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
-                  >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full transition ${
-                        item.value ? 'translate-x-4 bg-emerald-200' : 'translate-x-1 bg-gray-400'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {flagsReadOnly && <p className="text-xs text-amber-200">Read-only: admin permissions required to edit flags.</p>}
-        {flagsError && <p className="text-xs text-rose-400">{flagsError}</p>}
-      </section>
 
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] muted-text">TradingView wiring</p>
-            <p className="text-sm text-gray-400">Copy the JSON payload into your TradingView alert message.</p>
-          </div>
-          <button className="btn btn-secondary btn-xs" onClick={() => handleCopy(tradingViewPayload, 'Payload')}>
-            Copy JSON
-          </button>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2 text-sm muted-text">
-            <p className="font-semibold text-main">Steps</p>
-            <ol className="space-y-1 pl-4 list-decimal">
-              <li>Set Webhook URL to <span className="font-mono text-main break-all">{ingressUrl}</span></li>
-              <li>Paste the JSON payload below (includes your secret and timestamp).</li>
-              <li>{enforceHmac ? 'Compute and include' : 'Optionally include'} the HMAC signature.</li>
-              <li>Send a test alert and watch delivery status in real time.</li>
-            </ol>
-          </div>
-          <pre className="rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-primary-100 overflow-auto" aria-label="TradingView JSON payload">
-{tradingViewPayload}
-          </pre>
-        </div>
-        <p className="text-xs text-gray-500">
-          HMAC tip: compute SHA-256 over the JSON payload without the <span className="font-mono text-main">hmac</span> field, using your HMAC key.
-        </p>
-      </section>
-
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] muted-text">Webhook test</p>
-            <p className="text-sm text-gray-400">Send a sample payload to your ingress endpoint.</p>
-          </div>
-          <button
-            className="btn btn-secondary btn-xs"
-            type="button"
-            onClick={() => setTestForm((prev) => ({ ...prev, timestamp: Date.now() }))}
-          >
-            Use current time
-          </button>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
-            Symbol
-            <input
-              value={testForm.symbol}
-              onChange={(e) => setTestForm((prev) => ({ ...prev, symbol: e.target.value }))}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
-            />
-          </label>
-          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
-            Side
-            <input
-              value={testForm.side}
-              onChange={(e) => setTestForm((prev) => ({ ...prev, side: e.target.value }))}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
-            />
-          </label>
-          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
-            Amount
-            <input
-              type="number"
-              value={testForm.amount}
-              onChange={(e) => setTestForm((prev) => ({ ...prev, amount: Number(e.target.value) }))}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
-            />
-          </label>
-          <label className="text-xs uppercase tracking-[0.2em] text-gray-400">
-            Timestamp (ms)
-            <input
-              type="number"
-              value={testForm.timestamp}
-              onChange={(e) => setTestForm((prev) => ({ ...prev, timestamp: Number(e.target.value) }))}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
-            />
-          </label>
-          <label className="text-xs uppercase tracking-[0.2em] text-gray-400 md:col-span-2">
-            HMAC (optional)
-            <input
-              value={testForm.hmac}
-              onChange={(e) => setTestForm((prev) => ({ ...prev, hmac: e.target.value }))}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-main focus:border-primary-300 focus:outline-none"
-              placeholder={enforceHmac ? 'Required when HMAC enforcement is enabled' : 'Optional'}
-            />
-          </label>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="btn btn-primary btn-xs" type="button" onClick={handleTestWebhook} disabled={testing}>
-            {testing ? 'Sending…' : 'Send test webhook'}
-          </button>
-          <button className="btn btn-secondary btn-xs" type="button" onClick={() => handleCopy(JSON.stringify(testForm, null, 2), 'Test payload')}>
-            Copy test payload
-          </button>
-        </div>
-        {testResult && (
-          <pre className="rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-primary-100 overflow-auto" aria-label="Test webhook result">
-{testResult}
-          </pre>
-        )}
-      </section>
-
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold text-main">Outbound webhook configs</h3>
-            <p className="text-xs muted-text">Toggle endpoints and view the last delivery code.</p>
-          </div>
-          <button
-            className="btn btn-secondary btn-xs"
-            type="button"
-            onClick={() => {
-              setLoadingWebhooks(true);
-              listWebhooks()
-                .then((rows) => setWebhooks(rows || []))
-                .catch((e: any) => setToast({ message: e?.message || 'Refresh failed', tone: 'error' }))
-                .finally(() => setLoadingWebhooks(false));
-            }}
-          >
-            Refresh
-          </button>
-        </div>
-        {loadingWebhooks && <p className="text-sm muted-text">Loading webhooks…</p>}
-        {!loadingWebhooks && webhooks.length === 0 && <p className="text-sm muted-text">No outbound webhooks configured yet.</p>}
-        {!loadingWebhooks && webhooks.length > 0 && (
-          <div className="grid gap-4 md:grid-cols-2">
-            {webhooks.map((hook) => (
-              <article key={hook.id} className="card-shell border border-white/10 bg-white/5 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.28em] muted-text">{hook.method}</p>
-                    <p className="text-lg font-semibold text-main">{hook.name}</p>
-                    <p className="text-xs text-gray-500 break-all">{hook.url}</p>
-                  </div>
-                  <button
-                    className="rounded-full px-3 py-1 text-xs font-semibold"
-                    style={
-                      hook.active
-                        ? { background: 'rgba(52,211,153,0.18)', color: '#34D399' }
-                        : { background: 'rgba(250,204,21,0.18)', color: '#FACC15' }
-                    }
-                    onClick={() => handleToggle(hook)}
-                    disabled={toggling === hook.id}
-                  >
-                    {hook.active ? 'Active' : 'Paused'}
-                  </button>
-                </div>
-                <div className="mt-3 grid gap-2 text-xs muted-text">
-                  <div className="flex items-center justify-between">
-                    <span>Last delivery</span>
-                    <span className="text-main">{formatTs(hook.lastDeliveryAt)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Response code</span>
-                    <span className="text-main">{hook.lastResponseCode ?? '—'}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Signing secret</span>
-                    <span className="text-gray-400">{hook.signingSecretRef || '—'}</span>
-                  </div>
-                  {hook.lastError && <p className="text-[11px] text-amber-300">Last error: {hook.lastError}</p>}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card-shell space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold text-main">Recent deliveries</h3>
-            <p className="text-xs muted-text">Last 10 attempts from the admin metrics endpoint.</p>
-          </div>
-          <button
-            className="btn btn-secondary btn-xs"
-            type="button"
-            onClick={() => {
-              setLoadingDeliveries(true);
-              fetchWebhookDeliveries(10)
-                .then((rows) => setDeliveries(rows || []))
-                .catch((e: any) => setToast({ message: e?.message || 'Refresh failed', tone: 'error' }))
-                .finally(() => setLoadingDeliveries(false));
-            }}
-          >
-            Refresh
-          </button>
-        </div>
-        {loadingDeliveries && <p className="text-sm muted-text">Loading deliveries…</p>}
-        {!loadingDeliveries && deliveries.length === 0 && <p className="text-sm muted-text">No deliveries yet.</p>}
-        {!loadingDeliveries && deliveries.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs text-gray-300">
-              <thead className="text-left text-[11px] uppercase tracking-[0.2em] muted-text">
-                <tr>
-                  <th className="pb-2">Event</th>
-                  <th className="pb-2">Time</th>
-                  <th className="pb-2">Status</th>
-                  <th className="pb-2">Response</th>
-                  <th className="pb-2">Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deliveries.map((d) => {
-                  const row = formatDeliveryRow(d);
-                  const tone =
-                    row.status === 'delivered' || row.status === 'success'
-                      ? 'text-emerald-300'
-                      : row.status === 'failed'
-                      ? 'text-red-300'
-                      : 'text-amber-300';
-                  return (
-                    <tr key={d.id} className="border-t border-white/5 align-middle">
-                      <td className="py-3">{row.event}</td>
-                      <td className="py-3">{row.ts}</td>
-                      <td className={`py-3 ${tone}`}>{row.status}</td>
-                      <td className="py-3">{row.code ?? '—'}</td>
-                      <td className="py-3 text-amber-200">{row.error || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {showRevealConfirm && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-md space-y-4 rounded-2xl border border-white/10 bg-[#0b0c10] p-5 shadow-xl">
-            <p className="text-lg font-semibold text-main">
-              Reveal {revealTarget === 'hmac' ? 'HMAC key' : 'webhook secret'}?
-            </p>
-            <p className="text-sm muted-text">
-              Only reveal in a private setting. Anyone with this value can send alerts that pass validation.
-            </p>
-            <div className="flex justify-end gap-3 text-sm">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowRevealConfirm(false);
-                  setRevealTarget(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  if (revealTarget === 'hmac') {
-                    setHmacVisible(true);
-                  } else {
-                    setSecretVisible(true);
-                  }
-                  setShowRevealConfirm(false);
-                  setRevealTarget(null);
-                }}
-              >
-                Reveal
-              </button>
+        {activeTab === 'setup' ? (
+          <div className="grid gap-4 md:grid-cols-2 text-sm text-gray-300">
+            <div>
+              <p className="text-gray-400">Webhook URL</p>
+              <p className="font-semibold text-main break-all">{webhookUrl}</p>
+            </div>
+            <div>
+              <p className="text-gray-400">Shared secret</p>
+              <p className="font-semibold text-main">{webhookConfig.secret}</p>
+            </div>
+            <div>
+              <p className="text-gray-400">Rate limit</p>
+              <p className="font-semibold text-main">20 alerts / sec per subdomain</p>
+              <p className="text-xs text-gray-500">Handled by ingress middleware in backend/src/routes/v1/ingress.js</p>
+            </div>
+            <div>
+              <p className="text-gray-400">Whitelisting</p>
+              <p className="font-semibold text-main">TradingView IPs + optional secret</p>
             </div>
           </div>
+        ) : (
+          <div className="space-y-2 rounded-2xl border border-white/10 bg-black/40 p-3 text-xs">
+            {mockLogs.map((log, idx) => (
+              <div key={idx} className="flex items-start justify-between gap-3 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+                <div>
+                  <p className={`font-semibold ${log.level === 'error' ? 'text-red-300' : log.level === 'warning' ? 'text-amber-300' : 'text-primary-200'}`}>
+                    [{log.level.toUpperCase()}]
+                  </p>
+                  <p className="text-gray-300">{log.message}</p>
+                </div>
+                <span className="text-gray-500">{log.ts}</span>
+              </div>
+            ))}
+            <p className="text-[10px] text-gray-500">Latest events reflect backend/public/logs/webhook feed.</p>
+          </div>
+        )}
+      </article>
+
+      <article className="card-shell space-y-3">
+        <p className="text-xs uppercase tracking-[0.3em] text-gray-500">TradingView message template</p>
+        <p className="text-sm text-gray-400">
+          Paste the JSON below into your TradingView alert body. Guardrails inside backend/src/routes/v1/ingress.js verify the secret
+          before enqueuing forward jobs.
+        </p>
+        <pre className="rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-primary-100 overflow-auto">
+{tradingViewPayload}
+        </pre>
+      </article>
+
+      <article className="card-shell space-y-4">
+        <p className="text-xs uppercase tracking-[0.3em] text-gray-500">What happens next?</p>
+        <ul className="space-y-2 text-sm text-gray-300">
+          <li>• ingress router logs <code>/webhook</code> receipts and sanitizes payloads.</li>
+          <li>• <code>tradingviewService.forward</code> pushes the alert to BullMQ, then Pendax forwarder fans it to active exchanges.</li>
+          <li>• Audit logs capture every inbound alert along with sanitized payloads.</li>
+        </ul>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <Link
+            to="/docs/webhooks"
+            className="rounded-full border border-white/15 px-3 py-1 tracking-[0.28em] text-gray-300 hover:border-primary-400/40 hover:text-primary-100"
+          >
+            Docs
+          </Link>
+          <a
+            href="https://api.daxlinks.online/api/v1/ingress/webhook/test"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-full border border-white/15 px-3 py-1 tracking-[0.28em] text-gray-300 hover:border-primary-400/40 hover:text-primary-100"
+          >
+            Test endpoint
+          </a>
         </div>
-      )}
+      </article>
+
+      <article className="card-shell space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Webhook channels</p>
+            <p className="text-sm text-gray-400">Stage different subpaths for desks or sandboxes.</p>
+          </div>
+          <button type="button" className="btn btn-secondary btn-small">New channel</button>
+        </div>
+        <div className="space-y-3 text-sm text-gray-300">
+          {channels.map((channel) => (
+            <div key={channel.slug} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-main">{channel.label}</p>
+                  <p className="text-xs text-gray-500">/{channel.slug}</p>
+                </div>
+                <span className={channel.status === 'Active' ? 'text-emerald-300 text-xs uppercase tracking-[0.3em]' : 'text-amber-300 text-xs uppercase tracking-[0.3em]'}>
+                  {channel.status}
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-gray-400">{channel.description}</p>
+              <p className="text-[11px] text-gray-500 break-all">https://{webhookConfig.subdomain}.{webhookConfig.baseDomain}/{channel.slug}</p>
+            </div>
+          ))}
+        </div>
+      </article>
     </div>
   );
 }

@@ -1,103 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 import { correlationId } from './middleware/correlation.js';
 
 import { router as apiRouter } from './routes/index.js';
 import { attachUser } from './middleware/auth.js';
 import { betterAuthHandler } from './auth/betterAuth.js';
-import { attachSubdomain } from './middleware/subdomain.js';
-import { tradingviewIngressRouter } from './routes/tradingviewIngress.js';
-import { getWebhookBaseDomain } from './lib/webhookDomains.js';
 
 export async function createServer() {
   const app = express();
-  app.set('trust proxy', 1);
-
-  const isMonitoringPath = (req) => {
-    const url = req.originalUrl || req.url || '';
-    const normalized = url.startsWith('/api/') ? url.slice(4) : url;
-    return (
-      normalized.startsWith('/v1/metrics/') ||
-      normalized.startsWith('/v1/users/webhook-alerts') ||
-      normalized.startsWith('/v1/users/alerts') ||
-      normalized.startsWith('/v1/dns/mine') ||
-      normalized.startsWith('/v1/webhooks/') ||
-      normalized.startsWith('/v1/workflow/')
-    );
-  };
-
-  const monitoringLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 120,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => {
-      if (req.method !== 'GET') return true;
-      return !isMonitoringPath(req);
-    }
-  });
-
-  const portalLoginLimiter = rateLimit({
-    windowMs: 5 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false
-  });
-
-  const metricsLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: Number(process.env.METRICS_RATE_LIMIT || 1000),
-    standardHeaders: true,
-    legacyHeaders: false
-  });
-
-  const alertsLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: Number(process.env.ALERTS_RATE_LIMIT || 1000),
-    standardHeaders: true,
-    legacyHeaders: false
-  });
-
-  const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => {
-      if (req.path?.startsWith('/api/v1/portal/login')) return true;
-      if (req.path?.startsWith('/api/v1/workflow/')) return true;
-      if (req.method === 'GET') {
-        if (
-          isMonitoringPath(req) ||
-          req.path.startsWith('/api/v1/dns/') ||
-          req.path === '/api/v1/users/my-webhook' ||
-          req.path === '/api/v1/users/alerts' ||
-          req.path === '/api/v1/users/webhook-alerts' ||
-          req.path.startsWith('/api/v1/notify/') ||
-          req.path.startsWith('/api/v1/webhooks/') ||
-          req.path.startsWith('/api/v1/dashboard/') ||
-          req.path === '/api/v1/admin/alerts' ||
-          req.path === '/api/v1/admin/deliveries' ||
-          req.path === '/api/v1/admin/deliveries/stats' ||
-          req.path === '/api/v1/admin/queues/summary' ||
-          req.path.startsWith('/api/v1/metrics/')
-        ) {
-          return true;
-        }
-      }
-      if (req.method === 'POST' && req.path === '/api/v1/dns/register') return true;
-      return false;
-    }
-  });
-
-  console.log('[rate-limit]', {
-    global: { windowSec: 15 * 60, max: 100 },
-    alerts: { windowSec: 15 * 60, max: Number(process.env.ALERTS_RATE_LIMIT || 1000) },
-    metrics: { windowSec: 15 * 60, max: Number(process.env.METRICS_RATE_LIMIT || 1000) }
-  });
 
   app.use(
     helmet({
@@ -132,74 +44,15 @@ export async function createServer() {
     })
   );
 
-  const corsOrigins = (process.env.CORS_ORIGINS || '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  const configuredBaseDomain = (process.env.WEBHOOK_BASE_DOMAIN || '').trim();
-  const derivedOrigins = [];
-  let derivedBaseHost = null;
-  if (configuredBaseDomain) {
-    const normalized = getWebhookBaseDomain();
-    if (normalized) {
-      derivedOrigins.push(`https://${normalized}`);
-      derivedBaseHost = normalized;
-    }
-  }
-  const allowedOrigins = Array.from(new Set([...corsOrigins, ...derivedOrigins].filter(Boolean)));
-  const allowAllOrigins = allowedOrigins.length === 0;
+  const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean);
+  const allowAllOrigins = corsOrigins.length === 0;
+  app.use(cors({
+    origin: allowAllOrigins ? true : corsOrigins,
+    credentials: true
+  }));
 
-  function originAllowed(origin) {
-    if (allowAllOrigins || !origin) {
-      return true;
-    }
-    if (allowedOrigins.includes(origin)) {
-      return true;
-    }
-    if (!derivedBaseHost) {
-      return false;
-    }
-    try {
-      const { hostname, protocol } = new URL(origin);
-      if (!/^https?:$/.test(protocol)) {
-        return false;
-      }
-      const normalizedHost = hostname.toLowerCase();
-      return normalizedHost === derivedBaseHost || normalizedHost.endsWith(`.${derivedBaseHost}`);
-    } catch {
-      return false;
-    }
-  }
-
-  app.use(
-    cors({
-      origin(origin, callback) {
-        if (originAllowed(origin)) {
-          return callback(null, true);
-        }
-        return callback(new Error(`Origin ${origin} not allowed by CORS`));
-      },
-      credentials: true
-    })
-  );
-
-  app.use(attachSubdomain());
   app.use(correlationId());
-  app.use(tradingviewIngressRouter);
-  app.use(monitoringLimiter);
-  app.use('/api/v1/portal/login', portalLoginLimiter);
-  app.use('/api/v1/metrics', metricsLimiter);
-  app.use('/api/v1/users/alerts', alertsLimiter);
-  app.use('/api/v1/users/webhook-alerts', alertsLimiter);
-  app.use(globalLimiter);
-  app.use(
-    express.json({
-      limit: '1mb',
-      verify: (req, _res, buf) => {
-        req.rawBody = Buffer.from(buf);
-      }
-    })
-  );
+  app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false }));
 
   morgan.token('cid', (req) => req.correlationId || '-');

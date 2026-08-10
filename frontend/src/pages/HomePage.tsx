@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { HOME_RESOURCE_ICONS, type HomeResourceKey } from '../icons/platformIcons';
 
 const metrics = {
   exchanges: 11,
@@ -7,36 +6,36 @@ const metrics = {
   throughput: '250k/min'
 };
 
-const resources: Array<{
-  iconKey: HomeResourceKey;
-  title: string;
-  description: string;
-  href: string;
-  linkLabel: string;
-}> = [
+const webcastChannels = [
+  { id: 'okx', exchange: 'OKX', channel: 'orderbook.delta', updates: 128 },
+  { id: 'bybit', exchange: 'Bybit', channel: 'order.fills', updates: 96 },
+  { id: 'zerodha', exchange: 'Zerodha', channel: 'kite.positions', updates: 44 }
+];
+
+const resources = [
   {
-    iconKey: 'implementationGuides',
+    icon: '📚',
     title: 'Implementation Guides',
     description: 'Tailored runbooks for wiring TradingView alerts, Kite Connect credentials, and Pendax adapters.',
     href: 'https://daxlinks.online/docs',
     linkLabel: 'Browse docs'
   },
   {
-    iconKey: 'solutionReviews',
+    icon: '🧭',
     title: 'Solution Reviews',
     description: 'Concierge sessions to pressure-test your execution strategy and resilience patterns.',
     href: 'https://daxlinks.online/support',
     linkLabel: 'Book a review'
   },
   {
-    iconKey: 'webhookPlaybooks',
+    icon: '🪝',
     title: 'Webhook Playbooks',
     description: 'JSON templates, guardrail policies, and post-trade automations for the alert forwarder.',
     href: 'https://daxlinks.online/docs/webhooks',
     linkLabel: 'Use templates'
   },
   {
-    iconKey: 'credentialHardening',
+    icon: '🛡️',
     title: 'Credential Hardening',
     description: 'Rotation, masking, and audit blueprints that mirror the legacy console defaults.',
     href: 'https://daxlinks.online/security',
@@ -74,8 +73,8 @@ export default function HomePage() {
               <a href="https://daxlinks.online/docs" target="_blank" rel="noreferrer" className="btn btn-primary btn-white-animated">
                 Get Started
               </a>
-              <Link to="/account/register" className="btn btn-secondary">
-                New User Registration
+              <Link to="/trade-bots" className="btn btn-secondary">
+                Launch Trade Bots
               </Link>
             </div>
             <dl className="hero-stats">
@@ -93,6 +92,32 @@ export default function HomePage() {
               </div>
             </dl>
           </div>
+          <div className="relative fade-up" style={{ animationDelay: '160ms' }}>
+            <div className="hero-panel p-7">
+              <div className="flex items-center justify-between text-xs muted-text">
+                <span>Live Socket Monitor</span>
+                <span className="flex items-center gap-2" style={{ color: 'var(--primary)' }}>
+                  <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: '#34D399' }}></span>
+                  Connected
+                </span>
+              </div>
+              <div className="mt-5 space-y-4">
+                {webcastChannels.map((channel) => (
+                  <div key={channel.id} className="card-shell flex items-center justify-between p-4">
+                    <div>
+                      <div className="section-label" style={{ letterSpacing: '0.24em' }}>{channel.exchange}</div>
+                      <div className="mt-1 text-sm font-semibold text-main">{channel.channel}</div>
+                    </div>
+                    <div className="text-xs muted-text">{channel.updates} updates/min</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-5 text-xs muted-text">
+                Socket resilience, auto login, and heartbeat watchdogs are wired in—extend the handlers to stream your own telemetry.
+              </p>
+            </div>
+            <div className="float-orb" aria-hidden="true"></div>
+          </div>
         </div>
       </section>
 
@@ -108,26 +133,23 @@ export default function HomePage() {
             A curated set of guides, templates, and support channels to accelerate development for your team.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-2">
-            {resources.map((resource) => {
-              const ResourceIcon = HOME_RESOURCE_ICONS[resource.iconKey];
-              return (
-                <article key={resource.title} className="card-shell flex flex-col">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: 'rgba(107,107,247,0.22)', color: 'var(--primary)' }}>
-                    <ResourceIcon className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
-                  </div>
-                  <h3 className="mt-4 text-lg font-semibold text-main">
-                    {resource.title}
-                  </h3>
-                  <p className="mt-2 flex-1 text-sm muted-text">{resource.description}</p>
-                  <a href={resource.href} target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center text-sm font-semibold" style={{ color: 'var(--primary)' }}>
-                    {resource.linkLabel}
-                    <svg xmlns="http://www.w3.org/2000/svg" className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </a>
-                </article>
-              );
-            })}
+            {resources.map((resource) => (
+              <article key={resource.title} className="card-shell flex flex-col">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full" style={{ background: 'rgba(107,107,247,0.22)', color: 'var(--primary)' }}>
+                  <span className="text-xl" aria-hidden="true">{resource.icon}</span>
+                </div>
+                <h3 className="mt-4 text-lg font-semibold text-main">
+                  {resource.title}
+                </h3>
+                <p className="mt-2 flex-1 text-sm muted-text">{resource.description}</p>
+                <a href={resource.href} target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center text-sm font-semibold" style={{ color: 'var(--primary)' }}>
+                  {resource.linkLabel}
+                  <svg xmlns="http://www.w3.org/2000/svg" className="ml-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5l7 7-7 7" />
+                  </svg>
+                </a>
+              </article>
+            ))}
           </div>
         </div>
         <div className="card-shell">
@@ -162,6 +184,9 @@ export default function HomePage() {
               <p className="section-label">Portal quick actions</p>
               <h3 className="mt-2 text-2xl font-semibold text-main">Jump into the control center</h3>
             </div>
+            <Link to="/trade-bots" className="btn btn-secondary btn-small">
+              Trade Bots
+            </Link>
           </div>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <Link to="/account" className="card-shell">

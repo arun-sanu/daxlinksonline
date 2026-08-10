@@ -10,38 +10,6 @@ export interface ExchangeAccount {
   updatedAt: string;
 }
 
-export type WebhookMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
-
-export interface Webhook {
-  id: string;
-  workspaceId: string;
-  name: string;
-  url: string;
-  method: WebhookMethod | string;
-  events: string[];
-  active: boolean;
-  signingSecretRef?: string | null;
-  lastDeliveryAt?: string | null;
-  lastResponseCode?: number | null;
-  lastError?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WebhookProfile {
-  url: string;
-  secret: string | null;
-}
-
-export interface WebhookDelivery {
-  id: string;
-  event?: string | null;
-  status: string;
-  responseCode?: number | null;
-  lastError?: string | null;
-  createdAt: string;
-}
-
 export interface Bot {
   id: string;
   workspaceId: string;
@@ -73,12 +41,6 @@ export interface BotInstance {
   botVersionId: string;
   workspaceId: string;
   exchangeAccountId: string;
-  exchangeAccount?: {
-    id: string;
-    name: string;
-    venue: string;
-    isSandbox: boolean;
-  } | null;
   symbol: string;
   direction: string; // long|short|both
   leverage: number;
@@ -92,13 +54,6 @@ export interface BotInstance {
   lastError?: string | null;
   startedAt?: string | null;
   stoppedAt?: string | null;
-  lifecycle?: {
-    allowedActions?: string[];
-    canStart?: boolean;
-    canPause?: boolean;
-    canStop?: boolean;
-    canRestart?: boolean;
-  };
   createdAt: string;
   updatedAt: string;
 }
@@ -172,18 +127,6 @@ export interface Order {
   type: string; // LIMIT|MARKET|STOP
   price?: string | null; // Decimal as string
   qty: string; // Decimal as string
-  quoteSpend?: string | null;
-  qtyRaw?: string | null;
-  qtyFinal?: string | null;
-  refPrice?: string | null;
-  minNotional?: string | null;
-  stepSize?: string | null;
-  riskMode?: string | null;
-  riskValue?: string | null;
-  slPrice?: string | null;
-  tpPrice?: string | null;
-  sizingStatus?: string | null;
-  sizingRejectReason?: string | null;
   status: string;
   venueOrderId?: string | null;
   error?: string | null;
@@ -223,13 +166,4 @@ export interface InstanceSecurity {
   rateLimit: { lastTriggeredAt?: string | null; detail?: string | null };
   signature: { lastCheckAt?: string | null; lastFailureAt?: string | null };
   guardrail: { lastTriggeredAt?: string | null; detail?: string | null };
-}
-
-export interface DnsRecord {
-  id: string;
-  name: string;
-  ip: string;
-  status: 'active' | 'pending' | 'error' | string;
-  cloudflareId?: string | null;
-  createdAt: string;
 }

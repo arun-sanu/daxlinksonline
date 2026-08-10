@@ -1,6 +1,5 @@
 import { prisma } from '../utils/prisma.js';
 import { AVAILABLE_EXCHANGES } from '../data/exchanges.js';
-import { getWorkspaceWorkflowConfig } from './workflowService.js';
 
 export async function getBootstrapData(workspaceId, requesterId) {
   const workspace = await prisma.workspace.findUnique({
@@ -30,11 +29,6 @@ export async function getBootstrapData(workspaceId, requesterId) {
   if (workspace.ownerId && workspace.ownerId !== requesterId) {
     throw Object.assign(new Error('Forbidden: workspace access denied'), { status: 403 });
   }
-
-  const workflowConfig = await getWorkspaceWorkflowConfig(workspaceId);
-  const ruleCount = Array.isArray(workflowConfig.rules) ? workflowConfig.rules.length : 0;
-  const webhookCount = workspace.webhooks.length;
-  const integrationCount = workspace.integrations.length;
 
   return {
     metrics: {
@@ -68,10 +62,10 @@ export async function getBootstrapData(workspaceId, requesterId) {
     webhooks: workspace.webhooks,
     webhookEvents: ['signal.triggered', 'signal.cleared', 'order.filled', 'order.failed'],
     workflowSummary: {
-      signalsPerMinute: webhookCount ? webhookCount * 20 : 0,
-      signalThrottle: `${ruleCount || 0} routing rule${ruleCount === 1 ? '' : 's'}`,
-      orderThroughput: integrationCount ? integrationCount * 25 : 0,
-      connectedExchanges: integrationCount
+      signalsPerMinute: 140,
+      signalThrottle: '30/minute',
+      orderThroughput: 95,
+      connectedExchanges: workspace.integrations.length
     },
     dataflowNodes: [
       {

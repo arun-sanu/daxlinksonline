@@ -3,7 +3,7 @@ import { prisma } from '../utils/prisma.js';
 // Ensures the requester has access to the target workspace
 export async function guard(req, res, next) {
   try {
-    const workspaceId = req.params?.workspaceId || req.query?.workspaceId || req.body?.workspaceId;
+    const { workspaceId } = req.params || {};
     if (!workspaceId || !req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
@@ -13,11 +13,7 @@ export async function guard(req, res, next) {
       where: { id: workspaceId }
     });
 
-    const isSuperAdmin = Boolean(req.user?.isSuperAdmin);
-    if (!ws) {
-      return res.status(403).json({ error: 'Not your workspace' });
-    }
-    if (!isSuperAdmin && ws.ownerId && ws.ownerId !== req.user.id) {
+    if (!ws || (ws.ownerId && ws.ownerId !== req.user.id)) {
       return res.status(403).json({ error: 'Not your workspace' });
     }
 
@@ -27,3 +23,4 @@ export async function guard(req, res, next) {
     next(err);
   }
 }
+

@@ -12,8 +12,7 @@ import ExchangeDetailPage from './views/ExchangeDetailPage.js?v=20251106a';
 import ExchangeLogsPage from './views/ExchangeLogsPage.js?v=20251106a';
 import WebhooksPage from './views/WebhooksPage.js?v=20251105h';
 import WorkflowPage from './views/WorkflowPage.js?v=20251105h';
-import MonitoringPage from './views/MonitoringPage.js?v=20251119b';
-import OrdersPage from './views/OrdersPage.js?v=20260211a';
+import MonitoringPage from './views/MonitoringPage.js?v=20251105h';
 import ResourcesPage from './views/ResourcesPage.js?v=20251105h';
 import TradeBotsPage from './views/TradeBotsPage.js?v=20251105h';
 import BankingPage from './views/BankingPage.js?v=20251105h';
@@ -62,7 +61,6 @@ const routes = [
   { path: '/webhooks', name: 'webhooks', component: WebhooksPage },
   { path: '/workflow', name: 'workflow', component: WorkflowPage },
   { path: '/monitoring', name: 'monitoring', component: MonitoringPage },
-  { path: '/orders', name: 'orders', component: OrdersPage },
   { path: '/resources', name: 'resources', component: ResourcesPage },
   { path: '/trade-bots', name: 'trade-bots', component: TradeBotsPage },
   { path: '/banking', name: 'banking', component: BankingPage },

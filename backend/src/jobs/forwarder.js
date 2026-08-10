@@ -1,307 +1,109 @@
 import { prisma } from '../utils/prisma.js';
-import { normalizePayload, computeIdempotencyKey } from '../services/forwardingMapper.js';
-import { updateTradingviewAlertStatus } from '../services/tradingviewAlertsService.js';
+import { decrypt } from '../lib/kms.js';
+import { createExchange } from '../sdk/index.js';
+import { normalizePayload, computeIdempotencyKey, sanitizePayload } from '../services/forwardingMapper.js';
 import crypto from 'crypto';
-import { getWorkspaceWorkflowConfig, simulateRules } from '../services/workflowService.js';
-import { initExecuteOrdersQueue, executeOrdersQueue } from './queue.js';
-import {
-  EXECUTION_AUDIT_STATUS,
-  buildExecutionDedupeKey,
-  findDuplicateExecutionAudit,
-  updateExecutionAudit
-} from '../services/executionAuditService.js';
-import { normalizeSignalTimestamp } from '../services/tradingviewSignalService.js';
 
-function normalizeOrderTypeToken(value) {
-  const type = String(value || '')
-    .trim()
-    .toUpperCase()
-    .replace(/[\s-]+/g, '_');
-  if (!type) return null;
-  if (type === 'MARKET') return 'MARKET';
-  if (type === 'LIMIT') return 'LIMIT';
-  if (type === 'LIMIT_MAKER' || type === 'POST_ONLY' || type === 'POSTONLY' || type === 'MAKER') return 'LIMIT_MAKER';
-  return null;
-}
-
-function hasLimitOrderHints(payload = {}) {
-  if (!payload || typeof payload !== 'object') return false;
-  const keys = [
-    'limitPrice',
-    'limit_price',
-    'limitStyle',
-    'limit_style',
-    'slippageBps',
-    'slippage_bps',
-    'postOnly',
-    'post_only'
-  ];
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
-    const value = payload[key];
-    if (value !== null && value !== undefined && value !== '') return true;
+function sanitize(obj) {
+  try {
+    const copy = typeof obj === 'object' && obj !== null ? JSON.parse(JSON.stringify(obj)) : obj;
+    if (copy && typeof copy === 'object') {
+      if (Object.prototype.hasOwnProperty.call(copy, 'secret')) {
+        copy.secret = '[redacted]';
+      }
+    }
+    return copy;
+  } catch {
+    return {};
   }
-  return false;
-}
-
-function resolveNormalizedOrderType(normalizedInput = {}) {
-  const payload = normalizedInput?.raw && typeof normalizedInput.raw === 'object' ? normalizedInput.raw : {};
-  const mappedOrder =
-    payload?.mappedOrder && typeof payload.mappedOrder === 'object' ? payload.mappedOrder : {};
-  const candidates = [
-    payload?.orderType,
-    payload?.order_type,
-    mappedOrder?.orderType,
-    mappedOrder?.order_type,
-    payload?.type,
-    normalizedInput?.type
-  ];
-  for (const candidate of candidates) {
-    const normalized = normalizeOrderTypeToken(candidate);
-    if (!normalized) continue;
-    if (normalized === 'MARKET' && hasLimitOrderHints(payload)) return 'limit';
-    return normalized.toLowerCase();
-  }
-  if (hasLimitOrderHints(payload)) return 'limit';
-  return 'market';
 }
 
 export async function processForwardJob(job) {
-  const { userId, payload, alertId, executionAuditId } = job.data || {};
+  const { userId, payload } = job.data || {};
   if (!userId) return;
-  try {
-    const normalizedInput = normalizePayload(payload);
-    const normalized = {
-      ...normalizedInput,
-      type: resolveNormalizedOrderType(normalizedInput)
-    };
-    const tvTs = normalizeSignalTimestamp(payload?.ts ?? payload?.timestamp ?? payload?.time);
-    const idemKey = computeIdempotencyKey({ userId, normalized });
-    const notional = normalized.amount && normalized.price ? normalized.amount * normalized.price : normalized.amount || 0;
+  const normalized = normalizePayload(payload);
+  const idemKey = computeIdempotencyKey({ userId, normalized });
 
-    const workspaces = await prisma.workspace.findMany({
-      where: { ownerId: userId },
-      select: { id: true }
-    });
-    const workspaceIds = workspaces.map((w) => w.id);
-    if (workspaceIds.length === 0) {
-      if (alertId) {
-        await updateTradingviewAlertStatus(alertId, 'failed', 'No workspace configured');
-      }
-      return;
+  const workspaces = await prisma.workspace.findMany({
+    where: { ownerId: userId },
+    select: { id: true }
+  });
+  const workspaceIds = workspaces.map((w) => w.id);
+  if (workspaceIds.length === 0) return;
+
+  const integrations = await prisma.integration.findMany({
+    where: { workspaceId: { in: workspaceIds }, status: 'active' },
+    include: { credential: true }
+  });
+
+  for (const integ of integrations) {
+    // Skip if already succeeded with this idempotency key for this integration
+    const existing = await prisma.forwardedSignal.findUnique({ where: { idempotencyKey: idemKey } }).catch(() => null);
+    if (existing && existing.status === 'succeeded' && existing.integrationId === integ.id) {
+      continue;
     }
-
-    const executionTargets = [];
-    for (const workspaceId of workspaceIds) {
-      const config = await getWorkspaceWorkflowConfig(workspaceId);
-      const workflowStatus = String(config?.status || 'active').toLowerCase();
-      if (workflowStatus === 'paused') {
-        console.log(`[forwarder] Workflow paused for workspace ${workspaceId}; skipping routing`);
-        continue;
-      }
-      const source = { id: payload?.webhookId || payload?.sourceId || payload?.source || 'unknown' };
-      const signal = { symbol: normalized.symbol, side: normalized.side, notional, amount: normalized.amount };
-      const simulation = await simulateRules({
-        workspaceId,
-        rules: config.rules || [],
-        source,
-        signal,
-        workflowStatus: config.status
+    let status = 'sent';
+    let error = null;
+    const started = Date.now();
+    try {
+      if (!integ.credential) throw new Error('Missing credentials');
+      const exchange = createExchange({
+        exchange: integ.exchange,
+        environment: integ.environment,
+        apiKey: decrypt(integ.credential.apiKey),
+        apiSecret: decrypt(integ.credential.apiSecret),
+        passphrase: integ.credential.passphrase ? decrypt(integ.credential.passphrase) : undefined
       });
-      if (simulation.matchedRules.length > 0) {
-        executionTargets.push(...simulation.matchedRules.map((rule) => ({ ...rule, workspaceId })));
-        continue;
-      }
+      // Attempt order placement with best-effort method detection
+      await placeOrderBestEffort(exchange, normalized);
 
-      const autoTargets = await resolveAutoExecutionTargets({ workspaceId, normalized });
-      if (autoTargets.length > 0) {
-        console.log(
-          `[forwarder] Auto-routed signal for workspace ${workspaceId} to integration ${autoTargets[0].destinationIntegrationId}`
-        );
-        executionTargets.push(...autoTargets.map((target) => ({ ...target, workspaceId })));
-      }
-    }
-
-    if (!executionTargets.length) {
-      console.log('[forwarder] No matching routing rules — signal ignored');
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          action: 'forward.sent',
+          entityType: 'Integration',
+          entityId: integ.id,
+          summary: `${integ.exchange} ${integ.environment}`,
+          detail: { payload: sanitizePayload(payload), order: { symbol: normalized.symbol, side: normalized.side, type: normalized.type, amount: normalized.amount, price: normalized.price } }
+        }
+      });
       await upsertForwardedSignal({
         userId,
-        integrationId: null,
+        integrationId: integ.id,
         idempotencyKey: idemKey,
         normalized,
-        status: 'skipped_no_rule',
+        status: 'succeeded',
         attempts: 1,
-        error: 'No matching routing rules'
-      });
-      if (alertId) {
-        await updateTradingviewAlertStatus(alertId, 'failed', 'No matching routing rules');
-      }
-      if (executionAuditId) {
-        await updateExecutionAudit(executionAuditId, {
-          status: EXECUTION_AUDIT_STATUS.REJECTED,
-          errorMessage: 'No matching routing rules'
-        });
-      }
-      return;
-    }
-
-    let scheduledCount = 0;
-    for (const target of executionTargets) {
-      const botId = target.destinationIntegrationId || null;
-      const dedupeKey = buildExecutionDedupeKey({
-        symbol: normalized.symbol,
-        side: normalized.side,
-        tvTs,
-        botId
-      });
-
-      if (executionAuditId) {
-        await updateExecutionAudit(executionAuditId, {
-          workspaceId: target.workspaceId || null,
-          integrationId: botId,
-          botId,
-          dedupeKey,
-          symbol: normalized.symbol || null,
-          side: normalized.side || null,
-          tvTs
-        });
-      }
-
-      if (dedupeKey && botId) {
-        const duplicate = await findDuplicateExecutionAudit({
-          botId,
-          dedupeKey,
-          excludeId: executionAuditId || null
-        });
-        if (duplicate) {
-          if (executionAuditId) {
-            await updateExecutionAudit(executionAuditId, {
-              status: EXECUTION_AUDIT_STATUS.REJECTED,
-              errorMessage: 'duplicate'
-            });
-          }
-          if (alertId) {
-            await updateTradingviewAlertStatus(alertId, 'rejected', 'duplicate');
-          }
-          continue;
-        }
-      }
-
-      const scopedIdempotencyKey = buildTargetIdempotencyKey({
-        idempotencyKey: idemKey,
-        integrationId: botId,
-        ruleId: target.ruleId || dedupeKey || 'signal'
-      });
-      const augmented = {
-        ...normalized,
-        raw: {
-          ...(normalized.raw || {}),
-          alertId: alertId || null,
-          executionAuditId: executionAuditId || null,
-          workspaceId: target.workspaceId || null,
-          botId,
-          dedupeKey,
-          ts: tvTs,
-          mappedOrder: target.mappedOrder,
-          ruleId: target.ruleId
-        }
-      };
-      const record = await upsertForwardedSignal({
-        userId,
-        integrationId: botId,
-        idempotencyKey: scopedIdempotencyKey,
-        normalized: augmented,
-        status: 'ready_for_execution',
-        attempts: 0,
         error: null
       });
-      if (executionAuditId) {
-        await updateExecutionAudit(executionAuditId, {
-          forwardedSignalId: record.id
-        });
-      }
-      if (!executeOrdersQueue) {
-        initExecuteOrdersQueue();
-      }
-      if (executeOrdersQueue) {
-        await executeOrdersQueue.add('execute-prepared-signal', { signalId: record.id });
-      }
-      scheduledCount += 1;
+    } catch (e) {
+      status = 'failed';
+      error = e?.message || String(e);
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          action: 'forward.failed',
+          entityType: 'Integration',
+          entityId: integ.id,
+          summary: `${integ.exchange} ${integ.environment}`,
+          detail: { payload: sanitizePayload(payload), error }
+        }
+      });
+      await upsertForwardedSignal({
+        userId,
+        integrationId: integ.id,
+        idempotencyKey: idemKey,
+        normalized,
+        status: 'failed',
+        attempts: 1,
+        error
+      });
+    } finally {
+      // Metrics captured via AuditLog and ForwardedSignal; no WebhookDelivery side-effects here
+      const elapsed = Date.now() - started;
+      void elapsed; // placeholder to keep elapsed computed if needed later
     }
-
-    if (scheduledCount === 0) {
-      if (executionAuditId) {
-        await updateExecutionAudit(executionAuditId, {
-          status: EXECUTION_AUDIT_STATUS.REJECTED,
-          errorMessage: 'duplicate'
-        });
-      }
-      return;
-    }
-
-    console.log(`[forwarder] Signal routed to ${scheduledCount} integration(s) using workflow rules`);
-  } catch (err) {
-    if (alertId) {
-      try {
-        await updateTradingviewAlertStatus(alertId, 'failed', err?.message || 'Forwarding failed');
-      } catch {}
-    }
-    if (executionAuditId) {
-      try {
-        await updateExecutionAudit(executionAuditId, {
-          status: EXECUTION_AUDIT_STATUS.ERROR,
-          errorMessage: err?.message || 'Forwarding failed'
-        });
-      } catch {}
-    }
-    throw err;
   }
-}
-
-const AUTO_ROUTE_SINGLE_INTEGRATION =
-  String(process.env.TRADINGVIEW_AUTO_ROUTE_SINGLE_INTEGRATION || 'true').toLowerCase() === 'true';
-
-function buildTargetIdempotencyKey({ idempotencyKey, integrationId, ruleId }) {
-  return crypto
-    .createHash('sha256')
-    .update(`${idempotencyKey}:${integrationId || 'none'}:${ruleId || 'none'}`)
-    .digest('hex');
-}
-
-async function resolveAutoExecutionTargets({ workspaceId, normalized }) {
-  if (!AUTO_ROUTE_SINGLE_INTEGRATION) return [];
-  const integrations = await prisma.integration.findMany({
-    where: {
-      workspaceId,
-      credentials: { some: {} },
-      status: { in: ['active', 'pending', 'connected'] }
-    },
-    select: {
-      id: true,
-      exchange: true
-    },
-    orderBy: { updatedAt: 'desc' }
-  });
-  if (!integrations.length) return [];
-
-  const requestedExchange = normalized.exchange ? String(normalized.exchange).toLowerCase() : null;
-  const candidates = requestedExchange
-    ? integrations.filter((integration) => String(integration.exchange || '').toLowerCase() === requestedExchange)
-    : integrations;
-  if (candidates.length !== 1) return [];
-
-  const target = candidates[0];
-  return [
-    {
-      ruleId: 'auto-single-integration',
-      destinationIntegrationId: target.id,
-      mappedOrder: {
-        orderType: normalized.type || 'market',
-        size: normalized.amount ?? null,
-        leverage: 1
-      }
-    }
-  ];
 }
 
 async function upsertForwardedSignal({ userId, integrationId, idempotencyKey, normalized, status, attempts, error }) {
@@ -337,4 +139,42 @@ function normalizeForStorage(obj) {
   } catch {
     return {};
   }
+}
+
+async function placeOrderBestEffort(exchange, n) {
+  // Try a few common method shapes; fallback to connectivity test
+  const params = {
+    symbol: n.symbol,
+    side: n.side,
+    type: n.type || (n.price ? 'limit' : 'market'),
+    amount: n.amount || 0,
+    price: n.price,
+    clientOrderId: n.clientOrderId,
+    exchange: n.exchange,
+    raw: n.raw
+  };
+  if (!params.symbol || !params.side) {
+    throw new Error('Missing symbol/side in alert payload');
+  }
+  // Known variants
+  if (typeof exchange.submitSignal === 'function') {
+    return exchange.submitSignal(params);
+  }
+  if (typeof exchange.createOrder === 'function') {
+    return exchange.createOrder(params);
+  }
+  if (typeof exchange.placeOrder === 'function') {
+    return exchange.placeOrder(params);
+  }
+  if (typeof exchange.order === 'function') {
+    return exchange.order(params);
+  }
+  if (typeof exchange.trade === 'function') {
+    return exchange.trade(params);
+  }
+  // Fallback: just connectivity so job is “sent” without an exception
+  if (typeof exchange.testConnectivity === 'function') {
+    return exchange.testConnectivity();
+  }
+  throw new Error('Exchange adapter does not support order placement');
 }

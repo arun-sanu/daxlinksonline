@@ -2,24 +2,9 @@ import { prisma } from '../utils/prisma.js';
 import { createCredentialReference } from './workspaceService.js';
 
 export async function listWebhooks(workspaceId) {
-  const hooks = await prisma.webhook.findMany({
+  return prisma.webhook.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'desc' }
-  });
-  if (!hooks.length) return [];
-  const latestDeliveries = await prisma.webhookDelivery.findMany({
-    where: { webhookId: { in: hooks.map((h) => h.id) } },
-    orderBy: [{ webhookId: 'asc' }, { createdAt: 'desc' }],
-    distinct: ['webhookId']
-  });
-  const latestByWebhook = new Map(latestDeliveries.map((d) => [d.webhookId, d]));
-  return hooks.map((hook) => {
-    const latest = latestByWebhook.get(hook.id);
-    return {
-      ...hook,
-      lastResponseCode: latest?.responseCode ?? null,
-      lastError: latest?.lastError ?? null
-    };
   });
 }
 
@@ -47,15 +32,4 @@ export async function toggleWebhook(workspaceId, webhookId, active) {
     throw err;
   }
   return prisma.webhook.update({ where: { id: webhookId }, data: { active } });
-}
-
-export async function toggleWebhooks(workspaceId, webhookIds, active) {
-  if (!Array.isArray(webhookIds) || webhookIds.length === 0) {
-    return { updated: 0 };
-  }
-  const result = await prisma.webhook.updateMany({
-    where: { workspaceId, id: { in: webhookIds } },
-    data: { active }
-  });
-  return { updated: result.count };
 }

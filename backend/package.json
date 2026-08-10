@@ -6,21 +6,13 @@
   "scripts": {
     "dev": "nodemon --watch src --ext js,mjs --exec node src/server.js",
     "start": "node src/server.js",
-    "build": "npm run prisma:generate",
-    "test:node": "DOTENV_CONFIG_PATH=.env node -r dotenv/config --test test/*.test.js",
-    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --runInBand",
-    "test": "npm run test:node && npm run test:e2e",
-    "lint": "eslint 'src/**/*.js' 'test/**/*.js'",
+    "test": "node --test",
+    "lint": "eslint .",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
-    "create:super-admin": "node scripts/createSuperAdmin.js",
-    "bot:register:trade-exec": "node scripts/registerTradeExecBot.js",
-    "bot:register:mexc-macd-bollinger": "node scripts/registerMexcMacdBollingerBot.js",
-    "bot:register:moneyplantbot1-robot": "node scripts/registerMoneyplantbot1Robot.js",
-    "bot:register:arn-s-shcs-original": "node scripts/registerMoneyplantbot1Robot.js",
-    "bot:register:arn-s-shcs-limit-only": "node scripts/registerArnSshcsLimitOnlyBot.js"
+    "create:super-admin": "node scripts/createSuperAdmin.js"
   },
   "dependencies": {
     "@compendiumfi/pendax": "^2.1.22",
@@ -49,10 +41,7 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-node": "^11.1.0",
-    "jest": "^30.2.0",
-    "nock": "^14.0.11",
     "nodemon": "^3.1.4",
-    "prisma": "^5.18.0",
-    "supertest": "^7.2.2"
+    "prisma": "^5.18.0"
   }
 }

@@ -4,7 +4,6 @@ import path from 'path';
 let cached = null;
 let lastLoad = 0;
 const RELOAD_MS = 5 * 60 * 1000; // reload from file at most every 5 min
-const DEFAULT_TV_IPS = ['52.89.214.238', '34.212.75.30', '54.218.53.128', '52.32.178.7'];
 
 function parseEnvIps() {
   const raw = process.env.TRADINGVIEW_IPS || '';
@@ -32,11 +31,7 @@ function loadFileIps() {
 function loadIps() {
   const envIps = parseEnvIps();
   const fileIps = loadFileIps();
-  const combined = [...envIps, ...fileIps];
-  if (combined.length === 0) {
-    return DEFAULT_TV_IPS.slice();
-  }
-  return Array.from(new Set(combined));
+  return Array.from(new Set([...envIps, ...fileIps]));
 }
 
 function ipv4ToInt(ip) {
@@ -78,3 +73,4 @@ export function getAllowedIps() {
   if (!cached) cached = loadIps();
   return cached.slice();
 }
+

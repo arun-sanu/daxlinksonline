@@ -6,34 +6,14 @@ export default {
     const loading = ref(false);
     const err = ref('');
     const items = ref([]);
-    const authHeaders = () => {
-      try {
-        const token = window.__appAuthToken__ || window.localStorage?.getItem('daxlinksToken') || window.localStorage?.getItem('authToken');
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      } catch {
-        return {};
-      }
-    };
 
     const fetchInbox = async () => {
       loading.value = true; err.value = '';
       try {
-        const base = (typeof window !== 'undefined' && window.__DAXLINKS_CONFIG__?.apiBaseUrl) || '';
-        const normalizedBase = base.replace(/\/$/, '');
-        const inboxUrl = normalizedBase ? `${normalizedBase}/users/alerts?limit=100` : '/api/v1/users/alerts?limit=100';
-        const res = await fetch(inboxUrl, { credentials: 'include', headers: authHeaders() });
-        if (!res.ok) throw new Error('Failed to load alerts');
+        const res = await fetch('/api/v1/notify/inbox?limit=100', { credentials: 'include' });
         const json = await res.json();
-        const rows = Array.isArray(json?.items) ? json.items : [];
-        items.value = rows.map((n) => {
-          const ts = n.receivedAt || n.createdAt || n.ts || Date.now();
-          return {
-            id: n.id || `${ts}-${n.userId || ''}`,
-            title: n.strategyName || n.symbol || n.status || 'Alert',
-            body: n.errorMessage || n.side || '',
-            ts: new Date(ts).toLocaleString()
-          };
-        });
+        if (!json?.ok) throw new Error('Failed to load notifications');
+        items.value = (json.items || []).map(n => ({ id: n.id, title: n.title, body: n.body, ts: new Date(n.ts).toLocaleString() }));
       } catch (e) {
         err.value = String(e?.message || e);
       } finally {
@@ -71,3 +51,4 @@ export default {
   </div>
   `
 };
+
